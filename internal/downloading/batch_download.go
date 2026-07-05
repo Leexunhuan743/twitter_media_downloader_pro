@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -103,6 +104,19 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 
 	func() {
 		defer panicHandler()
+		userNames := make([]string, 0, len(users))
+		for _, u := range users {
+			if u.user != nil {
+				userNames = append(userNames, u.user.ScreenName)
+			}
+		}
+		if len(userNames) > 0 {
+			summary := strings.Join(userNames, ", ")
+			if len(userNames) > 5 {
+				summary = strings.Join(userNames[:5], ", ") + fmt.Sprintf("... (+%d more)", len(userNames)-5)
+			}
+			log.Infof("[batch] Downloading %d user(s): %s", len(userNames), summary)
+		}
 		log.Infoln("[batch] Start pre processing users")
 
 		for _, userInLST := range users {
