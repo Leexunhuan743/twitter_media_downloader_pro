@@ -12,8 +12,12 @@ func (b *Bot) notifyTaskChanges(data interface{}) {
 	if !ok {
 		return
 	}
+	type notification struct {
+		chatID string
+		text   string
+	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	var notifications []notification
 	for _, task := range tasks {
 		if task.Status != api.TaskStatusCompleted && task.Status != api.TaskStatusFailed {
 			continue
@@ -28,9 +32,14 @@ func (b *Bot) notifyTaskChanges(data interface{}) {
 				delete(b.userTasks, openID)
 			}
 			if chatID, ok := b.userChats[openID]; ok {
-				b.sendText(chatID, text)
+				notifications = append(notifications, notification{chatID: chatID, text: text})
 			}
 		}
+	}
+	b.mu.Unlock()
+
+	for _, n := range notifications {
+		b.sendText(n.chatID, n.text)
 	}
 }
 
