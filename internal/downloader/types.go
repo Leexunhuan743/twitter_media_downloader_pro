@@ -4,13 +4,10 @@ import (
 	"context"
 	"io"
 	"time"
-
-	"github.com/go-resty/resty/v2"
 )
 
 type DownloadRequest struct {
 	Context     context.Context
-	Client      *resty.Client
 	URL         string
 	Destination string
 	Options     DownloadOptions

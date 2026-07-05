@@ -342,7 +342,6 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 		cancel:         cancel,
 		downloader:     dwn,
 		fileWriter:     fileWriter,
-		client:         client,
 		maxFileNameLen: opts.normalizedMaxFileNameLen(),
 	}
 	if progress != nil {

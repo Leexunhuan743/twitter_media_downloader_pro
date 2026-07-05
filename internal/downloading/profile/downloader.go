@@ -461,7 +461,6 @@ func (pd *ProfileDownloader) downloadFile(ctx context.Context, userTitle, screen
 
 	downloadReq := downloader.DownloadRequest{
 		Context:     downloadCtx,
-		Client:      pd.client,
 		URL:         url,
 		Destination: filePath,
 		Options: downloader.DownloadOptions{

@@ -285,7 +285,6 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 
 		req := downloader.DownloadRequest{
 			Context:     cfg.ctx,
-			Client:      cfg.client,
 			URL:         downloadURL,
 			Destination: path,
 			Options: downloader.DownloadOptions{
@@ -471,7 +470,6 @@ func BatchDownloadTweet(ctx context.Context, client *resty.Client, skipLoongTwee
 			skipLoongTweet: skipLoongTweet,
 			downloader:     dwn,
 			fileWriter:     fileWriter,
-			client:         client,
 			onTweetDone:    onTweetDone,
 			pathResolver:   utils.NewUniquePathResolver(),
 			maxFileNameLen: opts.normalizedMaxFileNameLen(),

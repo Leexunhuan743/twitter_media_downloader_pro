@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-resty/resty/v2"
 	"github.com/unkmonster/tmd/internal/utils"
 )
 
@@ -371,7 +370,6 @@ func TestDownloader_Download_Normal(t *testing.T) {
 	destPath := filepath.Join(tempDir, "downloaded.txt")
 	req := DownloadRequest{
 		Context:     context.Background(),
-		Client:      resty.New(),
 		URL:         server.URL + "/test.txt",
 		Destination: destPath,
 		Options:     DownloadOptions{},
@@ -426,7 +424,6 @@ func TestDownloader_Download_Error(t *testing.T) {
 	destPath := filepath.Join(tempDir, "downloaded.txt")
 	req := DownloadRequest{
 		Context:     context.Background(),
-		Client:      resty.New(),
 		URL:         server.URL + "/notfound.txt",
 		Destination: destPath,
 		Options:     DownloadOptions{},
@@ -798,7 +795,6 @@ func TestDownloader_Download_StreamMode(t *testing.T) {
 	destPath := filepath.Join(tempDir, "large_file.bin")
 	req := DownloadRequest{
 		Context:     context.Background(),
-		Client:      resty.New(),
 		URL:         server.URL + "/large.bin",
 		Destination: destPath,
 		Options:     DownloadOptions{},
@@ -853,7 +849,6 @@ func TestDownloader_Download_BufferMode(t *testing.T) {
 	destPath := filepath.Join(tempDir, "small_file.txt")
 	req := DownloadRequest{
 		Context:     context.Background(),
-		Client:      resty.New(),
 		URL:         server.URL + "/small.txt",
 		Destination: destPath,
 		Options:     DownloadOptions{},
@@ -907,7 +902,6 @@ func TestDownloader_Download_HeadRequestFail(t *testing.T) {
 	destPath := filepath.Join(tempDir, "head_fail.txt")
 	req := DownloadRequest{
 		Context:     context.Background(),
-		Client:      resty.New(),
 		URL:         server.URL + "/test.txt",
 		Destination: destPath,
 		Options:     DownloadOptions{},
@@ -961,7 +955,6 @@ func TestDownloader_Download_StreamSizeMismatch(t *testing.T) {
 	destPath := filepath.Join(tempDir, "mismatch.txt")
 	req := DownloadRequest{
 		Context:     context.Background(),
-		Client:      resty.New(),
 		URL:         server.URL + "/mismatch.txt",
 		Destination: destPath,
 		Options:     DownloadOptions{},
@@ -1265,7 +1258,6 @@ func TestDownloader_Download_ContentLengthZero(t *testing.T) {
 	destPath := filepath.Join(tempDir, "empty.txt")
 	req := DownloadRequest{
 		Context:     context.Background(),
-		Client:      resty.New(),
 		URL:         server.URL + "/empty.txt",
 		Destination: destPath,
 		Options:     DownloadOptions{},
@@ -1319,7 +1311,6 @@ func TestDownloader_Download_QueryParams(t *testing.T) {
 	destPath := filepath.Join(tempDir, "query.txt")
 	req := DownloadRequest{
 		Context:     context.Background(),
-		Client:      resty.New(),
 		URL:         server.URL + "/test",
 		Destination: destPath,
 		Options: DownloadOptions{
@@ -1367,7 +1358,6 @@ func TestDownloader_Download_ServerError(t *testing.T) {
 	destPath := filepath.Join(tempDir, "error.txt")
 	req := DownloadRequest{
 		Context:     context.Background(),
-		Client:      resty.New(),
 		URL:         server.URL + "/error",
 		Destination: destPath,
 		Options:     DownloadOptions{},
@@ -1424,7 +1414,6 @@ func TestDownloader_Download_RetrySuccess(t *testing.T) {
 	destPath := filepath.Join(tempDir, "retry.bin")
 	req := DownloadRequest{
 		Context:     context.Background(),
-		Client:      resty.New(),
 		URL:         server.URL + "/retry",
 		Destination: destPath,
 		Options:     DownloadOptions{},
@@ -1472,7 +1461,6 @@ func TestDownloader_Download_ContextCancel(t *testing.T) {
 	destPath := filepath.Join(tempDir, "cancel.txt")
 	req := DownloadRequest{
 		Context:     ctx,
-		Client:      resty.New(),
 		URL:         server.URL + "/cancel",
 		Destination: destPath,
 		Options:     DownloadOptions{},
@@ -1528,7 +1516,6 @@ func TestDownloader_DownloadStream_CancelDuringRetryDelay(t *testing.T) {
 	destPath := filepath.Join(tempDir, "retry-cancel.bin")
 	req := DownloadRequest{
 		Context:     ctx,
-		Client:      resty.New(),
 		URL:         server.URL + "/retry-cancel",
 		Destination: destPath,
 		Options:     DownloadOptions{},
@@ -1569,7 +1556,6 @@ func TestDownloader_Download_NetworkError(t *testing.T) {
 	destPath := filepath.Join(tempDir, "network_error.txt")
 	req := DownloadRequest{
 		Context:     context.Background(),
-		Client:      resty.New(),
 		URL:         "http://localhost:1/test.txt", // 几乎肯定失败的地址
 		Destination: destPath,
 		Options:     DownloadOptions{},
@@ -1608,7 +1594,6 @@ func TestDownloader_DownloadBuffer_ReturnsHTTPStatusError(t *testing.T) {
 	dl := NewDownloader(NewFileWriter(nil))
 	req := DownloadRequest{
 		Context:     context.Background(),
-		Client:      resty.New(),
 		URL:         server.URL + "/missing.jpg",
 		Destination: filepath.Join(tempDir, "missing.jpg"),
 	}
@@ -1652,7 +1637,6 @@ func TestDownloader_DownloadStream_404DoesNotRetry(t *testing.T) {
 	dl := NewDownloader(NewFileWriter(nil))
 	req := DownloadRequest{
 		Context:     context.Background(),
-		Client:      resty.New(),
 		URL:         server.URL + "/missing.bin",
 		Destination: filepath.Join(tempDir, "missing.bin"),
 	}
@@ -1786,7 +1770,6 @@ func TestIntegration_FullDownloadWorkflow(t *testing.T) {
 	// 第一次下载
 	req := DownloadRequest{
 		Context:     context.Background(),
-		Client:      resty.New(),
 		URL:         server.URL + "/test.txt",
 		Destination: destPath,
 		Options: DownloadOptions{
@@ -1857,7 +1840,6 @@ func TestIntegration_ConcurrentDownloads(t *testing.T) {
 			destPath := filepath.Join(tempDir, fmt.Sprintf("concurrent_%d.txt", idx))
 			req := DownloadRequest{
 				Context:     context.Background(),
-				Client:      resty.New(),
 				URL:         fmt.Sprintf("%s/file%d", server.URL, idx),
 				Destination: destPath,
 				Options:     DownloadOptions{},

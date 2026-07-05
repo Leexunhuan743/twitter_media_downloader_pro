@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 
-	"github.com/go-resty/resty/v2"
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/downloader"
 	"github.com/unkmonster/tmd/internal/entity"
@@ -103,7 +102,6 @@ type workerConfig struct {
 	skipLoongTweet bool
 	downloader     downloader.Downloader
 	fileWriter     downloader.FileWriter
-	client         *resty.Client
 	onTweetDone    func(pt PackagedTweet, failed bool)
 	pathResolver   *utils.UniquePathResolver
 	maxFileNameLen int
