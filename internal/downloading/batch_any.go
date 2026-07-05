@@ -25,6 +25,11 @@ type BatchDownloadSummary struct {
 }
 
 func BatchDownloadAny(ctx context.Context, client *resty.Client, db *sqlx.DB, lists []twitter.ListBase, users []*twitter.User, dir string, realDir string, autoFollow bool, additional []*resty.Client, dwn downloader.Downloader, fileWriter downloader.FileWriter, opts RuntimeOptions, progress BatchProgressFunc, lsm *ListSyncManager) (failedTweets []*TweetInEntity, listMembers []*twitter.User, summary BatchDownloadSummary, err error) {
+
+	for _, lst := range lists {
+		log.Infof("[batch] Downloading %s", lst.Title())
+	}
+
 	log.Debugln("[batch] Start collecting users")
 	packgedUsers := make([]userInListEntity, 0)
 	listMembers = make([]*twitter.User, 0)
@@ -56,6 +61,7 @@ func BatchDownloadAny(ctx context.Context, client *resty.Client, db *sqlx.DB, li
 	}
 
 	for _, usr := range users {
+		log.Infof("[batch] Downloading user: %s", usr.ScreenName)
 		packgedUsers = append(packgedUsers, userInListEntity{user: usr, leid: 0})
 	}
 
