@@ -13,6 +13,12 @@ func (b *Bot) registerCommands() error {
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "target",
+					Description: "Screen name or list ID",
+					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "type",
 					Description: "Download type: user, list, or foll",
 					Required:    false,
@@ -23,36 +29,30 @@ func (b *Bot) registerCommands() error {
 					},
 				},
 				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "target",
-					Description: "Screen name or list ID",
-				Required:    true,
+					Type:        discordgo.ApplicationCommandOptionBoolean,
+					Name:        "auto_follow",
+					Description: "Auto-follow protected users (default false)",
+					Required:    false,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionBoolean,
+					Name:        "skip_profile",
+					Description: "Skip profile/avatar download (default false)",
+					Required:    false,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionBoolean,
+					Name:        "no_retry",
+					Description: "Skip retry on failure (default false)",
+					Required:    false,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionBoolean,
+					Name:        "follow_members",
+					Description: "Follow all list members (default false)",
+					Required:    false,
+				},
 			},
-			{
-				Type:        discordgo.ApplicationCommandOptionBoolean,
-				Name:        "auto_follow",
-				Description: "Auto-follow protected users (default false)",
-				Required:    false,
-			},
-			{
-				Type:        discordgo.ApplicationCommandOptionBoolean,
-				Name:        "skip_profile",
-				Description: "Skip profile/avatar download (default false)",
-				Required:    false,
-			},
-			{
-				Type:        discordgo.ApplicationCommandOptionBoolean,
-				Name:        "no_retry",
-				Description: "Skip retry on failure (default false)",
-				Required:    false,
-			},
-			{
-				Type:        discordgo.ApplicationCommandOptionBoolean,
-				Name:        "follow_members",
-				Description: "Follow all list members (default false)",
-				Required:    false,
-			},
-		},
 	},
 		{
 			Name:        "status",
