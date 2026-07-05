@@ -50,8 +50,6 @@ func (b *Bot) Start() error {
 
 	session.AddHandler(b.handleInteraction)
 
-	session.Identify.Intents = discordgo.IntentsGuildMessages
-
 	if err := session.Open(); err != nil {
 		return fmt.Errorf("discord: failed to open gateway: %w", err)
 	}
