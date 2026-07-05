@@ -43,6 +43,8 @@
 - **Web 管理界面**：内置 HTTP API + SSE 实时推送 + 任务队列 + 定时调度 + 数据库管理
 - **API Key 认证**：内置 Bearer Token 认证层，支持 conf.yaml/环境变量/Web UI 三种配置方式，Web UI 免认证访问（详见[安全章节](#api-server-安全)）
 - **调度自动化**：支持 `interval` / `daily` 两种模式，`user` / `list` / `following` / `mixed` 四种目标
+- **Bot 平台通知**：支持 Telegram、Discord、WeChat、Feishu 六平台的消息通知和命令控制，任务完成/失败实时推送（详见 [doc/bot-integration.md](doc/bot-integration.md)）
+
 
 ***
 
@@ -281,6 +283,7 @@ http://localhost:25556/api/v1/health
 |------|------|------|
 | 备用 Cookie | `$HOME/.tmd2/additional_cookies.yaml` | 多账号 Cookie |
 | 定时任务 | `$HOME/.tmd2/schedules.yaml` | 调度器配置 |
+| Bot 配置 | `$HOME/.tmd2/bot_config.yaml` | Telegram/Discord/WeChat/Feishu 等平台配置（首次运行自动生成模板） |
 | 日志文件 | `$HOME/.tmd2/tmd2.log` | 主日志 |
 | CLI 日志 | `$HOME/.tmd2/client.log` | REST 客户端日志 |
 

@@ -28,7 +28,7 @@ Bot Platform (Telegram/Discord/WeChat/Feishu/etc.)
           ├── Start() / Stop()           ← 生命周期管理
           ├── handle* (消息接收)          ← 命令解析和路由
           ├── cmd* (命令处理)             ← /dl /status /cancel 等
-          └── handleEvents / handleLogs  ← 事件订阅
+          └── RunBotEventLoop / RunBotLogLoop  ← 事件/日志订阅
                 │
                 ▼
   internal/api/
@@ -52,17 +52,19 @@ type Bot interface {
 }
 ```
 
-所有平台实现此接口，由 `BotManager` 统一管理生命周期。
-
-### BotManager
+所有平台实现此接口，通过 `server.InitBot(bots)` 注入到 Server：
 
 ```go
-bm := bot.NewBotManager(bot1, bot2, ...)
-bm.Start()  // 依次启动所有 bot
-bm.Stop()   // 依次停止所有 bot
+// main.go
+server.InitBot(initBot(botConf, server))
+
+// internal/api/server.go
+func (s *Server) InitBot(bots []bot.Bot) {
+    s.bots = bots
+}
 ```
 
-通过 `server.InitBot(bm)` 注入到 Server。Server 在 `Start()` 中调用 `bm.Start()`，在 `GracefulShutdown()` 中调用 `bm.Stop()`。
+Server 在 `Start()` 中遍历 `s.bots` 依次调用 `b.Start()`，在 `GracefulShutdown()` 中遍历调用 `b.Stop()`。
 
 ### 消息流程
 
@@ -84,12 +86,20 @@ bm.Stop()   // 依次停止所有 bot
 任务完成/失败
   → TaskManager 更新状态
   → EventBus.Publish("tasks", tasks)
-  → Bot.handleEvents() 收到事件
+  → RunBotEventLoop 收到事件（筛选 "tasks" 类型）
   → notifyTaskChanges() 发送消息给用户
 ```
 
-> **通知范围**：任务完成/失败通知**仅发送给发起该任务的用户**（Telegram 的聊天会话、Discord 频道、WeChat/Feishu 的个人用户）。错误日志（error/fatal 级别）会推送给所有已授权用户。
+**日志错误告警**：
 
+```
+error/fatal 级别日志
+  → consolelog.Hub.Publish(line)
+  → RunBotLogLoop 收到日志行（1条/秒速率限制，筛选 level=error/fatal）
+  → sendLogAlert() 推送给用户
+```
+
+> **通知范围**：任务完成/失败通知**仅发送给发起该任务的用户**（Telegram 的聊天会话、Discord 频道、WeChat/Feishu 的个人用户）。错误日志（error/fatal 级别）推送给所有已交互过的用户（WeChat/Feishu）或配置中的 `allowed_users`（Telegram/Discord）。
 ---
 
 ## 配置方式
@@ -242,21 +252,18 @@ gotify:
 
 ```
 internal/bot/
-├── bot.go              # Bot 接口定义
-├── manager.go          # BotManager 生命周期管理
-├── manager_test.go
+├── bot.go              # Bot 接口定义 + ParseDownloadOptions 工具函数
 ├── telegram/           # Telegram 实现
-│   ├── bot.go          #   核心结构、Start/Stop
-│   ├── handlers.go     #   消息路由、权限检查
-│   ├── commands.go     #   命令实现
-│   ├── notify.go       #   事件/日志订阅
-│   └── bot_test.go
-├── discord/            # Discord 实现（同上结构）
+├── discord/            # Discord 实现
 ├── wechat/             # 微信 iLink 实现
 ├── feishu/             # 飞书/Lark 实现
 ├── gotify/             # Gotify 推送实现
 └── pushover/           # Pushover 推送实现
+
+internal/api/
+└── bot_notify.go       # 共享通知基础设施：FormatTaskResult、RunBotEventLoop、RunBotLogLoop
 ```
+
 
 ### 双向 Bot vs 单向推送
 
@@ -270,16 +277,37 @@ internal/bot/
 - 不处理用户命令
 - 依赖：`EventBus` + `LogHub`
 
+### 通知格式
+
+任务结果通过 `api.FormatTaskResult(task, markdown)` 格式化。`markdown=true` 时任务 ID 用反引号包裹（Telegram/Discord），`markdown=false` 时纯文本（其余平台）。
+
+```
+✅ Task `task_abc123` completed
+Downloaded: 10, Failed: 1
+
+❌ Task `task_def456` failed
+Error: something went wrong
+```
+
+### 日志告警推送
+
+所有平台通过 `api.RunBotLogLoop` 接收日志，筛选 `level=error` / `level=fatal`，以 1 条/秒速率限制发送：
+
+- **Telegram/Discord**：遍历 `config.AllowedUsers`（配置静态列表）
+- **WeChat**：遍历 `b.userTokens`（运行时收集的已交互用户）
+- **Feishu**：遍历 `b.userChats`（运行时收集的已交互用户）
+- **Gotify/Pushover**：推送到配置的服务器地址/用户
+
 ### 通信方式差异
 
-| 平台 | 消息接收 | 命令模型 | Bot 身份 |
-|---|---|---|---|
-| Telegram | 长轮询 (`getUpdates`) | 文本命令 `/cmd` | 独立 Bot 账号 + Token |
-| Discord | WebSocket Gateway | Slash Command 结构化 | 独立 Bot 账号 + Token |
-| WeChat iLink | 长轮询 | 文本命令 `/cmd` | 个人微信号（扫码登录） |
-| 飞书/Lark | HTTP Webhook 回调 | 文本命令 `/cmd` | 企业自建应用 + AppID/Secret |
-| Gotify | — | — | 应用 Token |
-| Pushover | — | — | 应用 Token |
+| 平台 | 消息接收 | 命令模型 | Bot 身份 | 断线重连 |
+|---|---|---|---|---|
+| Telegram | 长轮询 `getUpdates`（60s timeout, `AllowedUpdates:["message"]`） | 文本命令 `/cmd` | 独立 Bot 账号 + Token | 库自动处理 |
+| Discord | WebSocket Gateway（discordgo） | Slash Command 结构化 | 独立 Bot 账号 + Token | 库自动（Resume） |
+| WeChat iLink | 长轮询 SDK（`Run` 阻塞 + `runWithReconnect` 外层） | 文本命令 `/cmd` | 个人微信号（QR 扫码登录） | 2min Login timeout + 30s 重试间隔 |
+| 飞书/Lark | HTTP Webhook 回调（`NonBlockingCallback` + 3s 超时） | 文本命令 `/cmd` | 企业自建应用 + AppID/Secret | HTTP（被动） |
+| Gotify | — | — | 应用 Token | — |
+| Pushover | — | — | 应用 Token | — |
 
 ### 外部依赖
 
@@ -303,3 +331,208 @@ internal/bot/
 3. **注册到工厂** 在 `main.go` 的 `initBot()` 中加条件分支
 
 如果平台使用 HTTP Webhook 回调（如飞书），还需要调用 `server.RegisterBotCallback(path, handler)` 注册路由。
+
+---
+
+## 普通用户配置指南
+
+以下内容面向不想看源码、只想让 Bot 跑起来的普通用户。
+
+### 前提
+
+1. TMD 以 **Server 模式** 运行（启动时加 `-server` 参数，或 Docker 部署）
+2. 首次启动后，配置文件 `bot_config.yaml` 会自动生成在 TMD 数据目录下（通常为 `~/.tmd2/bot_config.yaml` 或 `%APPDATA%\.tmd2\bot_config.yaml`）
+3. 用文本编辑器打开 `bot_config.yaml`，去掉想用的平台前面的 `#` 注释，填好参数，保存后**重启 TMD** 生效
+
+> **提示**：所有平台可以同时启用，互不干扰。不需要的平台保持注释状态即可。
+
+### 官方文档参考
+
+| 平台 | 接入文档 / 入口 |
+|------|----------------|
+| Telegram | https://core.telegram.org/bots/api |
+|  | @BotFather 创建 Bot → 拿 Token |
+| Discord | https://discord.com/developers/applications |
+|  | https://discord.com/developers/docs/intro |
+| Feishu/Lark | https://open.feishu.cn/app |
+|  | https://open.feishu.cn/document |
+| Gotify | https://gotify.net/docs/ |
+|  | https://github.com/gotify/server |
+| Pushover | https://pushover.net |
+|  | https://pushover.net/api |
+| WeChat iLink | 无官方文档（SDK: `github.com/SpellingDragon/wechat-robot-go`） |
+
+
+---
+
+### Telegram 配置步骤
+
+1. 打开 Telegram，搜索 `@BotFather`，发送 `/newbot`
+2. 按提示输入 Bot 名称和用户名，BotFather 会给你一个 `token`（格式如 `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`）
+3. 向你的新 Bot 随便发一条消息（比如 `/start`）
+4. 浏览器打开 `https://api.telegram.org/bot<你的token>/getUpdates`，找到 `"from":{"id":123456789,...}` 这串数字就是你的 `allowed_users`
+5. 编辑 `bot_config.yaml`，填入：
+
+```yaml
+telegram:
+  token: "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+  allowed_users: [123456789]
+```
+
+6. 重启 TMD，向 Bot 发 `/help` 查看可用命令
+
+---
+
+### Discord 配置步骤
+
+1. 打开 https://discord.com/developers/applications ，点击 New Application
+2. 左侧 Bot → Reset Token → 复制 token
+3. 左侧 OAuth2 → URL Generator → 勾选 `bot` → 勾选 `Send Messages`、`Use Slash Commands`
+4. 复制生成的 URL，浏览器打开，选择服务器添加 Bot
+5. Discord 设置 → 高级 → 开发者模式 → 开启
+6. 右键你的用户名 → Copy ID（这就是你的 `allowed_users`）
+7. 编辑 `bot_config.yaml`：
+
+```yaml
+discord:
+  token: "MTE5ODk4MjQ2NzE4NTMyMTI5OQ.GnO2X.xxx"
+  allowed_users: ["123456789012345678"]
+```
+
+8. 重启 TMD，在 Discord 服务器中输入 `/help` 查看可用命令
+
+---
+
+### WeChat iLink 配置步骤
+
+> WeChat iLink 使用个人微信号作为 Bot 登录。
+
+1. 编辑 `bot_config.yaml`：
+
+```yaml
+wechat:
+  credential_path: ".weixin-token.json"
+  allowed_users: []
+```
+
+2. 重启 TMD，查看服务端日志（控制台或 `tmd2.log`），会输出一个 QR Code URL
+3. 用微信扫描二维码（**只能在微信中打开该 URL**，复制到浏览器无效）
+4. 扫码后 Bot 自动登录，后续重启会自动复用凭证，无需重复扫码
+5. 想限制谁能使用 Bot？向 Bot 发一条消息，然后在日志中找到 `FromUserID`，填入 `allowed_users`：
+
+```yaml
+  allowed_users: ["wxid_xxxxxxx@im.wechat"]
+```
+
+---
+
+### 飞书 / Lark 配置步骤
+
+1. 打开 https://open.feishu.cn/app ，创建企业自建应用
+2. 应用名称随便填，创建后进入应用
+3. **凭证与基础信息**：记下 `App ID` 和 `App Secret`
+4. **添加应用能力** → 开启 **机器人**
+5. **事件与回调** → 添加事件 `接收消息 v2.0`
+6. **事件与回调** → 回调地址填写 `https://你的域名/api/v1/bot/feishu/callback`（如无域名可使用内网穿透工具如 ngrok）
+7. **权限管理** → 开启 `获取用户发给机器人的单聊消息`
+8. **版本管理与发布** → 创建版本 → 审核发布（需要企业管理员审批）
+9. 编辑 `bot_config.yaml`：
+
+```yaml
+feishu:
+  app_id: "cli_xxxxxxxxxxxx"
+  app_secret: "xxxxxxxxxxxxxxxxxxxxxxxxxx"
+  verify_token: "xxxxxxxxxxxx"
+  allowed_users: ["ou_xxxxxxxxxxxxx"]
+```
+
+10. `allowed_users`（用户 open_id）的获取方式：让用户向 Bot 发一条消息，查看 TMD 服务端日志中的 `openID`
+11. 重启 TMD
+
+---
+
+### Gotify 配置步骤（单向推送）
+
+1. 部署 Gotify 服务器（参考 https://github.com/gotify/server ），或已有现成的
+2. Gotify Web UI → Apps → Create Application → 记下 Token
+3. 编辑 `bot_config.yaml`：
+
+```yaml
+gotify:
+  server_url: "http://你的gotify地址:8080"
+  token: "S3cr3tT0k3n"
+  priority: 5
+```
+
+4. 重启 TMD，任务完成/失败时会自动推送通知
+
+---
+
+### Pushover 配置步骤（单向推送）
+
+1. 注册 https://pushover.net ，记下首页的 **User Key**
+2. 登录后 Create an Application/API Token，记下 **API Token**
+3. 编辑 `bot_config.yaml`：
+
+```yaml
+pushover:
+  user: "uKey123..."
+  token: "appToken456..."
+```
+
+4. （可选）如果有多台设备，想指定接收通知的设备：在 Pushover App 中设置设备名，填入 `device: "iphone"`；想换提示音：填入 `sound: "gamelan"`（可选值见 https://pushover.net/api#sounds）
+5. 重启 TMD
+
+---
+
+### Docker 部署特别说明
+
+如果 TMD 运行在 Docker 容器中：
+
+```bash
+# 挂载配置目录到宿主机，bot_config.yaml 会自动生成在那里
+docker run -d \
+  --name tmd \
+  -p 25556:25556 \
+  -v /path/to/config:/config \
+  -e TMD_HOME=/config \
+  leeexx00/tmd:latest -server
+
+# 编辑宿主机上的配置文件
+vi /path/to/config/bot_config.yaml
+
+# 重启容器
+docker restart tmd
+```
+
+> **注意**：飞书/Lark 的回调地址必须从外部可访问，Docker 部署时需要配置反向代理（如 Nginx）或内网穿透。其余平台不受影响。
+
+### 验证配置是否生效
+
+配置完成后重启 TMD，在控制台或 `tmd2.log` 中查找以下日志：
+
+```
+[bot-telegram] Authorized as @YourBotName
+[bot-discord] Connected as YourBot#1234
+[bot-wechat] Starting (credential: .weixin-token.json)
+[bot-feishu] Started (app_id: cli_xxxxxxxxxxxx)
+[bot-gotify] Started (server: http://gotify.lan:8080)
+[bot-pushover] Started
+[bot] telegram started
+[bot] discord started
+[bot] wechat started
+```
+
+不存在的平台不会有日志。启动后向 Bot 发送 `/help`，返回帮助信息说明 Bot 正常工作。
+
+### Discord 特别说明
+
+Discord Slash Command 注册为**全局命令**，更新后最长需要 **1 小时**才能在所有服务器生效。
+如需即时测试，可将 `ApplicationCommandCreate` 的第二个参数改为你的服务器 ID（开发者可见），命令会立刻注册到该服务器。
+
+### 安全提示
+
+- **`allowed_users` 是唯一的访问控制**：Bot 对所有未授权的用户回复 `⛔ Unauthorized`。留空时允许所有用户使用。
+- **凭据保护**：`bot_config.yaml` 中的 token、secret、user key 等不应提交到 Git 或分享给他人。
+- **API Key 配合使用**：Bot 接口通过 Server 的 API Key 认证保护（如果已启用），详见 `conf.yaml` 的 `api_key` 字段。
+- **WeChat 扫码安全**：QR Code 仅限首次登录使用，凭证自动保存到 `credential_path`，请确保该文件不被泄露。
