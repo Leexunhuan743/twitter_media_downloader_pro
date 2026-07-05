@@ -17,12 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **WeChat iLink Bot** (`internal/bot/wechat/`): 微信个人号接入（SpellingDragon/wechat-robot-go），文本命令解析，QR 扫码登录（goroutine + 2min timeout），`runWithReconnect` 断线自动重连
 - **Feishu/Lark Bot** (`internal/bot/feishu/`): HTTP Webhook 回调模式（chyroc/lark），`WithNonBlockingCallback`（3s 超时保护），`WithTimeout(10s)` 防网络 hang，`RegisterBotCallback` 集成到 TMD Server
 - **Gotify Bot** (`internal/bot/gotify/`): 单向推送（`POST /message` + `X-Gotify-Key` auth），任务完成/失败通知
-- **Pushover Bot** (`internal/bot/pushover/`): 单向推送（`POST /1/messages.json`），支持自定义 device 和 sound
+- **Pushover Bot** (`internal/bot/pushover/`): 单向推送（`POST /1/messages.json`），支持自定义 device 和 sound，日志错误告警推送
 - **统一 Bot 接口**: `internal/bot/bot.go` 定义 `Bot {Start/Stop/Name}` 接口，6 平台统一实现
 - **共享通知基础设施**: `internal/api/bot_notify.go` 提供 `FormatTaskResult`/`RunBotEventLoop`/`RunBotLogLoop`，所有平台复用
 - **`bot_config.yaml` 自动生成**: 首次运行自动创建含完整注释模板的配置文件，覆盖所有平台字段说明及配置获取指引
 - **Bot 初始化集成**: `main.go` 自动检测配置并初始化启用的 bot，与 Server 生命周期绑定（Start/Stop/RegisterCallback 回调注册）
 - **集成文档**: `doc/bot-integration.md` 完整覆盖架构设计、平台对比、配置说明、HTTP 回调注册机制
+- **Bot 单元测试**: 每个平台覆盖 `isAllowed` 鉴权、`FormatTaskResult` 格式化、`parseDLArgs` 参数解析；WeChat 新增 `TestBot_NotifyTaskChanges` 验证通知流程和数据清理正确性
+
 
 #### 多账号用户查询（减少 429）
 - **`GetUserByScreenName` 接入 `SelectClientMFQ`**: 原实现固定使用主账号，被限流时直接返回 429。改为接收多账号参数，内部经 MFQ 轮询选择可用账号，降低用户查询阶段的 429 概率
