@@ -123,6 +123,7 @@ func TestCapturePipe_ReassemblesLinesAcrossChunks(t *testing.T) {
 		},
 	}
 
+	hub.captureWg.Add(1) // capturePipe 的 defer Done 需要先有 Add
 	capturePipe(reader, output, hub)
 
 	_, err = output.Seek(0, 0)
@@ -155,6 +156,7 @@ func TestStartCaptureRetriesAfterFailure(t *testing.T) {
 			return nil, errors.New("temporary start failure")
 		}
 		return &captureSession{
+			hub:             h,
 			originalStdout: os.Stdout,
 			originalStderr: os.Stderr,
 		}, nil
@@ -185,6 +187,7 @@ func TestStartCaptureIsIdempotentAfterSuccess(t *testing.T) {
 	startCaptureFn = func(h *Hub) (*captureSession, error) {
 		calls++
 		return &captureSession{
+			hub:             h,
 			originalStdout: os.Stdout,
 			originalStderr: os.Stderr,
 		}, nil

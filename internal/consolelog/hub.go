@@ -27,6 +27,7 @@ var (
 // an installed capture. In the current application flow capture stays active
 // until process exit, but tests may stop it explicitly to restore stdio.
 type captureSession struct {
+	hub             *Hub
 	originalStdout *os.File
 	originalStderr *os.File
 	stdoutReader   *os.File
@@ -42,6 +43,7 @@ type Hub struct {
 	count       int
 	limit       int
 	subscribers map[*logSubscriber]struct{}
+	captureWg   sync.WaitGroup // 追踪 capturePipe goroutine 生命周期
 }
 
 type logSubscriber struct {
@@ -173,14 +175,18 @@ func (h *Hub) Snapshot() []string {
 	return lines
 }
 
-// Close closes all active log subscribers, causing their SSE handlers to exit.
+// Close closes all active log subscribers and stops the capture session.
+// After Close returns, all capture goroutines have exited and all
+// subscriber channels are closed.
 func (h *Hub) Close() {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	for sub := range h.subscribers {
 		sub.close()
 	}
 	h.subscribers = make(map[*logSubscriber]struct{})
+	h.mu.Unlock()
+
+	StopCapture()
 }
 
 func (h *Hub) Subscribe() (<-chan string, func()) {
@@ -254,10 +260,12 @@ func startCaptureSession(h *Hub) (*captureSession, error) {
 	os.Stdout = stdoutWriter
 	os.Stderr = stderrWriter
 
+	h.captureWg.Add(2)
 	go capturePipe(stdoutReader, originalStdout, h)
 	go capturePipe(stderrReader, originalStderr, h)
 
 	return &captureSession{
+		hub:             h,
 		originalStdout: originalStdout,
 		originalStderr: originalStderr,
 		stdoutReader:   stdoutReader,
@@ -288,10 +296,14 @@ func stopCaptureLocked() {
 		_ = activeCapture.stderrReader.Close()
 	}
 
+	// 等待 capturePipe goroutine 退出后再释放 session
+	activeCapture.hub.captureWg.Wait()
+
 	activeCapture = nil
 }
 
 func capturePipe(reader io.Reader, output *os.File, h *Hub) {
+	defer h.captureWg.Done()
 	buf := make([]byte, 4096)
 	var line strings.Builder
 

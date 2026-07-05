@@ -16,7 +16,7 @@ import (
 	"github.com/gookit/color"
 	"github.com/jmoiron/sqlx"
 	"github.com/natefinch/lumberjack"
-	"github.com/rifflock/lfshook"
+	"github.com/unkmonster/tmd/internal/logging"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/unkmonster/tmd/internal/api"
@@ -57,7 +57,7 @@ func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
 	} else {
 		log.SetOutput(os.Stderr)
 	}
-	log.AddHook(lfshook.NewHook(logFile, nil))
+	log.AddHook(logging.NewLumberjackHook(logFile))
 }
 
 func main() {
@@ -102,14 +102,14 @@ func main() {
 		MaxSize:    2,
 		MaxBackups: 2,
 		MaxAge:     14,
-		Compress:   false,
+		Compress:   true,
 	}
 	cliLogWriter := &lumberjack.Logger{
 		Filename:   cliLogPath,
 		MaxSize:    2,
 		MaxBackups: 2,
 		MaxAge:     14,
-		Compress:   false,
+		Compress:   true,
 	}
 	defer cliLogWriter.Close()
 	defer logWriter.Close()

@@ -440,7 +440,7 @@ func (s *Server) handleDBUserEntityUpdate(w http.ResponseWriter, r *http.Request
 
 	if req.Name != nil {
 		if err := validateFieldName(*req.Name); err != nil {
-			log.Errorf("[db] Invalid name: %v", err)
+			log.Debugf("[db] Invalid name: %v", err)
 			s.writeErrorDetail(w, http.StatusBadRequest, "Invalid name", err.Error())
 			return
 		}
