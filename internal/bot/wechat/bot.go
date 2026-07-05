@@ -39,6 +39,7 @@ func NewBot(cfg *config.WeChatBotConfig, tm *api.TaskManager, eb *api.EventBus, 
 		logHub:      lh,
 		userTokens:  make(map[string]string),
 		userTasks:   make(map[string]map[string]struct{}),
+		stopCh:      make(chan struct{}),
 	}
 }
 

@@ -41,3 +41,29 @@ func TestBot_FormatTaskResult(t *testing.T) {
 		assert.Contains(t, result, "something went wrong")
 	})
 }
+
+func TestBot_NotifyTaskChanges(t *testing.T) {
+	bot := &Bot{
+		userTokens: make(map[string]string),
+		userTasks:  make(map[string]map[string]struct{}),
+		stopCh:     make(chan struct{}),
+	}
+
+	// completed task, no matching user → no send, no crash
+	bot.notifyTaskChanges([]*api.Task{
+		{ID: "task_orphan", Status: api.TaskStatusCompleted,
+			Result: &api.TaskResult{Main: &api.TaskMainResult{Downloaded: 1}}},
+	})
+
+	// running task → should NOT trigger cleanup or send
+	bot.userTasks["user1"] = map[string]struct{}{"task_run": {}}
+	bot.notifyTaskChanges([]*api.Task{
+		{ID: "task_run", Status: api.TaskStatusRunning},
+	})
+	assert.NotEmpty(t, bot.userTasks["user1"],
+		"running tasks should not be cleaned up")
+
+	// nil/empty data → no crash
+	bot.notifyTaskChanges(nil)
+	bot.notifyTaskChanges("bad type")
+}

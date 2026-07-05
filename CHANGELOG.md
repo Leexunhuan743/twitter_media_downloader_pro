@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ***
 
+## [v3.6.0] - 2026-07-05
+
+### Added
+
+#### Bot 通知平台（6 平台）
+- **Telegram Bot**: 长轮询模式，支持 `/dl` 下载命令（user/list/following）及 download options（auto_follow、skip_profile、no_retry、follow_members）、任务状态实时通知、日志错误告警推送
+- **Discord Bot**: WebSocket Gateway 模式，Slash Command（/dl、/status、/cancel、/tasks）及原生 Boolean 选项，任务结果通知、日志告警
+- **WeChat iLink Bot**: 微信个人号接入，文本命令解析，QR 扫码登录（goroutine+2min timeout），自动重连
+- **Feishu/Lark Bot**: HTTP Webhook 回调模式，非阻塞事件处理，3s 超时保护
+- **Gotify Bot**: 单向推送，任务完成通知
+- **Pushover Bot**: 单向推送，任务完成通知，支持自定义提示音
+- **统一 Bot 接口**: `internal/bot/bot.go` 定义 `Bot {Start/Stop/Name}` 接口，6 平台统一实现
+- **`bot_config.yaml` 自动生成**: 首次运行自动创建含完整注释模板的配置文件，覆盖所有平台字段说明
+- **Bot 初始化集成**: `main.go` 自动检测配置并初始化启用的 bot，与 Server 生命周期绑定（Start/Stop/RegisterCallback）
+- **多账号用户查询**: `GetUserByScreenName` 接入 `SelectClientMFQ`，主账号限流时自动切换到附加账号，减少 429
+
+### Fixed
+
+#### WeChat/Feishu 通知锁范围
+- `notifyTaskChanges`: 在持有 mutex 时调用网络发送，可能导致锁死。改为锁内收集目标 + 锁外发送，与 `sendLogAlert` 模式一致
+
+### Removed
+
+- **`DownloadRequest.Client` 字段**: 下载器始终使用自己的无认证客户端，该字段从未被读取
+- **`workerConfig.client` 级联死代码**: 对应构造赋值和测试中 17 条 `Client: resty.New()` 同时清理
+
 ## [v3.5.1] - 2026-06-25
 
 ### Fixed
