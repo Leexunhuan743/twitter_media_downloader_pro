@@ -27,6 +27,8 @@ type List struct {
 	Creator     *User
 }
 
+// GetLst 查询列表信息。列表是用户私有资源，只能使用主账号的身份凭据访问。
+// 不使用多账号轮询（SelectClientMFQ），因为附加账号没有该列表的可见性。
 func GetLst(ctx context.Context, client *resty.Client, id uint64) (*List, error) {
 	api := listByRestId{}
 	api.id = id
@@ -103,6 +105,8 @@ func getMembers(ctx context.Context, client *resty.Client, api timelineApi, inst
 	return &result, nil
 }
 
+// GetMembers 获取列表成员。列表是用户私有资源，只能使用主账号的身份凭据访问。
+// 不使用多账号轮询（SelectClientMFQ），因为附加账号没有该列表的可见性。
 func (list *List) GetMembers(ctx context.Context, client *resty.Client) (*MembersResult, error) {
 	api := listMembers{}
 	api.count = 200

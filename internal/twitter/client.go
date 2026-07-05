@@ -525,10 +525,10 @@ func SelectClient(ctx context.Context, clients []*resty.Client, path string) *re
 // SelectClientMFQ 带指数退避的 MFQ 客户端选择
 // Q1: 只用附加账户（非受保护用户优先）
 // Q2: 附加账户 + 主账户 + 指数退避
-// Q3: 主账户独占（受保护用户）
+// Q3: 受保护用户 → 主账户独占（仅在已知用户信息时生效）
 func SelectClientMFQ(ctx context.Context, master *resty.Client, additional []*resty.Client, user *User, path string) *resty.Client {
-	// Q3: 受保护用户 → 主账户独占
-	if user.IsProtected {
+	// Q3: 受保护用户 → 主账户独占（仅在已知用户信息时生效）
+	if user != nil && user.IsProtected {
 		return master
 	}
 

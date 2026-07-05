@@ -51,9 +51,14 @@ func GetUserById(ctx context.Context, client *resty.Client, id uint64) (*User, u
 	return r, uid, err
 }
 
-func GetUserByScreenName(ctx context.Context, client *resty.Client, screenName string) (*User, uint64, error) {
+func GetUserByScreenName(ctx context.Context, master *resty.Client, additional []*resty.Client, screenName string) (*User, uint64, error) {
+	cli := SelectClientMFQ(ctx, master, additional, nil, (&userByScreenName{}).Path())
+	if cli == nil {
+		return nil, 0, fmt.Errorf("failed to get user [%s]: no available client", screenName)
+	}
+	log.Debugf("[twitter] GetUserByScreenName(%s) → client: %s", screenName, GetClientScreenName(cli))
 	u := makeUrl(&userByScreenName{screenName: screenName})
-	r, uid, err := getUser(ctx, client, u)
+	r, uid, err := getUser(ctx, cli, u)
 	if err != nil {
 		// 注意：通过 screen_name 查询时，UserUnavailable 响应不包含 rest_id
 		// 所以 uid 可能为 0，调用方需要检查

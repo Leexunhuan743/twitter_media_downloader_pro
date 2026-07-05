@@ -163,7 +163,7 @@ func countRemainingFailedEntities(dumper *downloading.TweetDumper, failures fail
 func (s *downloadServiceImpl) resolveUsers(ctx context.Context, screenNames []string) []*twitter.User {
 	var users []*twitter.User
 	for _, name := range screenNames {
-		user, uid, err := twitter.GetUserByScreenName(ctx, s.deps.Client, name)
+		user, uid, err := twitter.GetUserByScreenName(ctx, s.deps.Client, s.deps.AdditionalClients, name)
 		if err != nil {
 			database.MarkUserInaccessible(s.deps.DB, uid, name)
 			log.Warnf("[download] Failed to get user %s: %v", name, err)
@@ -177,6 +177,7 @@ func (s *downloadServiceImpl) resolveUsers(ctx context.Context, screenNames []st
 func (s *downloadServiceImpl) resolveLists(ctx context.Context, listIDs []uint64) []twitter.ListBase {
 	var lists []twitter.ListBase
 	for _, id := range listIDs {
+	// 列表是用户私有资源，只能使用主账号访问，不走 MFQ 多账号轮询
 		list, err := twitter.GetLst(ctx, s.deps.Client, id)
 		if err != nil {
 			log.Warnf("[download] Failed to get list %d: %v", id, err)
@@ -190,7 +191,7 @@ func (s *downloadServiceImpl) resolveLists(ctx context.Context, listIDs []uint64
 func (s *downloadServiceImpl) resolveFollowings(ctx context.Context, screenNames []string) []twitter.ListBase {
 	var lists []twitter.ListBase
 	for _, name := range screenNames {
-		user, uid, err := twitter.GetUserByScreenName(ctx, s.deps.Client, name)
+		user, uid, err := twitter.GetUserByScreenName(ctx, s.deps.Client, s.deps.AdditionalClients, name)
 		if err != nil {
 			database.MarkUserInaccessible(s.deps.DB, uid, name)
 			log.Warnf("[download] Failed to get user %s for following list: %v", name, err)
@@ -411,7 +412,7 @@ func (s *downloadServiceImpl) UserDownload(ctx context.Context, taskID string, s
 		},
 
 		Prepare: func(ctx context.Context, ph *path.StorePath) ([]*twitter.User, []twitter.ListBase, error) {
-			user, uid, err := twitter.GetUserByScreenName(ctx, s.deps.Client, screenName)
+			user, uid, err := twitter.GetUserByScreenName(ctx, s.deps.Client, s.deps.AdditionalClients, screenName)
 			if err != nil {
 				database.MarkUserInaccessible(s.deps.DB, uid, screenName)
 				return nil, nil, err
@@ -467,7 +468,7 @@ func (s *downloadServiceImpl) FollowingDownload(ctx context.Context, taskID stri
 		},
 
 		Prepare: func(ctx context.Context, ph *path.StorePath) ([]*twitter.User, []twitter.ListBase, error) {
-			user, uid, err := twitter.GetUserByScreenName(ctx, s.deps.Client, screenName)
+			user, uid, err := twitter.GetUserByScreenName(ctx, s.deps.Client, s.deps.AdditionalClients, screenName)
 			if err != nil {
 				database.MarkUserInaccessible(s.deps.DB, uid, screenName)
 				return nil, nil, err
@@ -522,6 +523,7 @@ func (s *downloadServiceImpl) ListProfileDownload(ctx context.Context, taskID st
 	reporter.OnProgress(taskID, Progress{Stage: "syncing", Current: fmt.Sprintf("list:%d", listID)})
 
 	// 获取列表成员
+	// 列表是用户私有资源，只能用主账号查询，不走多账号轮询
 	list, err := twitter.GetLst(ctx, s.deps.Client, listID)
 	if err != nil {
 		return err
