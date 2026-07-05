@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/chyroc/lark"
 	log "github.com/sirupsen/logrus"
@@ -52,6 +53,7 @@ func (b *Bot) Start() error {
 		lark.WithAppCredential(b.config.AppID, b.config.AppSecret),
 		lark.WithEventCallbackVerify(encryptKey, b.config.VerifyToken),
 		lark.WithNonBlockingCallback(true),
+		lark.WithTimeout(10 * time.Second),
 	}
 
 	cli := lark.New(opts...)
