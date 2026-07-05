@@ -54,12 +54,6 @@ func (n *NopReporter) OnError(taskID string, err error)     {}
 // LogReporter 日志报告器（用于 CLI 模式）
 type LogReporter struct {
 	logger func(format string, args ...interface{})
-	result *Result // 最后一次 OnComplete 的结果，供 CLI 模式查询
-}
-
-// Result 返回最近一次 OnComplete 的结果。如果没有完成调用则返回 nil。
-func (l *LogReporter) Result() *Result {
-	return l.result
 }
 
 func NewLogReporter(logger func(format string, args ...interface{})) ProgressReporter {
@@ -94,7 +88,6 @@ func (l *LogReporter) OnProgress(taskID string, p Progress) {
 }
 
 func (l *LogReporter) OnComplete(taskID string, r Result) {
-	l.result = &r
 	if l.logger == nil {
 		return
 	}

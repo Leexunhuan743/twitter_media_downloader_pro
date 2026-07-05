@@ -259,18 +259,6 @@ func Execute(ctx context.Context, args []string, deps *Dependencies) error {
 		if profileErr != nil {
 			return profileErr
 		}
-
-		// 输出 Profile 下载摘要到 stdout（logrus 输出到 stderr，用户不易发现）
-		if lr, ok := reporter.(*service.LogReporter); ok {
-			if r := lr.Result(); r != nil && r.Profile != nil {
-				p := r.Profile
-				fmt.Printf("Profile download: %d success, %d failed", p.Downloaded, p.Failed)
-				if p.Versioned > 0 {
-					fmt.Printf(", %d updated", p.Versioned)
-				}
-				fmt.Println()
-			}
-		}
 		return nil
 	}
 
