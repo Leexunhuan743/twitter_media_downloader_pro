@@ -12,26 +12,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Bot 通知平台（6 平台）
-- **Telegram Bot**: 长轮询模式，支持 `/dl` 下载命令（user/list/following）及 download options（auto_follow、skip_profile、no_retry、follow_members）、任务状态实时通知、日志错误告警推送
-- **Discord Bot**: WebSocket Gateway 模式，Slash Command（/dl、/status、/cancel、/tasks）及原生 Boolean 选项，任务结果通知、日志告警
-- **WeChat iLink Bot**: 微信个人号接入，文本命令解析，QR 扫码登录（goroutine+2min timeout），自动重连
-- **Feishu/Lark Bot**: HTTP Webhook 回调模式，非阻塞事件处理，3s 超时保护
-- **Gotify Bot**: 单向推送，任务完成通知
-- **Pushover Bot**: 单向推送，任务完成通知，支持自定义提示音
+- **Telegram Bot** (`internal/bot/telegram/`): 长轮询模式（`getUpdates` + 60s timeout），过滤 `allowed_updates: ["message"]`，支持 `/dl` 下载命令（user/list/following）及 download options（auto_follow、skip_profile、no_retry、follow_members）、任务状态上下文追踪（仅通知任务发起者）、日志错误告警推送
+- **Discord Bot** (`internal/bot/discord/`): WebSocket Gateway 模式（discordgo），Slash Command 注册（/dl、/status、/cancel、/tasks），原生 Boolean 选项（auto_follow、skip_profile、no_retry、follow_members），任务结果通知、日志告警、频道上下文追踪
+- **WeChat iLink Bot** (`internal/bot/wechat/`): 微信个人号接入（SpellingDragon/wechat-robot-go），文本命令解析，QR 扫码登录（goroutine + 2min timeout），`runWithReconnect` 断线自动重连
+- **Feishu/Lark Bot** (`internal/bot/feishu/`): HTTP Webhook 回调模式（chyroc/lark），`WithNonBlockingCallback`（3s 超时保护），`WithTimeout(10s)` 防网络 hang，`RegisterBotCallback` 集成到 TMD Server
+- **Gotify Bot** (`internal/bot/gotify/`): 单向推送（`POST /message` + `X-Gotify-Key` auth），任务完成/失败通知
+- **Pushover Bot** (`internal/bot/pushover/`): 单向推送（`POST /1/messages.json`），支持自定义 device 和 sound
 - **统一 Bot 接口**: `internal/bot/bot.go` 定义 `Bot {Start/Stop/Name}` 接口，6 平台统一实现
-- **`bot_config.yaml` 自动生成**: 首次运行自动创建含完整注释模板的配置文件，覆盖所有平台字段说明
-- **Bot 初始化集成**: `main.go` 自动检测配置并初始化启用的 bot，与 Server 生命周期绑定（Start/Stop/RegisterCallback）
-- **多账号用户查询**: `GetUserByScreenName` 接入 `SelectClientMFQ`，主账号限流时自动切换到附加账号，减少 429
+- **共享通知基础设施**: `internal/api/bot_notify.go` 提供 `FormatTaskResult`/`RunBotEventLoop`/`RunBotLogLoop`，所有平台复用
+- **`bot_config.yaml` 自动生成**: 首次运行自动创建含完整注释模板的配置文件，覆盖所有平台字段说明及配置获取指引
+- **Bot 初始化集成**: `main.go` 自动检测配置并初始化启用的 bot，与 Server 生命周期绑定（Start/Stop/RegisterCallback 回调注册）
+- **集成文档**: `doc/bot-integration.md` 完整覆盖架构设计、平台对比、配置说明、HTTP 回调注册机制
+
+#### 多账号用户查询（减少 429）
+- **`GetUserByScreenName` 接入 `SelectClientMFQ`**: 原实现固定使用主账号，被限流时直接返回 429。改为接收多账号参数，内部经 MFQ 轮询选择可用账号，降低用户查询阶段的 429 概率
+- **`SelectClientMFQ` nil 安全**: 用户未知时跳过 Q3（受保护用户强制主账号）检查，使无 user 上下文的查询也能走多账号轮询
+
+#### 批量下载上下文日志
+- **列表/关注/直接用户标注**: `batch_any.go` 中每种来源单独标记，最终日志示例：
+  ```
+  [batch] Downloading My Interests(12345)
+  [batch] Downloading ppcouplee's Following
+  [batch] Downloading user: elonmusk
+  [batch] Downloading 4 user(s): elonmusk, member1, member2...
+  ```
 
 ### Fixed
 
-#### WeChat/Feishu 通知锁范围
-- `notifyTaskChanges`: 在持有 mutex 时调用网络发送，可能导致锁死。改为锁内收集目标 + 锁外发送，与 `sendLogAlert` 模式一致
+#### All 4 bidirectional bots: `notifyTaskChanges` 锁范围
+- **WeChat/Feishu/Telegram/Discord** 四个平台的 `notifyTaskChanges` 均在持有 mutex 时调用网络发送（`sendText`/`ChannelMessageSend`），可能导致锁死。全部改为锁内收集通知目标 → 解锁 → 锁外发送，与已正确的 `sendLogAlert` 模式一致
+
+#### Discord `/dl` 选项顺序违反 API 规范
+- `type`（optional）在 `target`（required）之前，Discord API 要求 required 选项必须在 optional 之前。调换顺序后 Discord 才能正确注册 slash command
+
+#### Telegram `allowed_updates` 缺失
+- 未设置 `AllowedUpdates` 导致接收全部更新类型（callback_query、poll、chat_member 等），浪费带宽。限定为 `["message"]`，只接收需要的消息事件
+
+#### Discord `IntentsGuildMessages` 多余
+- 使用 Slash Command（`INTERACTION_CREATE`）的 bot 不需要任何 Gateway intents，`IntentsGuildMessages` 的订阅在新版 API 可能触发不必要权限审查。移除
+
+#### WeChat `stopCh` nil channel
+- `NewBot` 未初始化 `stopCh`，`Stop()` 中 `close(b.stopCh)` 会在 nil channel 上 panic。补 `make(chan struct{})`
+
+#### Feishu 客户端无超时
+- `lark.WithTimeout` 未设置，`sendText` 用 `context.Background()` 无超时，网络 hang 时永久阻塞 goroutine。加 `lark.WithTimeout(10 * time.Second)`
 
 ### Removed
 
-- **`DownloadRequest.Client` 字段**: 下载器始终使用自己的无认证客户端，该字段从未被读取
-- **`workerConfig.client` 级联死代码**: 对应构造赋值和测试中 17 条 `Client: resty.New()` 同时清理
+- **`DownloadRequest.Client` 字段**: `internal/downloader/types.go` — 下载器始终使用自己的无认证 `downloadClient`，该字段从未被读取
+- **`workerConfig.client`**: `internal/downloading/types.go` — 对应构造赋值站点和测试中 17 条 `Client: resty.New()` 同时清理
+- **`resty/v2` import**: 3 个 types 文件中因字段删除不再需要该导入，一并清理
 
 ## [v3.5.1] - 2026-06-25
 
