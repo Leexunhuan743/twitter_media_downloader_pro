@@ -18,6 +18,10 @@ const (
 func getInstructions(resp []byte, path string) (gjson.Result, error) {
 	inst := gjson.GetBytes(resp, path)
 	if !inst.Exists() {
+		typeName := gjson.GetBytes(resp, "data.user.result.__typename").String()
+		if typeName != "" && typeName != "User" {
+			return gjson.Result{}, fmt.Errorf("user unavailable: __typename is %s", typeName)
+		}
 		// 简化错误信息，避免输出原始响应数据
 		return gjson.Result{}, fmt.Errorf("unable to get timeline data: the resource may not exist or be private")
 	}
