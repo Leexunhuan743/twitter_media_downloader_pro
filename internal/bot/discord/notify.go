@@ -11,8 +11,12 @@ func (b *Bot) notifyTaskChanges(data interface{}) {
 	if !ok {
 		return
 	}
+	type notification struct {
+		channelID string
+		text      string
+	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	var notifications []notification
 	for _, task := range tasks {
 		if task.Status != api.TaskStatusCompleted && task.Status != api.TaskStatusFailed {
 			continue
@@ -25,11 +29,15 @@ func (b *Bot) notifyTaskChanges(data interface{}) {
 			if len(taskIDs) == 0 {
 				delete(b.channelTasks, channelID)
 			}
-			text := api.FormatTaskResult(task, true)
-			_, err := b.session.ChannelMessageSend(channelID, text)
-			if err != nil {
-				log.Warnf("[bot-discord] Failed to send notification: %v", err)
-			}
+			notifications = append(notifications, notification{channelID: channelID, text: api.FormatTaskResult(task, true)})
+		}
+	}
+	b.mu.Unlock()
+
+	for _, n := range notifications {
+		_, err := b.session.ChannelMessageSend(n.channelID, n.text)
+		if err != nil {
+			log.Warnf("[bot-discord] Failed to send notification: %v", err)
 		}
 	}
 }

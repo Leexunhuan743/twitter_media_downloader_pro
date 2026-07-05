@@ -52,6 +52,7 @@ func (b *Bot) Start() error {
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
+	u.AllowedUpdates = []string{"message"}
 	b.updates = b.api.GetUpdatesChan(u)
 
 	b.wg.Add(1)

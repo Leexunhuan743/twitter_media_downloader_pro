@@ -14,8 +14,12 @@ func (b *Bot) notifyTaskChanges(data interface{}) {
 	if !ok {
 		return
 	}
+	type notification struct {
+		chatID int64
+		text   string
+	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	var notifications []notification
 	for _, task := range tasks {
 		if task.Status != api.TaskStatusCompleted && task.Status != api.TaskStatusFailed {
 			continue
@@ -28,12 +32,16 @@ func (b *Bot) notifyTaskChanges(data interface{}) {
 			if len(taskIDs) == 0 {
 				delete(b.chatTasks, chatID)
 			}
-			text := api.FormatTaskResult(task, true)
-			msg := tgbotapi.NewMessage(chatID, text)
-			msg.ParseMode = "markdown"
-			if _, err := b.api.Send(msg); err != nil {
-				log.Warnf("[bot-telegram] Failed to send notification: %v", err)
-			}
+			notifications = append(notifications, notification{chatID: chatID, text: api.FormatTaskResult(task, true)})
+		}
+	}
+	b.mu.Unlock()
+
+	for _, n := range notifications {
+		msg := tgbotapi.NewMessage(n.chatID, n.text)
+		msg.ParseMode = "markdown"
+		if _, err := b.api.Send(msg); err != nil {
+			log.Warnf("[bot-telegram] Failed to send notification: %v", err)
 		}
 	}
 }
