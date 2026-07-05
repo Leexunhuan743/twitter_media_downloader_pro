@@ -104,6 +104,14 @@ func main() {
 		MaxAge:     14,
 		Compress:   false,
 	}
+	cliLogWriter := &lumberjack.Logger{
+		Filename:   cliLogPath,
+		MaxSize:    2,
+		MaxBackups: 2,
+		MaxAge:     14,
+		Compress:   false,
+	}
+	defer cliLogWriter.Close()
 	defer logWriter.Close()
 	consoleLogHub := consolelog.DefaultHub()
 	initLogger(bootstrap.dbg, logWriter, consoleLogHub)
@@ -172,7 +180,7 @@ func main() {
 
 	// Server 模式
 	if bootstrap.serverMode {
-		runServer(conf, appRootPath, serverPort, loginOpts, logWriter, consoleLogHub)
+		runServer(conf, appRootPath, serverPort, loginOpts, logWriter, consoleLogHub, cliLogWriter)
 		return
 	}
 
@@ -183,15 +191,10 @@ func main() {
 	}
 	defer db.Close()
 
-	// 设置客户端日志
-	cliLogFile, err := os.OpenFile(cliLogPath, os.O_TRUNC|os.O_WRONLY|os.O_CREATE, 0644)
-	if err != nil {
-		log.Fatalln("[startup] Failed to create log file:", err)
-	}
-	defer cliLogFile.Close()
-	cli.SetClientLogger(client, cliLogFile)
+	// 设置客户端日志（lumberjack 自动轮转）
+	cli.SetClientLogger(client, cliLogWriter)
 	for _, c := range additional {
-		cli.SetClientLogger(c, cliLogFile)
+		cli.SetClientLogger(c, cliLogWriter)
 	}
 
 	// 信号处理
@@ -347,7 +350,7 @@ func initializeClients(
 	return client, additional, pathHelper, db
 }
 
-func runServer(conf *config.Config, appRootPath string, port int, loginOpts twitter.LoginOptions, logWriter io.Closer, logHub *consolelog.Hub) {
+func runServer(conf *config.Config, appRootPath string, port int, loginOpts twitter.LoginOptions, logWriter io.Closer, logHub *consolelog.Hub, cliLogWriter io.Writer) {
 	ctx := context.Background()
 
 	client, additional, _, db := initializeClients(ctx, conf, appRootPath, loginOpts, false)
@@ -356,17 +359,10 @@ func runServer(conf *config.Config, appRootPath string, port int, loginOpts twit
 		return
 	}
 
-	// 设置客户端日志
-	cliLogPath := filepath.Join(appRootPath, "client.log")
-	// 注意：Server 模式下通常长久运行，这里使用 O_APPEND 追加模式，而不是 O_TRUNC 截断
-	cliLogFile, err := os.OpenFile(cliLogPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
-	if err != nil {
-		log.Fatalln("[startup] Failed to create log file:", err)
-	}
-	// 在目前的简单实现中，我们把它交给 resty 管理，它会在应用退出时随进程关闭。
-	cli.SetClientLogger(client, cliLogFile)
+	// 设置客户端日志（lumberjack 自动轮转）
+	cli.SetClientLogger(client, cliLogWriter)
 	for _, c := range additional {
-		cli.SetClientLogger(c, cliLogFile)
+		cli.SetClientLogger(c, cliLogWriter)
 	}
 
 	// 创建并启动 API Server
