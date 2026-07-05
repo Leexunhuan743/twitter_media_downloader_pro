@@ -955,9 +955,16 @@ func (s *downloadServiceImpl) downloadProfile(ctx context.Context, taskID string
 		if bannerFailed > 0 {
 			fileParts = append(fileParts, fmt.Sprintf("%d banners", bannerFailed))
 		}
+		if versionedFileCount > 0 {
+			fileParts = append(fileParts, fmt.Sprintf("%d versioned", versionedFileCount))
+		}
 		log.Infof("[profile] Download complete: %d/%d users (%s failed)", successCount, len(results), strings.Join(fileParts, ", "))
 	} else if len(results) > 0 {
-		log.Infof("[profile] Download complete: %d/%d users", successCount, len(results))
+		if versionedFileCount > 0 {
+			log.Infof("[profile] Download complete: %d/%d users (%d versioned)", successCount, len(results), versionedFileCount)
+		} else {
+			log.Infof("[profile] Download complete: %d/%d users", successCount, len(results))
+		}
 	}
 
 	if successCount == 0 && failCount > 0 {
