@@ -61,7 +61,7 @@ func BatchDownloadAny(ctx context.Context, client *resty.Client, db *sqlx.DB, li
 	}
 
 	for _, usr := range users {
-		log.Infof("[batch] Downloading user: %s", usr.ScreenName)
+		log.Debugf("[batch] Downloading user: %s", usr.ScreenName)
 		packgedUsers = append(packgedUsers, userInListEntity{user: usr, leid: 0})
 	}
 
