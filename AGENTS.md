@@ -20,16 +20,38 @@ This project uses [lat.md](https://www.npmjs.com/package/lat.md) to maintain a s
 # Commands
 
 ```bash
-lat locate "Section Name"      # find a section by name (exact, fuzzy)
-lat refs "file#Section"        # find what references a section
-lat search "natural language"  # semantic search across all sections
-lat expand "user prompt text"  # expand [[refs]] to resolved locations
-lat check                      # validate all links and code refs
+lat init                     # initialize lat.md/ in a new project
+lat locate "Section Name"    # find a section by name (exact, fuzzy)
+lat refs "file#Section"      # find what references a section
+lat search "natural language" # semantic search across all sections
+lat expand "user prompt text" # expand [[refs]] to resolved locations
+lat serve                    # start local MCP server for AI agent queries
+lat check                    # validate all links and code refs
 ```
 
-Run `lat --help` when in doubt about available commands or options.
+Run `lat --help` for all options, `lat <command> --help` per command.
+
+### MCP (Model Context Protocol)
+
+`lat serve` starts an MCP server that AI agents query directly — no manual `lat search` needed. Configure it in your agent's MCP settings (see [upstream docs](https://github.com/1st1/lat.md#readme)).
+
+### Semantic search key
 
 If `lat search` fails because no API key is configured, explain to the user that semantic search requires a key provided via `LAT_LLM_KEY` (direct value), `LAT_LLM_KEY_FILE` (path to key file), or `LAT_LLM_KEY_HELPER` (command that prints the key). Supported key prefixes: `sk-...` (OpenAI) or `vck_...` (Vercel). If the user doesn't want to set it up, use `lat locate` for direct lookups instead.
+
+---
+
+# Quickstart: Add a new section
+
+1. Create or edit a file in `lat.md/` (e.g. `lat.md/feature-x.md`)
+2. Add a `# Title` and a one-paragraph description (≤250 chars)
+3. Link to it from the index `lat.md/lat.md` with `- [[feature-x]] — description`
+4. Cross-link from related sections with `[[feature-x#SectionName]]`
+5. Run `lat check` — fix any broken links
+
+# CI Integration
+
+`lat check` should be part of CI to prevent drift. Current `.github/workflows/go.yml` only builds release binaries — add a `lat check` step if you enable CI for PRs.
 
 # Syntax primer
 
