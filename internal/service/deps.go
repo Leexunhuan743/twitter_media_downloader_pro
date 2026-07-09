@@ -16,6 +16,7 @@ type Dependencies struct {
 	AdditionalClients []*resty.Client
 	DB                *sqlx.DB
 	Config            *config.Config
+	AppRootPath       string // 验证 JSON download path 时的允许前缀，通常为 appRootPath
 	ListSyncManager   *downloading.ListSyncManager // 可选，为 nil 时跳过 list 成员同步清理
 }
 

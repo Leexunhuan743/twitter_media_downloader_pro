@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -601,6 +602,11 @@ func (s *downloadServiceImpl) JsonFileDownload(ctx context.Context, taskID strin
 
 	reporter.OnProgress(taskID, Progress{Stage: "downloading", Total: len(paths), Current: fmt.Sprintf("%d JSON files", len(paths))})
 
+	if err := s.validateJsonPaths(paths); err != nil {
+		log.Errorf("[download] JsonFileDownload path validation failed: %v", err)
+		return err
+	}
+
 	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
 	if err != nil {
 		log.Errorf("[download] Failed to create store path: %v", err)
@@ -655,6 +661,11 @@ func (s *downloadServiceImpl) JsonFolderDownload(ctx context.Context, taskID str
 	reporter = s.getReporterOrDefault(reporter)
 
 	reporter.OnProgress(taskID, Progress{Stage: "downloading", Total: len(paths), Current: fmt.Sprintf("%d loongtweet folders", len(paths))})
+
+	if err := s.validateJsonPaths(paths); err != nil {
+		log.Errorf("[download] JsonFolderDownload path validation failed: %v", err)
+		return err
+	}
 
 	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
 	if err != nil {
@@ -985,4 +996,32 @@ func cloneProfileResult(result *ProfileResult) *ProfileResult {
 	}
 	clone := *result
 	return &clone
+}
+
+// validateJsonPaths 检查 paths 是否在允许的根目录之内，防止路径穿越
+func (s *downloadServiceImpl) validateJsonPaths(paths []string) error {
+	rootPath := filepath.Clean(s.deps.Config.RootPath)
+	var allowedPrefixes []string
+	allowedPrefixes = append(allowedPrefixes, rootPath+string(filepath.Separator))
+	allowedPrefixes = append(allowedPrefixes, rootPath)
+	if s.deps.AppRootPath != "" {
+		appRoot := filepath.Clean(s.deps.AppRootPath)
+		allowedPrefixes = append(allowedPrefixes, appRoot+string(filepath.Separator))
+		allowedPrefixes = append(allowedPrefixes, appRoot)
+	}
+
+	for _, p := range paths {
+		clean := filepath.Clean(p)
+		allowed := false
+		for _, prefix := range allowedPrefixes {
+			if strings.HasPrefix(clean, prefix) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return fmt.Errorf("path %q is outside allowed directories", p)
+		}
+	}
+	return nil
 }

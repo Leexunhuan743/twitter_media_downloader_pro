@@ -127,14 +127,14 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 使用 path.Clean 来规范化路径，自动处理掉所有的 "." 和 ".." 以及多余的斜杠
-	cleanPath := path.Clean("/" + reqPath)
-
-	// 确保规范化后的路径不会逃逸出根目录
-	if strings.Contains(cleanPath, "..") {
+	// 在 path.Clean 之前检查原始路径是否包含 ..
+	if strings.Contains(reqPath, "..") {
 		http.NotFound(w, r)
 		return
 	}
+
+	// 使用 path.Clean 来规范化路径，自动处理掉所有的 "." 和 ".." 以及多余的斜杠
+	cleanPath := path.Clean("/" + reqPath)
 
 	cleanPath = strings.TrimPrefix(cleanPath, "/")
 

@@ -89,6 +89,7 @@ func NewServerWithConsoleLogHub(client *resty.Client, additionalClients []*resty
 		AdditionalClients: additionalClients,
 		DB:                db,
 		Config:            &configCopy,
+		AppRootPath:      appRootPath,
 		ListSyncManager:   downloading.NewListSyncManager(db),
 	})
 	if err != nil {
