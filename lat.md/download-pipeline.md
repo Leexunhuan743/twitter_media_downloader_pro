@@ -22,7 +22,7 @@ The core download flow orchestrates batch user/media retrieval, single-file down
 
 ## Batch User Download
 
-`BatchUserDownload()` in [[download-pipeline#Batch User Download]]:
+`BatchUserDownload()` orchestrates the full batch flow:
 
 ### Preprocessing
 Steps performed before media fetching begins.

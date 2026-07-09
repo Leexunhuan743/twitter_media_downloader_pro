@@ -31,14 +31,18 @@ schedules:
   - type: user
     target: elonmusk
     name: "Elon Musk"
-    schedule: "daily 08:00,20:00"
+    schedule: "daily:08:00,20:00"
     enabled: true
     run_on_start: false
+    auto_follow: true
+    skip_profile: false
   - type: list
     target: "1234567890"
-    schedule: "interval 4h"
+    schedule: "interval:4h"
     enabled: true
 ```
+
+Optional download option fields: `auto_follow`, `follow_members`, `skip_profile`, `no_retry`. `mixed` type uses `users`, `lists`, `following_names` instead of `target`.
 
 ## Execution
 

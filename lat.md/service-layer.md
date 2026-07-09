@@ -31,9 +31,24 @@ The `DownloadServiceImpl` struct holds references to the infrastructure layer, i
 - **`s.deps.Client`** — master Twitter account client
 - **`s.deps.AdditionalClients`** — secondary accounts for rate limit distribution
 - **`s.deps.DB`** — database instance
-- **`s.deps.Config`** — application config
 - **`s.deps.ListSyncManager`** — list membership sync
+- **`s.deps.AppRootPath`** — app root path for JSON download path validation
 
 ## Thread Safety
 
 A `dumperMu sync.Mutex` in `DownloadServiceImpl` protects concurrent access to the [[download-pipeline|TweetDumper]] (failure recorder) from multiple download tasks.
+
+## Download Options
+
+Four boolean options control download behavior. They are set per-task via JSON body (API) or command arguments ([[bot-integration|bot platforms]]).
+
+The canonical `DownloadOptions` struct is defined in `service/interfaces.go` (lines 8-13). The API layer's task data structs in `api/types.go` (e.g. `UserDownloadTaskData`) carry equivalent JSON-tagged fields — they are mapped into `DownloadOptions` at service call time.
+
+| Option | Effect |
+|--------|--------|
+| `AutoFollow` | Automatically follow protected users before downloading their media. Requires master account. |
+| `FollowMembers` | After a list download, follow all list members whose media was downloaded. Requires master account. |
+| `SkipProfile` | Skip the avatar/banner/profile.json download that normally follows media download. |
+| `NoRetry` | Skip the automatic retry of failed items after the download round completes. |
+
+Available on `UserDownload`, `FollowingDownload`, `ListDownload`, and `BatchDownload` operations. `JsonFileDownload` and `JsonFolderDownload` support only `NoRetry`.

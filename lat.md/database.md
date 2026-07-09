@@ -22,8 +22,7 @@ users ──1:N── user_entities (same user, different parent dirs)
 users ──1:N── user_previous_names (rename history)
 lsts ──1:N── lst_entities (same list, different parent dirs)
 lst_entities ──1:N── user_links (list member symlinks)
-user_entities ──1:N── user_links (user symlinked into lists)
-```
+users ──1:N── user_links (user symlinked into lists, FK: user_links.user_id → users.id)
 
 ## UserEntity
 
@@ -35,8 +34,11 @@ Domain model wrapping `database.UserEntity`. Provides:
 
 ## Migrations
 
-Implemented in `sqlite_migration.go` — repeatable `ALTER TABLE ADD COLUMN` and `RENAME COLUMN` statements. A `parent_dir_migration.go` handles historical path migration for directory renames.
+`schema.go:MigrateDatabase()` handles repeatable in-place `ALTER TABLE ADD COLUMN` and `RENAME COLUMN` statements for schema upgrades.
 
+`sqlite_migration.go:migrateExistingDatabase()` handles full backup-and-rebuild for legacy databases created by older SQLite drivers, then copies all data into the new schema. This can be removed after all users have migrated.
+
+`parent_dir_migration.go:MigrateParentDirsInSQLiteFile()` handles historical path migration for directory renames.
 ## TweetDumper (Failure Recorder)
 
 Persists failed tweet IDs to JSON files so they can be retried in future runs.
@@ -44,6 +46,4 @@ Persists failed tweet IDs to JSON files so they can be retried in future runs.
 Groups failures by entity ID (regular) or source path (JSON import). Dumper is loaded at start and dumped after each download round. Protected by `sync.Mutex` at the service layer.
 ## User Sync
 
-Detects screen_name changes and records rename history in `user_previous_names`.
-
-`database/user_sync.go` detects screen_name changes, records old names in `user_previous_names`, and renames the filesystem directory accordingly.
+`database/user_sync.go:SyncUser()` detects screen_name/name changes and records old names in `user_previous_names`. The filesystem directory rename is handled by `entity/sync.go` → `UserEntity.Rename()`.

@@ -20,6 +20,16 @@ Optional bearer-token authentication layer. When the API key is empty, auth is d
 - Public whitelist: health check, theme config, Web UI pages, static files
 - 401 response: `{"success":false,"error":"unauthorized"}` + `WWW-Authenticate: Bearer`
 
+### Auth Endpoints
+
+JWT-based authentication endpoints. Only available when `api_key` is configured.
+
+```
+POST /api/v1/auth/login    # Login with API key, returns JWT token
+POST /api/v1/auth/refresh  # Refresh JWT token before expiry
+GET  /api/v1/auth/check    # Check current JWT validity
+```
+
 ## API Routes
 
 All download endpoints return `202 Accepted` with `task_id`. Task progress is pushed via [[task-management|SSE]].
@@ -68,6 +78,16 @@ POST /api/v1/server/shutdown
 GET  /api/v1/sse/tasks
 ```
 
+### Error Management
+
+Endpoints to inspect and retry failed downloads.
+
+```
+GET    /api/v1/errors         # List all failed items
+POST   /api/v1/errors/retry   # Retry all failed items
+DELETE /api/v1/errors         # Clear all error records
+```
+
 ### Config, Cookies, Schedules, Logs, DB Management
 
 Endpoints for all remaining management and configuration operations.
@@ -76,8 +96,19 @@ Endpoints for all remaining management and configuration operations.
 GET/PUT  /api/v1/config, /api/v1/config/raw, /api/v1/config/fields
 GET/PUT  /api/v1/cookies, /api/v1/cookies/raw
 GET/PUT  /api/v1/schedules, /api/v1/schedules/raw
-GET      /api/v1/logs, /api/v1/logs/export, /api/v1/logs/stream
-GET/PATCH/DELETE /api/v1/db/users/{id}, /api/v1/db/lists/{id}, etc.
+POST     /api/v1/schedules, /api/v1/schedules/reload, /api/v1/schedules/validate
+POST     /api/v1/schedules/trigger-all
+GET      /api/v1/schedules/stats
+PUT      /api/v1/schedules/{id}
+DELETE   /api/v1/schedules/{id}
+PATCH    /api/v1/schedules/{id}/enabled
+POST     /api/v1/schedules/{id}/trigger
+GET      /api/v1/logs, /api/v1/logs/stats, /api/v1/logs/export, /api/v1/logs/stream
+GET/PATCH/DELETE /api/v1/db/users/{id}, /api/v1/db/lists/{id}
+GET/PATCH/DELETE /api/v1/db/user-entities/{id}, /api/v1/db/list-entities/{id}
+GET/PATCH/DELETE /api/v1/db/user-links/{id}
+GET      /api/v1/db/user-previous-names
+GET      /api/v1/db/stats
 ```
 
 ## Web UI

@@ -7,11 +7,13 @@ TMD (Twitter Media Downloader) is a Go application that downloads media from Twi
 The codebase is organized into vertical layers, each with a single responsibility. Data flows from top (entry points) to bottom (filesystem).
 
 ```
-main.go → CLI / API Server → service → downloading → downloader
-                                                        ↓
-                                              fileWriter / naming / path
+main.go ─→ CLI → service → downloading → downloader ─→ fileWriter / naming / path
+         → API Server → service → downloading → downloader ─→ fileWriter / naming / path
+              ↕ (task events)
+           EventBus ← TaskManager
+              ↕ (notifications)
+           Bot (6 platforms, goroutine-based)
 ```
-
 - **main.go** — entry point: config, login, DB init, mode dispatch
 - **CLI** (`internal/cli`) — synchronous, progress via LogReporter
 - **API Server** (`internal/api`) — async tasks, SSE push, Web UI
@@ -23,6 +25,7 @@ main.go → CLI / API Server → service → downloading → downloader
 - **Entity** (`internal/entity`) — [[database|UserEntity]] path + lifecycle management
 - **Naming** (`internal/naming`) — file/dir naming rules, uniqueness
 - **Path** (`internal/path`) — store root paths, error file locations
+- **Bot** (`internal/bot`) — 6 platform integrations, Bot interface, notification helpers
 
 ## Two Execution Modes
 
@@ -34,7 +37,7 @@ The application runs in one of two modes, selected at startup. The table below h
 | Progress | LogReporter → logs | SSEProgressReporter → EventBus → Web UI |
 | Signal handling | context cancel | GracefulShutdown |
 | Resource cleanup | defer db.Close() | GracefulShutdown unified |
-| Client log | O_TRUNC (reset per run) | O_APPEND (grows unbounded) |
+| Client log | Rotated via lumberjack | Rotated via lumberjack |
 
 ## Data Directory
 
@@ -45,7 +48,7 @@ Two root directories store the application's data: the app root (config, logs) a
 ├── conf.yaml              # main config
 ├── additional_cookies.yaml
 ├── tmd2.log               # rotated via lumberjack
-├── client.log             # resty HTTP log (⚠ no rotation in server mode)
+├── client.log             # resty HTTP log (rotated via lumberjack)
 └── schedules.yaml
 
 {rootPath} (download root)

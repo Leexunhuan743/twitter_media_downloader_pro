@@ -5,7 +5,7 @@ Conventions and gotchas for working on the TMD codebase.
 ## Logging Conventions
 Every log line must follow the project's domain-prefix and capitalization standards.
 
-- **Domain prefix**: every log line MUST start with `[domain]` where domain matches the package: `[auth]`, `[api]`, `[config]`, `[db]`, `[tasks]`, `[SSE]`, `[download]`, `[batch]`, `[twitter]`, `[server]`, `[downloader]`, `[scheduler]`, `[profile]`.
+- **Domain prefix**: every log line MUST start with `[domain]` where domain matches the package: `[auth]`, `[api]`, `[config]`, `[cookies]`, `[db]`, `[logs]`, `[schedules]`, `[theme]`, `[upload]`, `[web]`, `[WebUI]`, `[tasks]`, `[SSE]`, `[download-queue]`, `[download]`, `[batch]`, `[jsonfile]`, `[profile]`, `[twitter]`, `[RateLimiter]`, `[MFQ]`, `[server]`, `[downloader]`, `[scheduler]`, `[consolelog]`, `[listener]`.
 - **Capitalization**: first character after `[domain]` MUST be uppercase.
 - **Levels**: `Errorf` = user-visible internal failures, `Warnf` = non-fatal operational issues, `Infof` = state changes, `Debugf` = internal details.
 - **Structured logs**: `log.WithFields{}.Levelf("msg")` also needs `[domain]` prefix and capital letter.
@@ -24,11 +24,8 @@ s.writeErrorDetail(w, status, "user-safe", err.Error())
 - Exception: pure input validation errors with no err object
 
 ## HTTP Client Log
-Two log files exist: the application log and the HTTP client log, with different rotation behavior.
 
-- `client.log` uses `os.OpenFile` with `O_APPEND` (no rotation) in server mode
-- CLI mode uses `O_TRUNC` (safe)
-- `tmd2.log` is properly rotated via lumberjack
+Both `tmd2.log` and `client.log` are rotated via lumberjack (2 MB max, 2 backups, 14 days retention). Server and CLI modes share the same rotation config.
 
 ## Concurrency Model
 TMD uses diverse concurrency patterns across its components, each suited to its workload.
