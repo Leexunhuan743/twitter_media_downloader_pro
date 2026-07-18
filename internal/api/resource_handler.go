@@ -85,6 +85,49 @@ func (s *Server) countWithError(w http.ResponseWriter, table string, where strin
 	return total, true
 }
 
+// ============ 数据库操作错误响应 ============
+
+// dbWriteError 统一记录数据库操作错误并写入 500 响应。
+// op 用于日志标识具体操作（如 "UpdateUser"、"DelUser"），便于排查；
+// 响应消息保持与历史行为完全一致（"Database query failed"），确保行为保持。
+// 消息一致性的改进见 Phase 3（可选）。
+func (s *Server) dbWriteError(w http.ResponseWriter, err error, op string) {
+	log.Errorf("[db] %s failed: %v", op, err)
+	s.writeError(w, http.StatusInternalServerError, "Database query failed")
+}
+
+// ============ 关联名称查询辅助 ============
+
+// getListName 获取指定 List ID 的名称，查询失败或资源不存在时返回空字符串。
+// 用于在返回 List Entity 等关联资源时填充外键（lst_id）的显示名称。
+// 保持与原内联逻辑一致的外部行为：错误不向上抛出，仅记录警告日志便于排查。
+func (s *Server) getListName(lstID uint64) string {
+	lst, err := database.GetLst(s.db, lstID)
+	if err != nil {
+		log.Warnf("[db] Failed to get list %d for name lookup: %v", lstID, err)
+		return ""
+	}
+	if lst == nil {
+		return ""
+	}
+	return lst.Name
+}
+
+// getListEntityName 获取指定 List Entity ID 的名称，查询失败或资源不存在时返回空字符串。
+// 用于在返回 User Link 等关联资源时填充外键（parent_lst_entity_id）的显示名称。
+// 保持与原内联逻辑一致的外部行为：错误不向上抛出，仅记录警告日志便于排查。
+func (s *Server) getListEntityName(entityID int) string {
+	entity, err := database.GetLstEntity(s.db, entityID)
+	if err != nil {
+		log.Warnf("[db] Failed to get list entity %d for name lookup: %v", entityID, err)
+		return ""
+	}
+	if entity == nil {
+		return ""
+	}
+	return entity.Name
+}
+
 // ============ Entity → Item 转换函数 ============
 
 func dbUserToItem(u *database.User) DBUserItem {
