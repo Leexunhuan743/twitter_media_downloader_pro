@@ -205,8 +205,8 @@ func TestLogReporter_OnProgress_Profile(t *testing.T) {
 	reporter := NewLogReporter(logger)
 	reporter.OnProgress("task-123", Progress{Stage: "profile"})
 
-	assert.Len(t, loggedMessages, 1)
-	assert.Contains(t, loggedMessages[0], "profiles")
+	// profile 阶段进度频繁，不输出日志避免刷屏
+	assert.Empty(t, loggedMessages)
 }
 
 func TestLogReporter_OnProgress_Marking(t *testing.T) {

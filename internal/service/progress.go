@@ -64,7 +64,8 @@ func (l *LogReporter) OnProgress(taskID string, p Progress) {
 	if l.logger == nil {
 		return
 	}
-	if p.Stage == "downloading" {
+	// downloading 和 profile 阶段进度频繁，不输出日志避免刷屏
+	if p.Stage == "downloading" || p.Stage == "profile" {
 		return
 	}
 	switch p.Stage {
@@ -76,8 +77,6 @@ func (l *LogReporter) OnProgress(taskID string, p Progress) {
 		} else {
 			l.logger("[%s] Retrying failed tweets...", taskID)
 		}
-	case "profile":
-		l.logger("[%s] Downloading profiles...", taskID)
 	case "marking":
 		l.logger("[%s] Marking: %s", taskID, p.Current)
 	case "preparing":
