@@ -124,13 +124,9 @@ func (s *Server) handleUserDownload(w http.ResponseWriter, r *http.Request, scre
 	taskID := task.ID
 	status := task.Status
 
-	runFunc, err := s.buildTaskRunFunc(task)
-	if err != nil {
-		log.Errorf("[tasks] Failed to build task run func: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
+	if !s.buildAndEnqueueTask(w, task) {
 		return
 	}
-	s.enqueueTask(task, runFunc)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"message":        "Download task queued successfully",
@@ -151,13 +147,9 @@ func (s *Server) handleUserProfile(w http.ResponseWriter, _ *http.Request, scree
 	taskID := task.ID
 	status := task.Status
 
-	runFunc, err := s.buildTaskRunFunc(task)
-	if err != nil {
-		log.Errorf("[tasks] Failed to build task run func: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
+	if !s.buildAndEnqueueTask(w, task) {
 		return
 	}
-	s.enqueueTask(task, runFunc)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"message":     "Profile download task queued",
@@ -180,13 +172,9 @@ func (s *Server) handleUserMark(w http.ResponseWriter, r *http.Request, screenNa
 	taskID := task.ID
 	status := task.Status
 
-	runFunc, err := s.buildTaskRunFunc(task)
-	if err != nil {
-		log.Errorf("[tasks] Failed to build task run func: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
+	if !s.buildAndEnqueueTask(w, task) {
 		return
 	}
-	s.enqueueTask(task, runFunc)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"message":     "Mark downloaded task queued",
@@ -210,13 +198,9 @@ func (s *Server) handleListMark(w http.ResponseWriter, r *http.Request, listID u
 	taskID := task.ID
 	status := task.Status
 
-	runFunc, err := s.buildTaskRunFunc(task)
-	if err != nil {
-		log.Errorf("[tasks] Failed to build task run func: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
+	if !s.buildAndEnqueueTask(w, task) {
 		return
 	}
-	s.enqueueTask(task, runFunc)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"message":   "Mark list downloaded task queued",
@@ -240,13 +224,9 @@ func (s *Server) handleFollowingMark(w http.ResponseWriter, r *http.Request, scr
 	taskID := task.ID
 	status := task.Status
 
-	runFunc, err := s.buildTaskRunFunc(task)
-	if err != nil {
-		log.Errorf("[tasks] Failed to build task run func: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
+	if !s.buildAndEnqueueTask(w, task) {
 		return
 	}
-	s.enqueueTask(task, runFunc)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"message":     "Mark following downloaded task queued",
@@ -270,13 +250,9 @@ func (s *Server) handleFollowingDownload(w http.ResponseWriter, r *http.Request,
 	taskID := task.ID
 	status := task.Status
 
-	runFunc, err := s.buildTaskRunFunc(task)
-	if err != nil {
-		log.Errorf("[tasks] Failed to build task run func: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
+	if !s.buildAndEnqueueTask(w, task) {
 		return
 	}
-	s.enqueueTask(task, runFunc)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"message":        "Following download task queued successfully",
@@ -344,13 +320,9 @@ func (s *Server) handleListDownload(w http.ResponseWriter, r *http.Request, list
 	taskID := task.ID
 	status := task.Status
 
-	runFunc, err := s.buildTaskRunFunc(task)
-	if err != nil {
-		log.Errorf("[tasks] Failed to build task run func: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
+	if !s.buildAndEnqueueTask(w, task) {
 		return
 	}
-	s.enqueueTask(task, runFunc)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"message":        "List download task queued",
@@ -371,13 +343,9 @@ func (s *Server) handleListProfile(w http.ResponseWriter, _ *http.Request, listI
 	taskID := task.ID
 	status := task.Status
 
-	runFunc, err := s.buildTaskRunFunc(task)
-	if err != nil {
-		log.Errorf("[tasks] Failed to build task run func: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
+	if !s.buildAndEnqueueTask(w, task) {
 		return
 	}
-	s.enqueueTask(task, runFunc)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"message": "List profile download task queued",
@@ -408,13 +376,9 @@ func (s *Server) handleJsonFileDownload(w http.ResponseWriter, r *http.Request) 
 	task := s.taskManager.CreateTask(TaskTypeJsonFileDownload, &req)
 	taskID := task.ID
 	status := task.Status
-	runFunc, err := s.buildTaskRunFunc(task)
-	if err != nil {
-		log.Errorf("[tasks] Failed to build task run func: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
+	if !s.buildAndEnqueueTask(w, task) {
 		return
 	}
-	s.enqueueTask(task, runFunc)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"message":  "JSON file download task queued",
@@ -446,13 +410,9 @@ func (s *Server) handleJsonFolderDownload(w http.ResponseWriter, r *http.Request
 	task := s.taskManager.CreateTask(TaskTypeJsonFolderDownload, &req)
 	taskID := task.ID
 	status := task.Status
-	runFunc, err := s.buildTaskRunFunc(task)
-	if err != nil {
-		log.Errorf("[tasks] Failed to build task run func: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
+	if !s.buildAndEnqueueTask(w, task) {
 		return
 	}
-	s.enqueueTask(task, runFunc)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"message":  "JSON folder download task queued",
@@ -782,13 +742,9 @@ func (s *Server) handleBatchDownload(w http.ResponseWriter, r *http.Request) {
 	taskID := task.ID
 	status := task.Status
 
-	runFunc, err := s.buildTaskRunFunc(task)
-	if err != nil {
-		log.Errorf("[tasks] Failed to build task run func: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
+	if !s.buildAndEnqueueTask(w, task) {
 		return
 	}
-	s.enqueueTask(task, runFunc)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"message":         "Batch download task queued",
@@ -846,13 +802,9 @@ func (s *Server) handleBatchMark(w http.ResponseWriter, r *http.Request) {
 	taskID := task.ID
 	status := task.Status
 
-	runFunc, err := s.buildTaskRunFunc(task)
-	if err != nil {
-		log.Errorf("[tasks] Failed to build task run func: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
+	if !s.buildAndEnqueueTask(w, task) {
 		return
 	}
-	s.enqueueTask(task, runFunc)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"message":         "Batch mark downloaded task queued",
