@@ -89,11 +89,10 @@ func (s *Server) countWithError(w http.ResponseWriter, table string, where strin
 
 // dbWriteError 统一记录数据库操作错误并写入 500 响应。
 // op 用于日志标识具体操作（如 "UpdateUser"、"DelUser"），便于排查；
-// 响应消息保持与历史行为完全一致（"Database query failed"），确保行为保持。
-// 消息一致性的改进见 Phase 3（可选）。
+// 响应消息使用 "Database operation failed"（涵盖 Query/Update/Delete 等所有操作，语义一致）。
 func (s *Server) dbWriteError(w http.ResponseWriter, err error, op string) {
 	log.Errorf("[db] %s failed: %v", op, err)
-	s.writeError(w, http.StatusInternalServerError, "Database query failed")
+	s.writeError(w, http.StatusInternalServerError, "Database operation failed")
 }
 
 // ============ 关联名称查询辅助 ============
