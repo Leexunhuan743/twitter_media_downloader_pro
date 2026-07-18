@@ -161,46 +161,59 @@ func countRemainingFailedEntities(dumper *downloading.TweetDumper, failures fail
 	return count
 }
 
-func (s *downloadServiceImpl) resolveUsers(ctx context.Context, screenNames []string) []*twitter.User {
+// resolveFailure 记录单个 screenName/listID 解析失败的原因
+type resolveFailure struct {
+	Identifier string // screenName 或 listID 字符串
+	Kind       string // "user" / "list" / "following"
+	Err        error
+}
+
+func (s *downloadServiceImpl) resolveUsers(ctx context.Context, screenNames []string) ([]*twitter.User, []resolveFailure) {
 	var users []*twitter.User
+	var failures []resolveFailure
 	for _, name := range screenNames {
 		user, uid, err := twitter.GetUserByScreenName(ctx, s.deps.Client, s.deps.AdditionalClients, name)
 		if err != nil {
 			database.MarkUserInaccessible(s.deps.DB, uid, name)
+			failures = append(failures, resolveFailure{Identifier: name, Kind: "user", Err: err})
 			log.Warnf("[download] Failed to get user %s: %v", name, err)
 			continue
 		}
 		users = append(users, user)
 	}
-	return users
+	return users, failures
 }
 
-func (s *downloadServiceImpl) resolveLists(ctx context.Context, listIDs []uint64) []twitter.ListBase {
+func (s *downloadServiceImpl) resolveLists(ctx context.Context, listIDs []uint64) ([]twitter.ListBase, []resolveFailure) {
 	var lists []twitter.ListBase
+	var failures []resolveFailure
 	for _, id := range listIDs {
 	// 列表是用户私有资源，只能使用主账号访问，不走 MFQ 多账号轮询
 		list, err := twitter.GetLst(ctx, s.deps.Client, id)
 		if err != nil {
+			failures = append(failures, resolveFailure{Identifier: fmt.Sprintf("%d", id), Kind: "list", Err: err})
 			log.Warnf("[download] Failed to get list %d: %v", id, err)
 			continue
 		}
 		lists = append(lists, list)
 	}
-	return lists
+	return lists, failures
 }
 
-func (s *downloadServiceImpl) resolveFollowings(ctx context.Context, screenNames []string) []twitter.ListBase {
+func (s *downloadServiceImpl) resolveFollowings(ctx context.Context, screenNames []string) ([]twitter.ListBase, []resolveFailure) {
 	var lists []twitter.ListBase
+	var failures []resolveFailure
 	for _, name := range screenNames {
 		user, uid, err := twitter.GetUserByScreenName(ctx, s.deps.Client, s.deps.AdditionalClients, name)
 		if err != nil {
 			database.MarkUserInaccessible(s.deps.DB, uid, name)
+			failures = append(failures, resolveFailure{Identifier: name, Kind: "following", Err: err})
 			log.Warnf("[download] Failed to get user %s for following list: %v", name, err)
 			continue
 		}
 		lists = append(lists, user.Following())
 	}
-	return lists
+	return lists, failures
 }
 
 func shouldFollowMember(user *twitter.User) bool {
@@ -321,15 +334,11 @@ func (s *downloadServiceImpl) executeDownloadTemplate(ctx context.Context, confi
 	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
 	if err != nil {
 		log.Errorf("[download] Failed to make store dir: %v", err)
-		return fmt.Errorf("failed to make store dir: %w", err)
+		return fmt.Errorf("failed to make store dir [task=%s]: %w", config.TaskID, err)
 	}
 
 	dumper := downloading.NewDumper()
-	s.dumperMu.Lock()
-	if err := dumper.Load(pathHelper.ErrorsPath); err != nil {
-		log.Warnf("[download] Failed to load dumper: %v", err)
-	}
-	s.dumperMu.Unlock()
+	s.loadDumperSafely(dumper, pathHelper.ErrorsPath)
 	defer s.saveDumper(dumper, pathHelper.ErrorsPath)
 
 	users, lists, err := config.Prepare(ctx, pathHelper)
@@ -502,10 +511,17 @@ func (s *downloadServiceImpl) ProfileDownload(ctx context.Context, taskID string
 			unique = append(unique, name)
 		}
 	}
-	users := s.resolveUsers(ctx, unique)
+	users, failures := s.resolveUsers(ctx, unique)
+	if len(failures) > 0 {
+		parts := make([]string, 0, len(failures))
+		for _, f := range failures {
+			parts = append(parts, fmt.Sprintf("%s[%s]: %v", f.Kind, f.Identifier, f.Err))
+		}
+		log.Warnf("[download] Resolve failures (%d): %s", len(failures), strings.Join(parts, "; "))
+	}
 	if len(unique) > 0 && len(users) == 0 {
 		log.Warnf("[download] All profile users failed to resolve")
-		return fmt.Errorf("all profile users failed to resolve")
+		return fmt.Errorf("all profile users failed to resolve [task=%s]", taskID)
 	}
 
 	profileResult, err := s.downloadProfile(ctx, taskID, users, pathHelper, versionManager, fileWriter, dwn, reporter)
@@ -560,13 +576,24 @@ func (s *downloadServiceImpl) MarkDownloaded(ctx context.Context, taskID string,
 
 	reporter.OnProgress(taskID, Progress{Stage: "resolving"})
 
-	users := s.resolveUsers(ctx, screenNames)
-	lists := s.resolveLists(ctx, listIDs)
-	lists = append(lists, s.resolveFollowings(ctx, followingNames)...)
+	users, userFailures := s.resolveUsers(ctx, screenNames)
+	lists, listFailures := s.resolveLists(ctx, listIDs)
+	followingLists, followingFailures := s.resolveFollowings(ctx, followingNames)
+	lists = append(lists, followingLists...)
+
+	// 日志汇总所有解析失败明细
+	allFailures := append(append(userFailures, listFailures...), followingFailures...)
+	if len(allFailures) > 0 {
+		parts := make([]string, 0, len(allFailures))
+		for _, f := range allFailures {
+			parts = append(parts, fmt.Sprintf("%s[%s]: %v", f.Kind, f.Identifier, f.Err))
+		}
+		log.Warnf("[download] Resolve failures (%d): %s", len(allFailures), strings.Join(parts, "; "))
+	}
 
 	if len(users) == 0 && len(lists) == 0 {
 		log.Warnf("[download] No users or lists to mark (all failed to resolve)")
-		return fmt.Errorf("no users or lists to mark (all failed to resolve)")
+		return fmt.Errorf("no users or lists to mark (all failed to resolve) [task=%s]", taskID)
 	}
 
 	reporter.OnProgress(taskID, Progress{Stage: "marking", Total: len(users) + len(lists), Current: fmt.Sprintf("%d users, %d lists", len(users), len(lists))})
@@ -615,11 +642,7 @@ func (s *downloadServiceImpl) JsonFileDownload(ctx context.Context, taskID strin
 	_, fileWriter, dwn := s.initDownloader()
 
 	jsonDumper := downloading.NewJsonDumper()
-	s.dumperMu.Lock()
-	if err := jsonDumper.Load(pathHelper.JSONErrorsPath); err != nil {
-		log.Warnf("[download] Failed to load JSON dumper: %v", err)
-	}
-	s.dumperMu.Unlock()
+	s.loadJsonDumperSafely(jsonDumper, pathHelper.JSONErrorsPath)
 	defer s.saveJsonDumper(jsonDumper, pathHelper.JSONErrorsPath)
 
 	retryProgress := s.newRetryProgressCallback(taskID, reporter)
@@ -675,11 +698,7 @@ func (s *downloadServiceImpl) JsonFolderDownload(ctx context.Context, taskID str
 	_, fileWriter, dwn := s.initDownloader()
 
 	jsonDumper := downloading.NewJsonDumper()
-	s.dumperMu.Lock()
-	if err := jsonDumper.Load(pathHelper.JSONErrorsPath); err != nil {
-		log.Warnf("[download] Failed to load JSON dumper: %v", err)
-	}
-	s.dumperMu.Unlock()
+	s.loadJsonDumperSafely(jsonDumper, pathHelper.JSONErrorsPath)
 	defer s.saveJsonDumper(jsonDumper, pathHelper.JSONErrorsPath)
 
 	retryProgress := s.newRetryProgressCallback(taskID, reporter)
@@ -728,12 +747,24 @@ func (s *downloadServiceImpl) BatchDownload(ctx context.Context, taskID string, 
 		},
 
 		Prepare: func(ctx context.Context, ph *path.StorePath) ([]*twitter.User, []twitter.ListBase, error) {
-			users := s.resolveUsers(ctx, screenNames)
-			lists := s.resolveLists(ctx, listIDs)
-			lists = append(lists, s.resolveFollowings(ctx, followingNames)...)
+			users, userFailures := s.resolveUsers(ctx, screenNames)
+			lists, listFailures := s.resolveLists(ctx, listIDs)
+			followingLists, followingFailures := s.resolveFollowings(ctx, followingNames)
+			lists = append(lists, followingLists...)
+
+			// 日志汇总所有解析失败明细
+			allFailures := append(append(userFailures, listFailures...), followingFailures...)
+			if len(allFailures) > 0 {
+				parts := make([]string, 0, len(allFailures))
+				for _, f := range allFailures {
+					parts = append(parts, fmt.Sprintf("%s[%s]: %v", f.Kind, f.Identifier, f.Err))
+				}
+				log.Warnf("[download] Resolve failures (%d): %s", len(allFailures), strings.Join(parts, "; "))
+			}
+
 			if len(users) == 0 && len(lists) == 0 {
 				log.Warnf("[download] All users and lists failed to resolve")
-				return nil, nil, fmt.Errorf("all users and lists failed to resolve")
+				return nil, nil, fmt.Errorf("all users and lists failed to resolve [task=%s]", taskID)
 			}
 			return users, lists, nil
 		},
@@ -766,38 +797,42 @@ func (s *downloadServiceImpl) RetryAllFailed(ctx context.Context, taskID string,
 	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
 	if err != nil {
 		log.Errorf("[download] Failed to create store path: %v", err)
-		return fmt.Errorf("failed to create store path: %w", err)
+		return fmt.Errorf("failed to create store path [task=%s]: %w", taskID, err)
 	}
 
 	_, fileWriter, dwn := s.initDownloader()
 	runtimeOptions := s.runtimeOptions()
 
-	// 重试常规下载错误
+	// 两阶段独立执行：常规阶段失败不再跳过 JSON 阶段，最终用 errors.Join 聚合返回
+	var errs []error
+
+	// 第一阶段：重试常规下载错误
 	regDumper := downloading.NewDumper()
-	s.dumperMu.Lock()
-	_ = regDumper.Load(pathHelper.ErrorsPath)
-	s.dumperMu.Unlock()
+	s.loadDumperSafely(regDumper, pathHelper.ErrorsPath)
 	if regDumper.Count() > 0 {
 		if _, err := downloading.RetryFailedTweets(ctx, regDumper, s.deps.DB, s.deps.Client, dwn, fileWriter, runtimeOptions, nil); err != nil {
 			log.Errorf("[download] Failed to retry regular tweets: %v", err)
-			return fmt.Errorf("retry regular failed tweets: %w", err)
+			errs = append(errs, fmt.Errorf("regular: %w", err))
+		} else {
+			s.saveDumper(regDumper, pathHelper.ErrorsPath)
 		}
-		s.saveDumper(regDumper, pathHelper.ErrorsPath)
 	}
 
-	// 重试 JSON 导入错误
+	// 第二阶段：重试 JSON 导入错误（无论第一阶段是否失败都执行）
 	jsonDumper := downloading.NewJsonDumper()
-	s.dumperMu.Lock()
-	_ = jsonDumper.Load(pathHelper.JSONErrorsPath)
-	s.dumperMu.Unlock()
+	s.loadJsonDumperSafely(jsonDumper, pathHelper.JSONErrorsPath)
 	if jsonDumper.Count() > 0 {
 		if _, err := downloading.RetryFailedJsonTweets(ctx, jsonDumper, s.deps.Client, dwn, fileWriter, runtimeOptions, nil); err != nil {
 			log.Errorf("[download] Failed to retry JSON tweets: %v", err)
-			return fmt.Errorf("retry JSON failed tweets: %w", err)
+			errs = append(errs, fmt.Errorf("json: %w", err))
+		} else {
+			s.saveJsonDumper(jsonDumper, pathHelper.JSONErrorsPath)
 		}
-		s.saveJsonDumper(jsonDumper, pathHelper.JSONErrorsPath)
 	}
 
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
 	reporter.OnComplete(taskID, Result{Message: "completed"})
 	return nil
 }
@@ -852,6 +887,27 @@ func (s *downloadServiceImpl) saveJsonDumper(dumper *downloading.JsonTweetDumper
 		return
 	}
 	_ = os.Remove(path)
+}
+
+// loadDumperSafely 安全加载 TweetDumper。
+// 注意：dumper.Load 内部已处理 os.IsNotExist（文件不存在时返回 nil），
+//
+//	所以这里 err 一定意味着文件损坏或读取错误，记录明确日志即可。
+func (s *downloadServiceImpl) loadDumperSafely(dumper *downloading.TweetDumper, path string) {
+	s.dumperMu.Lock()
+	defer s.dumperMu.Unlock()
+	if err := dumper.Load(path); err != nil {
+		log.Warnf("[download] Dumper file load failed (will recreate with in-memory state): %s: %v", path, err)
+	}
+}
+
+// loadJsonDumperSafely 安全加载 JsonTweetDumper，同 loadDumperSafely。
+func (s *downloadServiceImpl) loadJsonDumperSafely(dumper *downloading.JsonTweetDumper, path string) {
+	s.dumperMu.Lock()
+	defer s.dumperMu.Unlock()
+	if err := dumper.Load(path); err != nil {
+		log.Warnf("[download] JSON dumper file load failed (will recreate with in-memory state): %s: %v", path, err)
+	}
 }
 
 // 内部辅助方法：下载 Profile
@@ -916,11 +972,18 @@ func (s *downloadServiceImpl) downloadProfile(ctx context.Context, taskID string
 	var successCount, failCount, versionedFileCount int
 	var avatarFailed, bannerFailed int
 	var firstErr error
-	for _, result := range results {
+	var failedDetails []string // 收集失败明细，用于完整日志记录
+	for i, result := range results {
 		if result == nil {
 			failCount++
 			if firstErr == nil {
 				firstErr = fmt.Errorf("profile download returned nil result")
+			}
+			// 通过 requests 索引获取 screenName，保留失败明细
+			if i < len(requests) {
+				failedDetails = append(failedDetails, fmt.Sprintf("@%s: nil result", requests[i].ScreenName))
+			} else {
+				failedDetails = append(failedDetails, fmt.Sprintf("request[%d]: nil result", i))
 			}
 			continue
 		}
@@ -931,6 +994,12 @@ func (s *downloadServiceImpl) downloadProfile(ctx context.Context, taskID string
 			if firstErr == nil {
 				firstErr = result.Error
 			}
+			// 收集失败用户和原因
+			screenName := ""
+			if i < len(requests) {
+				screenName = requests[i].ScreenName
+			}
+			failedDetails = append(failedDetails, fmt.Sprintf("@%s: %v", screenName, result.Error))
 		} else if result.Success {
 			successCount++
 		}
@@ -956,6 +1025,12 @@ func (s *downloadServiceImpl) downloadProfile(ctx context.Context, taskID string
 		Downloaded: successCount,
 		Failed:     failCount,
 		Versioned:  versionedFileCount,
+	}
+
+	// 输出完整失败明细日志（即使部分失败也仍返回 nil，但日志记录所有失败用户和原因）
+	if len(failedDetails) > 0 {
+		log.Warnf("[profile] Failed users (%d/%d): %s",
+			len(failedDetails), len(results), strings.Join(failedDetails, "; "))
 	}
 
 	if avatarFailed > 0 || bannerFailed > 0 {
