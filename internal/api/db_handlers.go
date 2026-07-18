@@ -590,10 +590,7 @@ func (s *Server) handleDBListEntityDetail(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	lstName := ""
-	if lst, err := database.GetLst(s.db, uint64(entity.LstId)); err == nil && lst != nil {
-		lstName = lst.Name
-	}
+	lstName := s.getListName(uint64(entity.LstId))
 
 	s.writeResourceJSON(w, dbLstEntityToItem(entity, lstName))
 }
@@ -638,10 +635,7 @@ func (s *Server) handleDBListEntityUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	lstName := ""
-	if lst, err := database.GetLst(s.db, uint64(entity.LstId)); err == nil && lst != nil {
-		lstName = lst.Name
-	}
+	lstName := s.getListName(uint64(entity.LstId))
 
 	s.writeResourceJSON(w, dbLstEntityToItem(entity, lstName))
 }
@@ -741,10 +735,7 @@ func (s *Server) handleDBUserLinkDetail(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	lstEntName := ""
-	if lstEnt, err := database.GetLstEntity(s.db, int(link.ParentLstEntityId)); err == nil && lstEnt != nil {
-		lstEntName = lstEnt.Name
-	}
+	lstEntName := s.getListEntityName(int(link.ParentLstEntityId))
 
 	s.writeResourceJSON(w, dbUserLinkToItem(link, lstEntName))
 }
@@ -783,10 +774,7 @@ func (s *Server) handleDBUserLinkUpdate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	lstEntName := ""
-	if lstEnt, err := database.GetLstEntity(s.db, int(link.ParentLstEntityId)); err == nil && lstEnt != nil {
-		lstEntName = lstEnt.Name
-	}
+	lstEntName := s.getListEntityName(int(link.ParentLstEntityId))
 
 	s.writeResourceJSON(w, dbUserLinkToItem(link, lstEntName))
 }
