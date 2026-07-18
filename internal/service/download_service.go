@@ -343,6 +343,7 @@ func (s *downloadServiceImpl) executeDownloadTemplate(ctx context.Context, confi
 
 	users, lists, err := config.Prepare(ctx, pathHelper)
 	if err != nil {
+		log.Errorf("[download] Prepare failed [task=%s]: %v", config.TaskID, err)
 		return err
 	}
 
@@ -358,6 +359,7 @@ func (s *downloadServiceImpl) executeDownloadTemplate(ctx context.Context, confi
 		s.deps.ListSyncManager,
 	)
 	if err != nil {
+		log.Errorf("[download] Batch download failed [task=%s]: %v", config.TaskID, err)
 		return err
 	}
 
@@ -366,6 +368,7 @@ func (s *downloadServiceImpl) executeDownloadTemplate(ctx context.Context, confi
 		followTargets = append(followTargets, users...)
 		followTargets = append(followTargets, listMembers...)
 		if err := s.followMembersIfNeeded(ctx, followTargets); err != nil {
+			log.Errorf("[download] Follow members failed [task=%s]: %v", config.TaskID, err)
 			return err
 		}
 	}
