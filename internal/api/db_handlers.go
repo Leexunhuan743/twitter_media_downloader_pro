@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/database"
 	"github.com/unkmonster/tmd/internal/utils"
@@ -112,8 +111,7 @@ func (s *Server) handleDBUsers(w http.ResponseWriter, r *http.Request) {
 	orderBy := pagination.BuildOrderBy(userSortFields)
 	users, err := database.QueryUsers(s.db, whereClause, args, orderBy, pagination.PageSize, pagination.Offset)
 	if err != nil {
-		log.Errorf("[db] QueryUsers failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "QueryUsers")
 		return
 	}
 
@@ -187,8 +185,7 @@ func (s *Server) handleDBUserUpdate(w http.ResponseWriter, r *http.Request) {
 		user.IsAccessible = *req.IsAccessible
 	}
 	if err := database.UpdateUser(s.db, user); err != nil {
-		log.Errorf("[db] UpdateUser failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "UpdateUser")
 		return
 	}
 
@@ -209,8 +206,7 @@ func (s *Server) handleDBUserDelete(w http.ResponseWriter, r *http.Request) {
 	cascade := s.countUserCascade(id)
 
 	if err := database.DelUser(s.db, id); err != nil {
-		log.Errorf("[db] DelUser failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "DelUser")
 		return
 	}
 
@@ -257,8 +253,7 @@ func (s *Server) handleDBLists(w http.ResponseWriter, r *http.Request) {
 	orderBy := pagination.BuildOrderBy(listSortFields)
 	lists, err := database.QueryLists(s.db, whereClause, args, orderBy, pagination.PageSize, pagination.Offset)
 	if err != nil {
-		log.Errorf("[db] QueryLists failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "QueryLists")
 		return
 	}
 
@@ -323,8 +318,7 @@ func (s *Server) handleDBListUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := database.UpdateLst(s.db, lst); err != nil {
-		log.Errorf("[db] UpdateLst failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "UpdateLst")
 		return
 	}
 
@@ -343,8 +337,7 @@ func (s *Server) handleDBListDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := database.DelLst(s.db, id); err != nil {
-		log.Errorf("[db] DelLst failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "DelLst")
 		return
 	}
 
@@ -384,8 +377,7 @@ func (s *Server) handleDBUserEntities(w http.ResponseWriter, r *http.Request) {
 	orderBy := pagination.BuildOrderBy(entitySortFields)
 	entities, err := database.QueryUserEntities(s.db, whereClause, args, orderBy, pagination.PageSize, pagination.Offset)
 	if err != nil {
-		log.Errorf("[db] QueryUserEntities failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "QueryUserEntities")
 		return
 	}
 
@@ -452,8 +444,7 @@ func (s *Server) handleDBUserEntityUpdate(w http.ResponseWriter, r *http.Request
 	if req.LatestReleaseTime != nil {
 		if *req.LatestReleaseTime == "" {
 			if err := database.ClearUserEntityLatestReleaseTime(s.db, int(id)); err != nil {
-				log.Errorf("[db] ClearUserEntityLatestReleaseTime failed: %v", err)
-				s.writeError(w, http.StatusInternalServerError, "Database query failed")
+				s.dbWriteError(w, err, "ClearUserEntityLatestReleaseTime")
 				return
 			}
 		} else {
@@ -464,16 +455,14 @@ func (s *Server) handleDBUserEntityUpdate(w http.ResponseWriter, r *http.Request
 				return
 			}
 			if err := database.SetUserEntityLatestReleaseTime(s.db, int(id), t); err != nil {
-				log.Errorf("[db] SetUserEntityLatestReleaseTime failed: %v", err)
-				s.writeError(w, http.StatusInternalServerError, "Database query failed")
+				s.dbWriteError(w, err, "SetUserEntityLatestReleaseTime")
 				return
 			}
 		}
 	}
 
 	if err := database.UpdateUserEntityFields(s.db, int(id), entity.Name, entity.MediaCount); err != nil {
-		log.Errorf("[db] UpdateUserEntityFields failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "UpdateUserEntityFields")
 		return
 	}
 
@@ -492,8 +481,7 @@ func (s *Server) handleDBUserEntityDelete(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := database.DelUserEntity(s.db, uint32(id)); err != nil {
-		log.Errorf("[db] DelUserEntity failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "DelUserEntity")
 		return
 	}
 
@@ -561,8 +549,7 @@ func (s *Server) handleDBListEntities(w http.ResponseWriter, r *http.Request) {
 	orderBy := pagination.BuildOrderBy(lstEntitySortFields)
 	entities, err := database.QueryLstEntities(s.db, whereClause, args, orderBy, pagination.PageSize, pagination.Offset)
 	if err != nil {
-		log.Errorf("[db] QueryLstEntities failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "QueryLstEntities")
 		return
 	}
 
@@ -630,8 +617,7 @@ func (s *Server) handleDBListEntityUpdate(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := database.UpdateLstEntity(s.db, entity); err != nil {
-		log.Errorf("[db] UpdateLstEntity failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "UpdateLstEntity")
 		return
 	}
 
@@ -652,8 +638,7 @@ func (s *Server) handleDBListEntityDelete(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := database.DelLstEntity(s.db, int(id)); err != nil {
-		log.Errorf("[db] DelLstEntity failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "DelLstEntity")
 		return
 	}
 
@@ -706,8 +691,7 @@ func (s *Server) handleDBUserLinks(w http.ResponseWriter, r *http.Request) {
 	orderBy := pagination.BuildOrderBy(linkSortFields)
 	links, err := database.QueryUserLinks(s.db, whereClause, args, orderBy, pagination.PageSize, pagination.Offset)
 	if err != nil {
-		log.Errorf("[db] QueryUserLinks failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "QueryUserLinks")
 		return
 	}
 
@@ -769,8 +753,7 @@ func (s *Server) handleDBUserLinkUpdate(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := database.UpdateUserLink(s.db, link.Id, link.Name); err != nil {
-		log.Errorf("[db] UpdateUserLink failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "UpdateUserLink")
 		return
 	}
 
@@ -791,8 +774,7 @@ func (s *Server) handleDBUserLinkDelete(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := database.DelUserLink(s.db, int32(id)); err != nil {
-		log.Errorf("[db] DelUserLink failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "DelUserLink")
 		return
 	}
 
@@ -821,8 +803,7 @@ func (s *Server) handleDBUserPreviousNames(w http.ResponseWriter, r *http.Reques
 	orderBy := pagination.BuildOrderBy(prevNameSortFields)
 	names, err := database.QueryAllUserPreviousNames(s.db, whereClause, args, orderBy, pagination.PageSize, pagination.Offset)
 	if err != nil {
-		log.Errorf("[db] QueryAllUserPreviousNames failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "QueryAllUserPreviousNames")
 		return
 	}
 
@@ -855,8 +836,7 @@ func (s *Server) handleDBUserEntitiesByUserID(w http.ResponseWriter, r *http.Req
 	orderBy := pagination.BuildOrderBy(entitySortFields)
 	entities, err := database.QueryUserEntities(s.db, whereClause, args, orderBy, pagination.PageSize, pagination.Offset)
 	if err != nil {
-		log.Errorf("[db] QueryUserEntities failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "QueryUserEntities")
 		return
 	}
 
@@ -887,8 +867,7 @@ func (s *Server) handleDBUserLinksByUserID(w http.ResponseWriter, r *http.Reques
 	orderBy := pagination.BuildOrderBy(linkSortFields)
 	links, err := database.QueryUserLinks(s.db, whereClause, args, orderBy, pagination.PageSize, pagination.Offset)
 	if err != nil {
-		log.Errorf("[db] QueryUserLinks failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "QueryUserLinks")
 		return
 	}
 
@@ -924,8 +903,7 @@ func (s *Server) handleDBLstEntitiesByListID(w http.ResponseWriter, r *http.Requ
 	orderBy := pagination.BuildOrderBy(lstEntitySortFields)
 	entities, err := database.QueryLstEntities(s.db, whereClause, args, orderBy, pagination.PageSize, pagination.Offset)
 	if err != nil {
-		log.Errorf("[db] QueryLstEntities failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "QueryLstEntities")
 		return
 	}
 
@@ -1016,8 +994,7 @@ func (s *Server) handleDBPreviousNames(w http.ResponseWriter, r *http.Request) {
 	orderBy := pagination.BuildOrderBy(prevNameSortFields)
 	names, err := database.QueryAllUserPreviousNames(s.db, whereClause, args, orderBy, pagination.PageSize, pagination.Offset)
 	if err != nil {
-		log.Errorf("[db] QueryAllUserPreviousNames failed: %v", err)
-		s.writeError(w, http.StatusInternalServerError, "Database query failed")
+		s.dbWriteError(w, err, "QueryAllUserPreviousNames")
 		return
 	}
 
