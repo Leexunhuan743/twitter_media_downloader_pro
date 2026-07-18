@@ -38,6 +38,20 @@ func (s *Server) enqueueTask(task *Task, run func(ctx context.Context, taskID st
 	s.downloadQueue.Enqueue(task, run)
 }
 
+// buildAndEnqueueTask 构建 task 的运行函数并入队。构建失败时写入 500 响应并返回 false，
+// 调用方应在返回 false 时立即 return。统一 12 处下载处理器的"构建+入队"重复逻辑。
+// 注意：上传变体（需 cleanupUploadDirAfterTask 包装）和重试变体（不入队）不适用本方法。
+func (s *Server) buildAndEnqueueTask(w http.ResponseWriter, task *Task) bool {
+	runFunc, err := s.buildTaskRunFunc(task)
+	if err != nil {
+		log.Errorf("[tasks] Failed to build task run func: %v", err)
+		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
+		return false
+	}
+	s.enqueueTask(task, runFunc)
+	return true
+}
+
 func formatTaskMarkTime(timestamp *time.Time) *string {
 	if timestamp == nil {
 		return nil
