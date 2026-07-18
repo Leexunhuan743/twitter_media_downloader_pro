@@ -25,7 +25,7 @@ lat locate "Section Name"    # find a section by name (exact, fuzzy)
 lat refs "file#Section"      # find what references a section
 lat search "natural language" # semantic search across all sections
 lat expand "user prompt text" # expand [[refs]] to resolved locations
-lat serve                    # start local MCP server for AI agent queries
+lat mcp                      # start MCP server (stdio) for AI agent tool access
 lat check                    # validate all links and code refs
 ```
 
@@ -33,7 +33,7 @@ Run `lat --help` for all options, `lat <command> --help` per command.
 
 ### MCP (Model Context Protocol)
 
-`lat serve` starts an MCP server that AI agents query directly — no manual `lat search` needed. Configure it in your agent's MCP settings (see [upstream docs](https://github.com/1st1/lat.md#readme)).
+`lat mcp` starts an MCP server (stdio transport) with 6 tools: `lat_locate`, `lat_section`, `lat_search`, `lat_expand`, `lat_check`, `lat_refs`. Configure it in your agent's MCP settings to avoid manual CLI fallback. See [upstream docs](https://github.com/1st1/lat.md#readme).
 
 ### Semantic search key
 
