@@ -330,8 +330,7 @@ const api = {
   cancelQueuedTasks() { return this.post('/api/v1/tasks/cancel-queued', {}); },
   retryTask(id) { return this.post(`/api/v1/tasks/${id}/retry`, {}); },
   deleteTask(id) { return this.request('DELETE', `/api/v1/tasks/${id}`); },
-  getTaskStats() { return this.get('/api/v1/tasks/stats'); },
-  
+
   // Task Creation
   createUserDownload(screenName, opts) { 
     return this.post(`/api/v1/users/${encodeURIComponent(screenName)}/download`, opts); 
@@ -4949,8 +4948,8 @@ store.subscribe((state) => {
   }
 
   if (state.currentPage === 'tasks') {
-    const { hasAny: tasksChanged } = overviewDetector.detect(state);
-    if (tasksChanged) { updateTaskListUI(state.tasks); }
+    const { changed } = overviewDetector.detect(state);
+    if (changed.tasks) { updateTaskListUI(state.tasks); }
   }
 
   if (state.currentPage === 'data') syncDataPage(state);
@@ -5019,7 +5018,7 @@ function updateTaskListUI(tasks) {
         ...(t.data?.lists || []),
         ...(t.data?.following_names || [])
       ].join(' ').toLowerCase();
-      return target.includes(search) || batchTargets.includes(search) || t.task_id.toLowerCase().includes(search);
+      return target.includes(search) || batchTargets.includes(search) || t.task_id.toLowerCase().includes(search) || (t.type || '').toLowerCase().includes(search);
     });
   }
   
@@ -5038,7 +5037,7 @@ function updateTaskListUI(tasks) {
   // Update task count subtitle
   const subtitle = document.querySelector('[data-task-count-subtitle]');
   if (subtitle) {
-    subtitle.textContent = `共 ${tasks.length} 个任务`;
+    subtitle.textContent = `共 ${filtered.length} 个任务（总计 ${tasks.length}）`;
   }
 }
 
