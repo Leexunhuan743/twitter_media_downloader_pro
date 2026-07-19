@@ -347,7 +347,7 @@ func (rl *authRateLimiter) Fail(addr string) {
 	defer rl.mu.Unlock()
 
 	entry, exists := rl.attempts[addr]
-	if !exists || time.Now().Sub(entry.windowStart) > loginWindow {
+	if !exists || time.Since(entry.windowStart) > loginWindow {
 		rl.attempts[addr] = &rateLimitEntry{
 			count:       1,
 			windowStart: time.Now(),

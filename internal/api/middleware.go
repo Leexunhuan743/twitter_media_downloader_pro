@@ -78,7 +78,7 @@ const authBearerPrefix = "Bearer "
 // Web UI 页面必须公开（否则用户看不到登录界面），静态资源和健康检查同理。
 var publicPathPrefixes = []string{
 	"/api/v1/health",
-	"/api/v1/auth/login", // login 端点需要在没有 JWT 时也能被调用
+	"/api/v1/auth/login",   // login 端点需要在没有 JWT 时也能被调用
 	"/api/v1/config/theme", // theme 切换器由内联 JS 调用，不经过 api 对象
 	"/static/",
 }
@@ -117,8 +117,9 @@ func extractBearerToken(r *http.Request) string {
 // authMiddleware 认证中间件。
 // 当 conf.api_key 为空时放行所有请求（向后兼容）。
 // 当 conf.api_key 非空时，支持两种认证方式：
-//   1. JWT 会话令牌（首选） — 通过 validateSessionToken 验证
-//   2. 原始 API Key（向后兼容） — 直接字符串比较
+//  1. JWT 会话令牌（首选） — 通过 validateSessionToken 验证
+//  2. 原始 API Key（向后兼容） — 直接字符串比较
+//
 // 认证方式优先级：Authorization: Bearer <token> 头 > ?token= 查询参数（SSE 回退）
 // 公开路径（健康检查、Web UI 页面、静态文件）免认证。
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
@@ -198,6 +199,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		writeAuth401(w, "invalid")
 	})
 }
+
 // 这些端点即使收到过期 JWT 也需要处理，因此 middleware 放行签名有效（允许过期）的 token。
 func isAuthManagementPath(path string) bool {
 	return path == "/api/v1/auth/refresh" || path == "/api/v1/auth/check"
@@ -205,8 +207,15 @@ func isAuthManagementPath(path string) bool {
 
 // writeAuth401 writes a standard 401 Unauthorized response.
 func writeAuth401(w http.ResponseWriter, tokenType string) {
+	errMsg := "unauthorized"
+	switch tokenType {
+	case "missing":
+		errMsg = "missing authorization token"
+	case "invalid":
+		errMsg = "invalid or expired authorization token"
+	}
 	w.Header().Set("WWW-Authenticate", `Bearer realm="TMD API"`)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
-	json.NewEncoder(w).Encode(NewErrorResponse("unauthorized"))
+	json.NewEncoder(w).Encode(NewErrorResponse(errMsg))
 }
