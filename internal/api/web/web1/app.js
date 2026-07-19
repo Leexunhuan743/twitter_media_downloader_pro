@@ -1781,6 +1781,15 @@ function filterPreviousNamesByUser(userId) {
   refreshDBData();
 }
 
+// 数据管理：获取单条记录的方法映射
+const dbGetFns = {
+  users: id => api.getDBUser(id),
+  lists: id => api.getDBList(id),
+  entities: id => api.getDBUserEntity(id),
+  listEntities: id => api.getDBListEntity(id),
+  userLinks: id => api.getDBUserLink(id),
+};
+
 async function editDBItem(type, id) {
   try {
     const getFn = dbGetFns[type];
@@ -1943,6 +1952,15 @@ async function saveDBItem(type, id) {
   }
 }
 
+// 数据管理：更新记录的方法映射
+const dbUpdateFns = {
+  users: (id, data) => api.updateDBUser(id, data),
+  lists: (id, data) => api.updateDBList(id, data),
+  entities: (id, data) => api.updateDBUserEntity(id, data),
+  listEntities: (id, data) => api.updateDBListEntity(id, data),
+  userLinks: (id, data) => api.updateDBUserLink(id, data),
+};
+
 const dbDeleteFns = {
   users: id => api.deleteDBUser(id),
   lists: id => api.deleteDBList(id),
@@ -1964,8 +1982,8 @@ async function deleteDBItem(type, id) {
     checkParams.append('page', '1');
     checkParams.append('pageSize', current.pageSize);
     const dataSubPageMap = {
-      users: api.getDBUsers, lists: api.getDBLists, entities: api.getDBUserEntities,
-      listEntities: api.getDBListEntities, userLinks: api.getDBUserLinks, previousNames: api.getDBPreviousNames,
+      users: p => api.getDBUsers(p), lists: p => api.getDBLists(p), entities: p => api.getDBUserEntities(p),
+      listEntities: p => api.getDBListEntities(p), userLinks: p => api.getDBUserLinks(p), previousNames: p => api.getDBPreviousNames(p),
     };
     const fetcher = dataSubPageMap[dataSubPage];
     if (fetcher) {
