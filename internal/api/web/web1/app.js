@@ -1047,6 +1047,75 @@ function makeChangeDetector(keys) {
   };
 }
 
+// DualModeEditor 工厂：统一 config/cookies/schedules 三处 raw/form 双模式编辑器
+// 抽象 setMode + skipNextRebuild 标志 + editor 生命周期 + panel 重建
+// 注意：save/saveRaw 不纳入工厂（差异太大），仍由各自独立函数处理
+// 关键依赖：store 通知是异步的（L183-190 via Promise.resolve().then microtask）
+// setMode 在 store.setState 之后同步设置 skip flag，确保 microtask 运行 syncSystemPage 时 skip flag 已就位
+function createDualModeEditor(opts) {
+  const {
+    panelId,          // 'systemConfigPanel' / 'systemCookiesPanel' / 'systemSchedulesPanel'
+    modeKey,          // 'configMode' / 'cookiesMode' / '_scheduleTab'
+    rawKey,           // 'configRaw' / 'cookiesRaw' / '_scheduleRaw'
+    editorAttr,       // 'configEditor' / 'cookiesEditor' / 'scheduleEditor'
+    skipRebuildAttr,  // '_configPanelSkipNextRebuild' / ...
+    render,           // () => string  无参 render 函数
+    initEditor,       // () => void    无参 initEditor 函数
+    loadRaw,          // () => Promise  raw 数据为 null 时调用
+    onAfterSetState,  // (mode) => void  可选钩子，setState 之后、rebuild 之前调用
+  } = opts;
+
+  return {
+    // 模式切换：统一三处 setMode 逻辑
+    setMode(mode) {
+      if (mode !== 'raw' && _state[editorAttr]) {
+        _state[editorAttr] = null;
+      }
+      store.setState({ [modeKey]: mode });
+      if (mode === 'raw' && store.state[rawKey] === null) loadRaw();
+      if (onAfterSetState) onAfterSetState(mode);
+      if (mode === 'raw' && store.state[rawKey] !== null) {
+        _state[editorAttr] = null;
+        _state[skipRebuildAttr] = true;
+        const panel = document.getElementById(panelId);
+        if (panel) {
+          panel.innerHTML = render();
+          requestAnimationFrame(() => requestAnimationFrame(initEditor));
+        }
+      } else {
+        _state[skipRebuildAttr] = false;
+      }
+    },
+
+    // 重建 panel（封装 rerenderSystemPanel 调用）
+    // 注意：initEditor 参数必须是函数引用（或 null），不能是箭头函数
+    // 因为 rerenderSystemPanel 内部会调用 initEditor()，箭头函数会返回函数引用而非调用它
+    rebuild() {
+      rerenderSystemPanel(
+        panelId, render,
+        () => { _state[editorAttr] = null; },
+        store.state[modeKey] === 'raw' ? initEditor : null,
+        () => store.state[modeKey] === 'raw' ? getEditorValue(_state[editorAttr], null) : null,
+        (val) => { if (val !== null && _state[editorAttr]) setEditorValue(_state[editorAttr], val); }
+      );
+    },
+
+    // editor 生命周期
+    getEditorValue() { return getEditorValue(_state[editorAttr], store.state[rawKey]); },
+    setEditorValue(val) { if (_state[editorAttr]) setEditorValue(_state[editorAttr], val); },
+    destroyEditor() { _state[editorAttr] = null; },
+    resetSkipFlag() { _state[skipRebuildAttr] = false; },
+    isSkipFlagSet() { return !!_state[skipRebuildAttr]; },
+    consumeSkipFlag() {
+      if (_state[skipRebuildAttr]) { _state[skipRebuildAttr] = false; return true; }
+      return false;
+    },
+
+    // 状态查询
+    isRawMode(state) { return state[modeKey] === 'raw'; },
+  };
+}
+
 // 保存当前任务 tab 的表单值
 function saveTaskFormState() {
   const inputs = document.querySelectorAll('#taskFormContainer input, #taskFormContainer textarea, #taskFormContainer select');
@@ -3477,6 +3546,58 @@ async function toggleScheduleEnabled(id, currentEnabled) {
   }
 }
 
+// ============================================
+// DualModeEditor 实例（config/cookies/schedules 三处统一抽象）
+// 注意：configEditor 是工厂实例，_state.configEditor 是 editor DOM 引用，两者不冲突
+// 依赖 hoist：initConfigEditor/initCookiesEditor/initScheduleEditor/loadXxxRaw/renderXxxEditor
+// 都是 function 声明会 hoist 到作用域顶部，因此工厂实例可在这些函数定义之前引用
+// ============================================
+const configEditor = createDualModeEditor({
+  panelId: 'systemConfigPanel',
+  modeKey: 'configMode',
+  rawKey: 'configRaw',
+  editorAttr: 'configEditor',
+  skipRebuildAttr: '_configPanelSkipNextRebuild',
+  render: renderConfigEditor,
+  initEditor: initConfigEditor,
+  loadRaw: loadConfigRaw,
+  // config 没有 form 模式预加载（由 syncConfigTabView 负责），不传 onAfterSetState
+});
+
+const cookiesEditor = createDualModeEditor({
+  panelId: 'systemCookiesPanel',
+  modeKey: 'cookiesMode',
+  rawKey: 'cookiesRaw',
+  editorAttr: 'cookiesEditor',
+  skipRebuildAttr: '_cookiesPanelSkipNextRebuild',
+  render: renderCookiesEditor,
+  initEditor: initCookiesEditor,
+  loadRaw: loadCookiesRaw,
+  // cookies 没有 form 模式预加载（由 syncCookiesTabView 负责），不传 onAfterSetState
+});
+
+const scheduleEditor = createDualModeEditor({
+  panelId: 'systemSchedulesPanel',
+  modeKey: '_scheduleTab',
+  rawKey: '_scheduleRaw',
+  editorAttr: 'scheduleEditor',
+  skipRebuildAttr: '_schedulePanelSkipNextRebuild',
+  render: renderScheduleViewer,
+  initEditor: initScheduleEditor,
+  loadRaw: loadScheduleRaw,
+  // 保留原 setScheduleTab L3500 的行为：form 模式且数据为空时调 loadSchedules
+  onAfterSetState: (mode) => {
+    if (mode === 'form' && store.state._scheduleFormItems.length === 0 && (store.state._schedules || []).length === 0) {
+      loadSchedules();
+    }
+  },
+});
+
+// 保留原函数名作为薄封装，避免改动 data-action 分发
+function setConfigMode(mode) { configEditor.setMode(mode); }
+function setCookiesMode(mode) { cookiesEditor.setMode(mode); }
+function setScheduleTab(tab) { scheduleEditor.setMode(tab); }
+
 function navigateToSystemSchedules() {
   if (_state.lastPage === 'system') {
     store.setState({ _systemTab: 'schedules' });
@@ -3491,25 +3612,7 @@ function navigateToSystemSchedules() {
   }
 }
 
-function setScheduleTab(tab) {
-  if (tab !== 'raw' && _state.scheduleEditor) {
-    _state.scheduleEditor = null;
-  }
-  store.setState({ _scheduleTab: tab });
-  if (tab === 'raw' && store.state._scheduleRaw === null) loadScheduleRaw();
-  if (tab === 'form' && store.state._scheduleFormItems.length === 0 && (store.state._schedules || []).length === 0) loadSchedules();
-  if (tab === 'raw' && store.state._scheduleRaw !== null) {
-    _state.scheduleEditor = null;
-    _state._schedulePanelSkipNextRebuild = true;
-    const panel = document.getElementById('systemSchedulesPanel');
-    if (panel) {
-      panel.innerHTML = renderScheduleViewer();
-      requestAnimationFrame(() => requestAnimationFrame(initScheduleEditor));
-    }
-  } else {
-    _state._schedulePanelSkipNextRebuild = false;
-  }
-}
+// setScheduleTab 已由上面的 scheduleEditor 工厂实例 + 薄封装取代
 
 _state._addScheduleItemPending = false;
 
@@ -3975,24 +4078,7 @@ async function saveCookies() {
   }
 }
 
-function setCookiesMode(mode) {
-  if (mode !== 'raw' && _state.cookiesEditor) {
-    _state.cookiesEditor = null;
-  }
-  store.setState({ cookiesMode: mode });
-  if (mode === 'raw' && store.state.cookiesRaw === null) loadCookiesRaw();
-  if (mode === 'raw' && store.state.cookiesRaw !== null) {
-    _state.cookiesEditor = null;
-    _state._cookiesPanelSkipNextRebuild = true;
-    const panel = document.getElementById('systemCookiesPanel');
-    if (panel) {
-      panel.innerHTML = renderCookiesEditor();
-      requestAnimationFrame(() => requestAnimationFrame(initCookiesEditor));
-    }
-  } else {
-    _state._cookiesPanelSkipNextRebuild = false;
-  }
-}
+// setCookiesMode 已由上面的 cookiesEditor 工厂实例 + 薄封装取代
 
 function addCookieAccount() {
   const items = [{ index: null, auth_token: '', ct0: '' }, ...store.state.cookieItems];
@@ -4029,30 +4115,7 @@ function handleServerShutdown(message) {
   renderServerClosedState();
 }
 
-function setConfigMode(mode) {
-  if (mode !== 'raw' && _state.configEditor) {
-    _state.configEditor = null;
-  }
-  store.setState({ configMode: mode });
-  if (mode === 'raw' && store.state.configRaw === null) loadConfigRaw();
-  // configRaw 已存在时直接同步重建面板，设置标志位防止订阅重复重建
-  if (mode === 'raw' && store.state.configRaw !== null) {
-    _state.configEditor = null;
-    _state._configPanelSkipNextRebuild = true;
-    const panel = document.getElementById('systemConfigPanel');
-    if (panel) {
-      panel.innerHTML = renderConfigEditor();
-      requestAnimationFrame(() => requestAnimationFrame(initConfigEditor));
-    }
-  } else {
-    // 切回简易模式时清除标志位，确保订阅能正常重建
-    _state._configPanelSkipNextRebuild = false;
-  }
-}
-
-
-
-
+// setConfigMode 已由上面的 configEditor 工厂实例 + 薄封装取代
 
 function initRawEditor(containerId, content, _mode) {
   const container = document.getElementById(containerId);
@@ -4105,9 +4168,9 @@ function cleanupSystemTimers() {
 }
 
 function destroyAllEditors() {
-  _state.configEditor = null;
-  _state.cookiesEditor = null;
-  _state.scheduleEditor = null;
+  configEditor.destroyEditor();
+  cookiesEditor.destroyEditor();
+  scheduleEditor.destroyEditor();
 }
 
 function connectLogSSE() {
@@ -4267,9 +4330,9 @@ function rerenderSystemPanel(panelId, renderFn, resetEditor = null, initEditor =
 
 function setSystemTab(tab) {
   // 切换 tab 时清除所有 Skip 标志，防止残留阻挡后续重建
-  _state._configPanelSkipNextRebuild = false;
-  _state._cookiesPanelSkipNextRebuild = false;
-  _state._schedulePanelSkipNextRebuild = false;
+  configEditor.resetSkipFlag();
+  cookiesEditor.resetSkipFlag();
+  scheduleEditor.resetSkipFlag();
   store.setState({ _systemTab: tab });
   setTimeout(syncSystemTabView, 0);
 }
@@ -4590,6 +4653,14 @@ window.addEventListener('resize', () => {
 const dataDetector = makeChangeDetector(['dataSubPage', 'dbData', 'dbPagination', 'dbSort']);
 const scheduleDetector = makeChangeDetector(['_schedules', '_scheduleRaw', '_scheduleExists', '_scheduleSaving', '_scheduleTab', '_scheduleFormItems', '_schedulerRunning']);
 const overviewDetector = makeChangeDetector(['tasks', 'health']);
+// system 页变化检测器：取代原 syncSystemPage 中 18 行手写 lastXxx 比较
+// 注意：不包含 'tasks'，原代码 tasks 变化不触发 system 页 rebuild（lastTasksJson 是死代码）
+const systemDetector = makeChangeDetector([
+  '_systemTab',
+  'configRaw', 'configSaving', 'configFields', 'configFieldsLoading', 'configMode',
+  'cookieItems', 'cookiesMode', 'cookiesRaw', 'cookiesSaving',
+  '_schedules', '_scheduleRaw', '_scheduleExists', '_scheduleSaving', '_scheduleTab', '_scheduleFormItems'
+]);
 
 // ============================================
 // Page-specific state sync functions
@@ -4631,26 +4702,92 @@ function syncDataPage(state) {
   }
 }
 
-function syncSystemPage(state) {
-  const tabChanged = state._systemTab !== _state.lastSystemTab;
-  const configRawChanged = state.configRaw !== _state.lastConfigRaw;
-  const configSavingChanged = state.configSaving !== _state.lastConfigSaving;
-  const configFieldsChanged = JSON.stringify(state.configFields) !== _state.lastConfigFieldsJson;
-  const configFieldsLoadingChanged = state.configFieldsLoading !== _state.lastConfigFieldsLoading;
-  const configModeChanged = state.configMode !== _state.lastConfigMode;
-  const cookiesChanged = JSON.stringify(state.cookieItems) !== _state.lastCookieItemsJson;
-  const cookiesModeChanged = state.cookiesMode !== _state.lastCookiesMode;
-  const cookiesRawChanged = state.cookiesRaw !== _state.lastCookiesRaw;
-  const cookiesSavingChanged = state.cookiesSaving !== _state.lastCookiesSaving;
-  const schedulesChanged = JSON.stringify(state._schedules) !== _state.lastSchedulesJson;
-  const scheduleRawChanged = state._scheduleRaw !== _state.lastScheduleRaw;
-  const scheduleExistsChanged = state._scheduleExists !== _state.lastScheduleExists;
-  const scheduleSavingChanged = state._scheduleSaving !== _state.lastScheduleSaving;
-  const scheduleTabChanged = state._scheduleTab !== _state.lastScheduleTab;
-  const scheduleFormItemsChanged = JSON.stringify(state._scheduleFormItems) !== _state.lastScheduleFormItemsJson;
+// ============================================
+// System 页三个面板的 rebuild 函数（提取自原 syncSystemPage）
+// skip 判定省略原代码两个冗余条件：
+// - currentPage === 'system'：syncSystemPage 仅在 system 页调用（store.subscribe），恒为 true
+// - shouldRebuild：raw 模式下 shouldRebuild 包含 changed.xxxMode，若 changed.xxxMode=true 则必为 true
+// ============================================
+function rebuildConfigPanel(state, changed) {
+  // skip 判定：setConfigMode 已同步重建 panel，跳过避免重复
+  const skipRebuild = configEditor.isSkipFlagSet()
+    && changed.configMode
+    && state.configMode === 'raw';
+  if (skipRebuild) {
+    configEditor.consumeSkipFlag();
+    _state.lastConfigRaw = state.configRaw;  // 修正 11：必须更新，否则 rawRebuildNeeded 判定失效
+    return;
+  }
+  // rebuild 判定（与原逻辑等价）
+  const rawRebuildNeeded = changed.configRaw && _state.lastConfigRaw === null && state.configRaw !== null;
+  const shouldRebuild = state.configMode === 'raw'
+    ? (changed.configMode || changed.configSaving || rawRebuildNeeded)
+    : (changed.configRaw || changed.configFields || changed.configFieldsLoading || changed.configSaving || changed.configMode);
+  if (shouldRebuild) {
+    _state.lastConfigRaw = state.configRaw;  // 保留 _state.lastConfigRaw 用于 rawRebuildNeeded 判定
+    configEditor.rebuild();
+  } else if (changed.configRaw && state.configMode === 'raw' && _state.configEditor) {
+    _state.lastConfigRaw = state.configRaw;  // 修正 12：必须更新，与原代码 L4692 等价
+    configEditor.setEditorValue(state.configRaw);
+  }
+}
 
-  if (tabChanged) {
-    _state.lastSystemTab = state._systemTab;
+function rebuildCookiesPanel(state, changed) {
+  const skipRebuild = cookiesEditor.isSkipFlagSet()
+    && changed.cookiesMode
+    && state.cookiesMode === 'raw';
+  if (skipRebuild) {
+    cookiesEditor.consumeSkipFlag();
+    _state.lastCookiesRaw = state.cookiesRaw;  // 修正 11
+    return;
+  }
+  const rawRebuildNeeded = changed.cookiesRaw && _state.lastCookiesRaw === null && state.cookiesRaw !== null;
+  const shouldRebuild = state.cookiesMode === 'raw'
+    ? (changed.cookiesMode || changed.cookiesSaving || rawRebuildNeeded)
+    : (changed.cookieItems || changed.cookiesMode || changed.cookiesRaw || changed.cookiesSaving);
+  if (shouldRebuild) {
+    _state.lastCookiesRaw = state.cookiesRaw;
+    cookiesEditor.rebuild();
+  } else if (changed.cookiesRaw && state.cookiesMode === 'raw' && _state.cookiesEditor) {
+    _state.lastCookiesRaw = state.cookiesRaw;  // 修正 12
+    cookiesEditor.setEditorValue(state.cookiesRaw);
+  }
+}
+
+function rebuildSchedulePanel(state, changed) {
+  const skipRebuild = scheduleEditor.isSkipFlagSet()
+    && changed._scheduleTab
+    && state._scheduleTab === 'raw';
+  if (skipRebuild) {
+    scheduleEditor.consumeSkipFlag();
+    _state.lastScheduleRaw = state._scheduleRaw;  // 修正 11
+    return;
+  }
+  // 注意：schedulesChanged 只依赖 changed._schedules，不包含 changed.tasks
+  // 原代码 tasks 变化不触发 schedules rebuild（lastTasksJson 是死代码，修正 3/15）
+  // 原代码 L4727-4729 的 `if (schedulesChanged && !schedulePanelSchedulesChanged)` 分支
+  // 已被 detector 自动管理 snapshot 替代（修正 14），直接删除
+  const schedulesChanged = changed._schedules;
+  const schedulePanelSchedulesChanged = state._scheduleTab !== 'form' && schedulesChanged;
+  const rawRebuildNeeded = changed._scheduleRaw && _state.lastScheduleRaw === null && state._scheduleRaw !== null;
+  const shouldRebuild = state._scheduleTab === 'raw'
+    ? (changed._scheduleTab || changed._scheduleSaving || changed._scheduleExists || rawRebuildNeeded || schedulePanelSchedulesChanged || changed._scheduleFormItems)
+    : (schedulePanelSchedulesChanged || changed._scheduleRaw || changed._scheduleExists || changed._scheduleSaving || changed._scheduleTab || changed._scheduleFormItems);
+  if (shouldRebuild) {
+    _state.lastScheduleRaw = state._scheduleRaw;
+    scheduleEditor.rebuild();
+  } else if (changed._scheduleRaw && state._scheduleTab === 'raw' && _state.scheduleEditor) {
+    _state.lastScheduleRaw = state._scheduleRaw;  // 修正 12
+    scheduleEditor.setEditorValue(state._scheduleRaw);
+  }
+}
+
+function syncSystemPage(state) {
+  const { hasAny, changed } = systemDetector.detect(state);
+  if (!hasAny) return;
+
+  // tab 切换：只改 display + active class，不重建 panel
+  if (changed._systemTab) {
     document.querySelectorAll('.system-tabs .tab').forEach(t => {
       t.classList.toggle('active', t.dataset.tab === state._systemTab);
     });
@@ -4659,108 +4796,15 @@ function syncSystemPage(state) {
     document.getElementById('systemSchedulesPanel').style.display = state._systemTab === 'schedules' ? '' : 'none';
   }
 
-  const configRawRebuildNeeded = configRawChanged && _state.lastConfigRaw === null && state.configRaw !== null;
-  let configPanelShouldRebuild = state.configMode === 'raw'
-    ? (configModeChanged || configSavingChanged || configRawRebuildNeeded)
-    : (configRawChanged || configFieldsChanged || configFieldsLoadingChanged || configSavingChanged || configModeChanged);
-  if (state.currentPage === 'system' && _state._configPanelSkipNextRebuild && configPanelShouldRebuild && configModeChanged && state.configMode === 'raw') {
-    _state._configPanelSkipNextRebuild = false;
-    // setConfigMode 已同步重建面板，此处跳过 Config 重建（继续处理 cookies/schedules）
-    configPanelShouldRebuild = false;
-    // 但需要同步 _state last* 避免后续反复重建
-    _state.lastConfigRaw = state.configRaw;
-    _state.lastConfigSaving = state.configSaving;
-    _state.lastConfigFieldsJson = JSON.stringify(state.configFields);
-    _state.lastConfigFieldsLoading = state.configFieldsLoading;
-    _state.lastConfigMode = state.configMode;
+  // 三个面板独立 rebuild（仅当相关状态变化时）
+  if (changed.configRaw || changed.configSaving || changed.configFields || changed.configFieldsLoading || changed.configMode) {
+    rebuildConfigPanel(state, changed);
   }
-  if (configPanelShouldRebuild) {
-    _state.lastConfigRaw = state.configRaw;
-    _state.lastConfigSaving = state.configSaving;
-    _state.lastConfigFieldsJson = JSON.stringify(state.configFields);
-    _state.lastConfigFieldsLoading = state.configFieldsLoading;
-    _state.lastConfigMode = state.configMode;
-    rerenderSystemPanel(
-      'systemConfigPanel',
-      renderConfigEditor,
-      () => { _state.configEditor = null; },
-      state.configMode === 'raw' ? initConfigEditor : null,
-      () => state.configMode === 'raw' ? getEditorValue(_state.configEditor, null) : null,
-      (val) => { if (val !== null && _state.configEditor) setEditorValue(_state.configEditor, val); }
-    );
-  } else if (configRawChanged && state.configMode === 'raw' && _state.configEditor) {
-    _state.lastConfigRaw = state.configRaw;
-    setEditorValue(_state.configEditor, state.configRaw);
+  if (changed.cookieItems || changed.cookiesMode || changed.cookiesRaw || changed.cookiesSaving) {
+    rebuildCookiesPanel(state, changed);
   }
-
-  const cookiesRawRebuildNeeded = cookiesRawChanged && _state.lastCookiesRaw === null && state.cookiesRaw !== null;
-  let cookiesPanelShouldRebuild = state.cookiesMode === 'raw'
-    ? (cookiesModeChanged || cookiesSavingChanged || cookiesRawRebuildNeeded)
-    : (cookiesChanged || cookiesModeChanged || cookiesRawChanged || cookiesSavingChanged);
-  if (_state._cookiesPanelSkipNextRebuild && cookiesPanelShouldRebuild && cookiesModeChanged && state.cookiesMode === 'raw') {
-    _state._cookiesPanelSkipNextRebuild = false;
-    cookiesPanelShouldRebuild = false;
-    _state.lastCookieItemsJson = JSON.stringify(state.cookieItems);
-    _state.lastCookiesMode = state.cookiesMode;
-    _state.lastCookiesRaw = state.cookiesRaw;
-    _state.lastCookiesSaving = state.cookiesSaving;
-  }
-  if (cookiesPanelShouldRebuild) {
-    _state.lastCookieItemsJson = JSON.stringify(state.cookieItems);
-    _state.lastCookiesMode = state.cookiesMode;
-    _state.lastCookiesRaw = state.cookiesRaw;
-    _state.lastCookiesSaving = state.cookiesSaving;
-    rerenderSystemPanel(
-      'systemCookiesPanel',
-      renderCookiesEditor,
-      () => { _state.cookiesEditor = null; },
-      state.cookiesMode === 'raw' ? initCookiesEditor : null,
-      () => state.cookiesMode === 'raw' ? getEditorValue(_state.cookiesEditor, null) : null,
-      (val) => { if (val !== null && _state.cookiesEditor) setEditorValue(_state.cookiesEditor, val); }
-    );
-  } else if (cookiesRawChanged && state.cookiesMode === 'raw' && _state.cookiesEditor) {
-    _state.lastCookiesRaw = state.cookiesRaw;
-    setEditorValue(_state.cookiesEditor, state.cookiesRaw);
-  }
-
-  const schedulePanelSchedulesChanged = state._scheduleTab !== 'form' && schedulesChanged;
-  if (schedulesChanged && !schedulePanelSchedulesChanged) {
-    _state.lastSchedulesJson = JSON.stringify(state._schedules);
-  }
-  const scheduleRawRebuildNeeded = scheduleRawChanged && _state.lastScheduleRaw === null && state._scheduleRaw !== null;
-  let schedulePanelShouldRebuild = state._scheduleTab === 'raw'
-    ? (scheduleTabChanged || scheduleSavingChanged || scheduleExistsChanged || scheduleRawRebuildNeeded || schedulePanelSchedulesChanged || scheduleFormItemsChanged)
-    : (schedulePanelSchedulesChanged || scheduleRawChanged || scheduleExistsChanged || scheduleSavingChanged || scheduleTabChanged || scheduleFormItemsChanged);
-  if (_state._schedulePanelSkipNextRebuild && schedulePanelShouldRebuild && scheduleTabChanged && state._scheduleTab === 'raw') {
-    _state._schedulePanelSkipNextRebuild = false;
-    schedulePanelShouldRebuild = false;
-    _state.lastSchedulesJson = JSON.stringify(state._schedules);
-    _state.lastTasksJson = JSON.stringify(state.tasks);
-    _state.lastScheduleRaw = state._scheduleRaw;
-    _state.lastScheduleExists = state._scheduleExists;
-    _state.lastScheduleSaving = state._scheduleSaving;
-    _state.lastScheduleTab = state._scheduleTab;
-    _state.lastScheduleFormItemsJson = JSON.stringify(state._scheduleFormItems);
-  }
-  if (schedulePanelShouldRebuild) {
-    _state.lastSchedulesJson = JSON.stringify(state._schedules);
-    _state.lastTasksJson = JSON.stringify(state.tasks);
-    _state.lastScheduleRaw = state._scheduleRaw;
-    _state.lastScheduleExists = state._scheduleExists;
-    _state.lastScheduleSaving = state._scheduleSaving;
-    _state.lastScheduleTab = state._scheduleTab;
-    _state.lastScheduleFormItemsJson = JSON.stringify(state._scheduleFormItems);
-    rerenderSystemPanel(
-      'systemSchedulesPanel',
-      renderScheduleViewer,
-      () => { _state.scheduleEditor = null; },
-      state._scheduleTab === 'raw' ? initScheduleEditor : null,
-      () => state._scheduleTab === 'raw' ? getEditorValue(_state.scheduleEditor, null) : null,
-      (val) => { if (val !== null && _state.scheduleEditor) setEditorValue(_state.scheduleEditor, val); }
-    );
-  } else if (scheduleRawChanged && state._scheduleTab === 'raw' && _state.scheduleEditor) {
-    _state.lastScheduleRaw = state._scheduleRaw;
-    setEditorValue(_state.scheduleEditor, state._scheduleRaw);
+  if (changed._schedules || changed._scheduleRaw || changed._scheduleExists || changed._scheduleSaving || changed._scheduleTab || changed._scheduleFormItems) {
+    rebuildSchedulePanel(state, changed);
   }
 }
 

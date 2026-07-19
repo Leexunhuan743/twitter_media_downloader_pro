@@ -134,6 +134,37 @@ internal/api/web/
 - **Security** — validates target directory exists and contains index.html
 - **Shared backend** — both themes call same REST API + EventSource SSE
 
+## Web1 Console Architecture
+
+`web1/app.js` is a single-file vanilla JS SPA (~5100 lines) with a custom store + subscriber pattern.
+
+### Store Notification Model
+
+`store.setState` updates `store.state` synchronously via `deepMerge`, but notifies subscribers **asynchronously** via a `Promise.resolve().then()` microtask.
+
+Multiple `setState` calls in the same tick are batched via `_notifyPending` flag. This async notification is critical for the skip flag mechanism below.
+
+### DualModeEditor Factory
+
+The system page has three raw/form dual-mode editors (config / cookies / schedules) with identical structure. [[internal/api/web/web1/app.js#createDualModeEditor]] abstracts:
+- `setMode(mode)` — switch raw/form, with skip flag set AFTER `store.setState` (relies on async notification)
+- `rebuild()` — wraps `rerenderSystemPanel` (initEditor must be a function reference, not arrow function)
+- `destroyEditor()` / `resetSkipFlag()` / `isSkipFlagSet()` / `consumeSkipFlag()` — lifecycle & flag management
+
+Three instances (`configEditor` / `cookiesEditor` / `scheduleEditor`) are created via the factory. Original `setConfigMode` / `setCookiesMode` / `setScheduleTab` are preserved as thin wrappers to avoid touching the data-action dispatch table.
+
+### Skip Flag Mechanism (depends on async store notification)
+
+When `setMode('raw')` is called and raw data is already cached, the factory synchronously rebuilds the panel and sets `_xxxPanelSkipNextRebuild = true` AFTER `store.setState`.
+
+When the store's microtask fires `syncSystemPage`, the rebuild function sees the skip flag and skips rebuild (only updating `_state.lastXxxRaw`). This prevents double rebuild. If the store ever changes to synchronous notification, the skip flag must be set BEFORE `store.setState` instead.
+
+### syncSystemPage Change Detection
+
+`syncSystemPage` uses [[internal/api/web/web1/app.js#systemDetector]] (created via `makeChangeDetector`) to detect which state keys changed, replacing 18 lines of manual `lastXxx` comparisons.
+
+Three independent rebuild functions (`rebuildConfigPanel` / `rebuildCookiesPanel` / `rebuildSchedulePanel`) handle each panel. `_state.lastConfigRaw` / `lastCookiesRaw` / `lastScheduleRaw` are preserved (not in `_state` definition, kept as dynamic properties starting `undefined`) for the `rawRebuildNeeded` boundary check: `changed.xxxRaw && _state.lastXxxRaw === null && state.xxxRaw !== null` detects first raw data load. Initializing these to `null` would change behavior (`undefined === null` is false, `null === null` is true).
+
 ## Graceful Shutdown
 
 Handles SIGINT/SIGTERM: drains DownloadQueue (15s max), waits for active tasks, closes DB, then exits.
