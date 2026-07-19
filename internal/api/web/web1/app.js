@@ -437,6 +437,58 @@ const api = {
   getDBUserPreviousNames(id, params = '') { return this.get(`/api/v1/db/users/${id}/previous-names${params ? '?' + params : ''}`); }
 };
 
+// 数据管理类型配置：统一所有类型的 API 方法映射，消除散落的 switch-case
+// 各类型显式声明支持的操作（get/update/delete 缺失 = 只读）
+// 新增类型只需在此添加一处配置
+const DB_TYPE_CONFIG = {
+  users: {
+    title: 'Users',
+    get: id => api.getDBUser(id),
+    update: (id, data) => api.updateDBUser(id, data),
+    delete: id => api.deleteDBUser(id),
+    list: params => api.getDBUsers(params),
+  },
+  lists: {
+    title: 'Lists',
+    get: id => api.getDBList(id),
+    update: (id, data) => api.updateDBList(id, data),
+    delete: id => api.deleteDBList(id),
+    list: params => api.getDBLists(params),
+  },
+  entities: {
+    title: 'Entities',
+    get: id => api.getDBUserEntity(id),
+    update: (id, data) => api.updateDBUserEntity(id, data),
+    delete: id => api.deleteDBUserEntity(id),
+    list: params => api.getDBUserEntities(params),
+  },
+  listEntities: {
+    title: 'List Entities',
+    get: id => api.getDBListEntity(id),
+    update: (id, data) => api.updateDBListEntity(id, data),
+    delete: id => api.deleteDBListEntity(id),
+    list: params => api.getDBListEntities(params),
+  },
+  userLinks: {
+    title: 'User Links',
+    get: id => api.getDBUserLink(id),
+    update: (id, data) => api.updateDBUserLink(id, data),
+    delete: id => api.deleteDBUserLink(id),
+    list: params => api.getDBUserLinks(params),
+  },
+  previousNames: {
+    title: 'Previous Names',
+    // 只读类型：无 get/update/delete
+    list: params => {
+      // 按用户筛选时追加 userId 参数
+      if (store.state._prevNameUserIdFilter) {
+        params.append('userId', store.state._prevNameUserIdFilter);
+      }
+      return api.getDBPreviousNames(params);
+    },
+  },
+};
+
 // ============================================
 // SSE Manager
 // ============================================
@@ -1510,6 +1562,16 @@ function renderDBPreviousNamesTable(type, data, sort) {
   ], data, sort);
 }
 
+function renderDBUserLinksTable(type, data, sort) {
+  return renderTable([
+    { key: 'id', label: 'ID', sortable: true },
+    { key: 'user_id', label: 'User ID', sortable: true },
+    { key: 'name', label: 'Name', sortable: true },
+    { key: 'parent_lst_entity_id', label: 'Parent Entity', sortable: false },
+    { label: 'Actions', sortable: false, render: i => renderActionButtons(type, i) },
+  ], data, sort);
+}
+
 function renderDBDefaultTable(type, data, sort) {
   return renderTable([
     { key: 'id', label: 'ID', sortable: true },
@@ -1537,6 +1599,7 @@ function renderDBTable(type, data, sort) {
     lists: renderDBListsTable,
     entities: renderDBEntitiesTable,
     listEntities: renderDBListEntitiesTable,
+    userLinks: renderDBUserLinksTable,
     previousNames: renderDBPreviousNamesTable,
   };
   const fn = tableRenderers[type] || renderDBDefaultTable;
@@ -1583,6 +1646,16 @@ function renderDBMobileCards(type, data) {
           <div>ID: ${escapeHtml(item.id)}</div>
           <div>List ID: ${escapeHtml(item.lst_id)}</div>
           <div>Dir: ${escapeHtml(item.parent_dir)}</div>
+        </div>
+        <div>${renderActionButtons(type, item)}</div>
+      </div>`,
+    userLinks: item => `
+      <div class="mobile-card">
+        <div class="mobile-card-title">${escapeHtml(item.name)}</div>
+        <div class="mobile-card-meta">
+          <div>ID: ${escapeHtml(item.id)}</div>
+          <div>User ID: ${escapeHtml(item.user_id)}</div>
+          <div>Entity: ${escapeHtml(item.parent_lst_entity_id)}</div>
         </div>
         <div>${renderActionButtons(type, item)}</div>
       </div>`,
@@ -1654,30 +1727,9 @@ async function refreshDBData() {
   if (search) params.append('q', search);
 
   try {
-    let response;
-    switch (dataSubPage) {
-      case 'users':
-        response = await api.getDBUsers(params.toString());
-        break;
-      case 'lists':
-        response = await api.getDBLists(params.toString());
-        break;
-      case 'entities':
-        response = await api.getDBUserEntities(params.toString());
-        break;
-      case 'listEntities':
-        response = await api.getDBListEntities(params.toString());
-        break;
-      case 'userLinks':
-        response = await api.getDBUserLinks(params.toString());
-        break;
-      case 'previousNames':
-        if (store.state._prevNameUserIdFilter) {
-          params.append('userId', store.state._prevNameUserIdFilter);
-        }
-        response = await api.getDBPreviousNames(params.toString());
-        break;
-    }
+    const config = DB_TYPE_CONFIG[dataSubPage];
+    if (!config?.list) return;
+    const response = await config.list(params);
 
     if (response) {
       const data = response || {};
@@ -1781,20 +1833,11 @@ function filterPreviousNamesByUser(userId) {
   refreshDBData();
 }
 
-// 数据管理：获取单条记录的方法映射
-const dbGetFns = {
-  users: id => api.getDBUser(id),
-  lists: id => api.getDBList(id),
-  entities: id => api.getDBUserEntity(id),
-  listEntities: id => api.getDBListEntity(id),
-  userLinks: id => api.getDBUserLink(id),
-};
-
 async function editDBItem(type, id) {
   try {
-    const getFn = dbGetFns[type];
-    if (!getFn) return toast.show('Unknown type: ' + type, 'error');
-    const item = await getFn(id);
+    const config = DB_TYPE_CONFIG[type];
+    if (!config?.get) return toast.show('This type does not support editing', 'error');
+    const item = await config.get(id);
 
     if (!item) {
       throw new Error('Failed to load item data');
@@ -1943,7 +1986,9 @@ async function saveDBItem(type, id) {
       break;
   }
   try {
-    await dbUpdateFns[type](id, data);
+    const config = DB_TYPE_CONFIG[type];
+    if (!config?.update) return toast.show('This type does not support saving', 'error');
+    await config.update(id, data);
     drawer.close();
     toast.show('保存成功');
     refreshDBData();
@@ -1952,42 +1997,21 @@ async function saveDBItem(type, id) {
   }
 }
 
-// 数据管理：更新记录的方法映射
-const dbUpdateFns = {
-  users: (id, data) => api.updateDBUser(id, data),
-  lists: (id, data) => api.updateDBList(id, data),
-  entities: (id, data) => api.updateDBUserEntity(id, data),
-  listEntities: (id, data) => api.updateDBListEntity(id, data),
-  userLinks: (id, data) => api.updateDBUserLink(id, data),
-};
-
-const dbDeleteFns = {
-  users: id => api.deleteDBUser(id),
-  lists: id => api.deleteDBList(id),
-  entities: id => api.deleteDBUserEntity(id),
-  listEntities: id => api.deleteDBListEntity(id),
-  userLinks: id => api.deleteDBUserLink(id),
-};
-
 async function deleteDBItem(type, id) {
   if (!confirm(`确定要删除这个${type}记录吗？此操作不可恢复。`)) return;
-  const delFn = dbDeleteFns[type];
-  if (!delFn) return toast.show('Unknown type: ' + type, 'error');
+  const config = DB_TYPE_CONFIG[type];
+  if (!config?.delete) return toast.show('This type does not support deletion', 'error');
   try {
-    await delFn(id);
+    await config.delete(id);
     toast.show('删除成功');
     const { dataSubPage, dbPagination } = store.state;
     const current = dbPagination[dataSubPage];
     const checkParams = new URLSearchParams();
     checkParams.append('page', '1');
     checkParams.append('pageSize', current.pageSize);
-    const dataSubPageMap = {
-      users: p => api.getDBUsers(p), lists: p => api.getDBLists(p), entities: p => api.getDBUserEntities(p),
-      listEntities: p => api.getDBListEntities(p), userLinks: p => api.getDBUserLinks(p), previousNames: p => api.getDBPreviousNames(p),
-    };
-    const fetcher = dataSubPageMap[dataSubPage];
-    if (fetcher) {
-      const resp = await fetcher(checkParams.toString());
+    const listFn = DB_TYPE_CONFIG[dataSubPage]?.list;
+    if (listFn) {
+      const resp = await listFn(checkParams);
       const total = (resp || {}).total || 0;
       const totalPages = Math.max(1, Math.ceil(total / (current.pageSize || 200)));
       store.setState({
