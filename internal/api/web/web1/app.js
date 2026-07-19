@@ -1065,6 +1065,7 @@ const pages = {
 const _state = {
   _taskFormState: {},
   _configRawLoading: false,
+  _configRawLoadError: false,
   _cookiesRawLoading: false,
   _scheduleRawLoading: false,
   _logsPageLoaded: false
@@ -2630,9 +2631,12 @@ function renderConfigForm(fields, saving, exists, loading = false) {
     `;
   }
 
-  const groups = { basic: [], cookie: [], advanced: [], security: [] };
-  fields.forEach(f => { if (groups[f.group]) groups[f.group].push(f); });
+  const groups = {};
   const groupLabels = { basic: '📁 基础设置', cookie: '🍪 Cookie 认证', advanced: '⚙️ 高级选项', security: '🔐 安全认证' };
+  fields.forEach(f => {
+    if (!groups[f.group]) groups[f.group] = [];
+    groups[f.group].push(f);
+  });
 
   const renderField = f => {
     const inputType = f.type === 'password' ? 'password' : (f.type === 'number' ? 'number' : 'text');
@@ -2645,7 +2649,7 @@ function renderConfigForm(fields, saving, exists, loading = false) {
         <input type="${inputType}" class="form-input config-input" id="cf_${escapeAttr(f.name)}"
           name="${escapeAttr(f.name)}" value="${escapeAttr(f.type === 'password' ? '' : f.value)}"
           placeholder="${placeholder}"
-          ${f.type === 'number' ? `min="1" max="${f.name.includes('routine') ? '100' : '245'}"` : ''}>
+          ${f.type === 'number' ? `min="1" max="${f.name === 'max_download_routine' ? '100' : '245'}"` : ''}>
       </div>
     `;
   };
@@ -2664,7 +2668,7 @@ function renderConfigForm(fields, saving, exists, loading = false) {
       <div class="card-body">
         ${Object.entries(groups).map(([key, items]) => items.length ? `
           <div class="config-group">
-            <div class="config-group-title">${groupLabels[key]}</div>
+            <div class="config-group-title">${groupLabels[key] || key}</div>
             ${items.map(renderField).join('')}
           </div>
         ` : '').join('')}
@@ -2673,7 +2677,25 @@ function renderConfigForm(fields, saving, exists, loading = false) {
   `;
 }
 
-function renderRawEditorLoading(title, desc) {
+function renderRawEditorLoading(title, desc, loadError = false) {
+  if (loadError) {
+    return `
+    <div class="card">
+      <div class="card-header">
+        <div><div class="card-title">${title}</div><div class="card-subtitle">加载失败</div></div>
+        <div class="flex gap-2">
+          <button class="btn btn-ghost btn-sm" data-action="configRetryLoadRaw">🔄 重试</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="empty-state">
+          <div class="empty-icon">⚠️</div>
+          <div class="empty-title">加载失败</div>
+          <div class="empty-desc">${desc}</div>
+        </div>
+      </div>
+    </div>`;
+  }
   return `
     <div class="card">
       <div class="card-header">
@@ -2715,7 +2737,7 @@ function renderRawEditorContent(opts) {
 }
 
 function renderConfigRawEditor(raw, saving, exists) {
-  if (raw === null) return renderRawEditorLoading('conf.yaml 原始编辑器', '正在加载配置文件');
+  if (raw === null) return renderRawEditorLoading('conf.yaml 原始编辑器', '请检查网络连接后重试', _state._configRawLoadError);
   return renderRawEditorContent({
     title: 'conf.yaml 原始编辑器',
     exists,
@@ -3030,10 +3052,14 @@ async function loadConfigFields() {
 async function loadConfigRaw() {
   if (_state._configRawLoading) return;
   _state._configRawLoading = true;
+  _state._configRawLoadError = false;
   try {
     const d = await api.getConfigRaw();
     store.setState({ configRaw: d.content || '', configExists: d.exists || false });
-  } catch (e) { toast.show('加载配置失败: ' + e.message, 'error'); }
+  } catch (e) {
+    _state._configRawLoadError = true;
+    toast.show('加载配置失败: ' + e.message, 'error');
+  }
   _state._configRawLoading = false;
 }
 
@@ -3965,6 +3991,7 @@ function sleep(ms) {
 }
 
 async function saveConfigForm() {
+  if (store.state.configSaving) return;
   const inputs = document.querySelectorAll('.config-input:not(.cookie-input)[name]');
   const fields = {};
   for (const el of inputs) {
@@ -4000,9 +4027,7 @@ async function saveConfigForm() {
       localStorage.removeItem('tmd_jwt_token');
       localStorage.removeItem('tmd_jwt_expiry');
     }
-    // 保存后重载数据，刷新脱敏显示
-    loadConfigFields();
-    loadConfigRaw();
+    // API 已返回 data.fields（含脱敏值）和 data.yaml_preview，无需额外请求重载
   } catch (e) {
     toast.show('❌ 保存失败: ' + e.message, 'error');
     store.setState({ configSaving: false });
@@ -4010,6 +4035,7 @@ async function saveConfigForm() {
 }
 
 async function saveConfig() {
+  if (store.state.configSaving) return;
   const content = getEditorValue(_state.configEditor, store.state.configRaw);
   if (!content.trim()) return toast.show('配置不能为空', 'error');
   store.setState({ configRaw: content, configSaving: true });
@@ -4020,8 +4046,11 @@ async function saveConfig() {
       configRaw: data.yaml_preview || content
     });
     showManualRestartNotice('配置');
-    // Raw YAML 中存在非注释的 api_key 字段 → 可能已变更 → 清除旧 JWT
-    if (/^api_key:\s*\S/m.test(content)) {
+    // 比较新旧 api_key 值，仅在实际变更时清除 JWT（避免每次 raw 保存都重新登录）
+    const getApiKey = yaml => { const m = (yaml || '').match(/^api_key:\s*(\S+)/m); return m ? m[1] : null; };
+    const oldKey = getApiKey(store.state.configRaw);
+    const newKey = getApiKey(content);
+    if (newKey !== null && newKey !== oldKey) {
       localStorage.removeItem('tmd_jwt_token');
       localStorage.removeItem('tmd_jwt_expiry');
     }
@@ -5122,6 +5151,7 @@ document.addEventListener('click', (e) => {
     case 'setConfigMode':         setConfigMode(el.dataset.mode); break;
     case 'saveConfigForm':        saveConfigForm(); break;
     case 'saveConfig':            saveConfig(); break;
+    case 'configRetryLoadRaw':    loadConfigRaw(); break;
 
     // Cookies
     case 'setCookiesMode':        setCookiesMode(el.dataset.mode); break;
