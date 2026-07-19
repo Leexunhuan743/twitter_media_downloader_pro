@@ -388,7 +388,6 @@ const api = {
   // Logs
   getLogs(params = '') { return this.get(`/api/v1/logs${params}`); },
   getLogStats() { return this.get('/api/v1/logs/stats'); },
-  downloadLogExport() { window.open('/api/v1/logs/export', '_blank'); },
 
   // Schedules
   getSchedules() { return this.get('/api/v1/schedules'); },
@@ -2568,9 +2567,9 @@ function getLineColor(line) {
     WARN: 'var(--warning)',
     ERROR: 'var(--danger)'
   };
-  for (const [key, level] of [['debug', 'DEBUG'], ['info', 'INFO'], ['warn', 'WARN'], ['warning', 'WARNING'], ['error', 'ERROR']]) {
-    if (line.includes('level=' + key)) return levelColors[level];
-  }
+  // 用正则匹配结构化日志的 level 字段（限定单词边界，避免正文误匹配）
+  const levelMatch = line.match(/\blevel=(debug|info|warn(?:ing)?|error)\b/);
+  if (levelMatch) return levelColors[levelMatch[1].toUpperCase()];
   return 'var(--text-secondary)';
 }
 
@@ -2883,7 +2882,8 @@ function renderLogLines(logs) {
     const clean = stripAnsi(l);
     const tweetId = getTweetId(clean);
     const html = highlightLogTimestamp(escapeHtml(clean));
-    return '<div class="log-entry" style="color:' + getLineColor(clean) + '"' + (tweetId ? ' data-tweet-id="' + tweetId + '"' : '') + '>' + html + '</div>';
+    const tweetIdAttr = tweetId ? ` data-tweet-id="${escapeAttr(tweetId)}"` : '';
+    return '<div class="log-entry" style="color:' + getLineColor(clean) + '"' + tweetIdAttr + '>' + html + '</div>';
   }).join('');
 }
 
@@ -2912,18 +2912,18 @@ function toggleLogAutoScroll() {
 
 function exportLogs() { window.open('/api/v1/logs/export'); }
 
-function setLogLevel(level) {
+async function setLogLevel(level) {
   store.setState({ logLevel: level, logPage: 1 });
-  refreshLogs();
+  await refreshLogs();
   // 重连 SSE 以应用新的 level 过滤
   disconnectLogSSE();
   connectLogSSE();
 }
 
-function doLogSearch() {
+async function doLogSearch() {
   const q = document.getElementById('log-search-input')?.value?.trim() || '';
   store.setState({ logSearch: q, logPage: 1 });
-  refreshLogs();
+  await refreshLogs();
   // 重连 SSE 以应用搜索过滤
   disconnectLogSSE();
   connectLogSSE();
@@ -3002,14 +3002,17 @@ async function loadLogStats() {
   try {
     const s = await api.getLogStats();
     store.setState({ logStats: { debug: s.debug || 0, info: s.info || 0, warn: s.warn || 0, error: s.error || 0, total: s.total || 0 } });
-    const filterEl = document.getElementById('logViewerCard');
-    if (filterEl) {
-      const filterArea = filterEl.querySelector('.log-level-filters');
-      if (filterArea) {
-        filterArea.outerHTML = renderLogFilterButtons(store.state.logLevel, store.state.logStats);
-      }
-    }
-  } catch(e) { /* optional */ }
+    // 精细化更新按钮文本和 active 状态，避免 outerHTML 整体替换
+    const lvl = store.state.logLevel;
+    document.querySelectorAll('.log-level-filters [data-action="logSetLevel"]').forEach(btn => {
+      const level = btn.dataset.level;
+      const count = level === 'all' ? (s.total || 0) : (s[level] || 0);
+      btn.textContent = level.toUpperCase() + (count > 0 ? ' (' + count + ')' : '');
+      btn.className = 'btn btn-sm ' + (lvl === level ? 'btn-primary' : 'btn-ghost');
+    });
+  } catch(e) {
+    console.warn('loadLogStats 失败:', e);
+  }
 }
 
 async function loadConfigFields() {
@@ -4229,6 +4232,7 @@ function connectLogSSE() {
   logSSESource = new EventSource(url);
 
   logSSESource.addEventListener('log', (e) => {
+    _logReconnectAttempts = 0; // 成功收到事件 → 连接正常，重置计数器
     const stream = document.getElementById('log-stream');
     if (!stream) return;
     const el = document.createElement('div');
@@ -4886,11 +4890,6 @@ function syncSchedulesPage(state) {
   }
 }
 
-function syncLogsPage(state) {
-  // 新的日志页面使用直接的 DOM 操作（refreshLogs/connectLogSSE），
-  // 不再需要通过 store 订阅做手术刀更新。
-}
-
 function syncOverviewPage(state) {
   const { hasAny, changed } = overviewDetector.detect(state);
   if (!hasAny) return;
@@ -4928,7 +4927,7 @@ store.subscribe((state) => {
   if (state.currentPage === 'data') syncDataPage(state);
   else if (state.currentPage === 'system') syncSystemPage(state);
   else if (state.currentPage === 'schedules') syncSchedulesPage(state);
-  else if (state.currentPage === 'logs') syncLogsPage(state);
+  // 日志页使用直接 DOM 操作（refreshLogs/connectLogSSE），不需要 store 订阅做手术刀更新
   else if (state.currentPage === 'overview') syncOverviewPage(state);
 });
 
