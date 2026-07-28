@@ -54,7 +54,7 @@ go build -o tmdp.exe .
 go vet ./...
 ```
 
-CI (`.github/workflows/go.yml`): only triggers on tag push (`v*`), builds release binaries. **No PR/push test job** — add a `test.yml` if CI tests are needed.
+CI (`.github/workflows/go.yml`): only triggers on tag push (`v*`), builds release binaries for linux/windows/darwin on amd64/arm64. Release builds use `CGO_ENABLED=0`, `-trimpath`, and `-ldflags "-w -s ..."` to keep binaries compact and path-free. **No PR/push test job** — add a `test.yml` if CI tests are needed.
 
 ## What NOT to Do
 Rules to avoid when making changes to the codebase.

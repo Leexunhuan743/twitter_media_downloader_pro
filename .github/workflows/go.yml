@@ -51,7 +51,7 @@ jobs:
               os_name="darwin"
               ;;
           esac
-          go build -o "bin/tmdp-${os_name}-${{ matrix.arch }}${suffix}" \
+          go build -trimpath -o "bin/tmdp-${os_name}-${{ matrix.arch }}${suffix}" \
             -v -ldflags "-w -s -X github.com/unkmonster/tmd/internal/api.Version=${{ github.ref_name }}" .
 
       - name: Upload release artifacts
