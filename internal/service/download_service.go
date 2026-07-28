@@ -381,7 +381,7 @@ func (s *downloadServiceImpl) executeDownloadTemplate(ctx context.Context, confi
 		log.Errorf("[download] Media batch failed task_id=%s error=%q", config.TaskID, safeDownloadError(err))
 		return err
 	}
-	log.Infof("[download] Media batch complete entities=%d failed_tweets=%d list_members=%d duration=%s", summary.TotalEntities, len(failedTweets), len(listMembers), time.Since(start))
+	log.Infof("[download] Media batch complete entities=%d failed_tweets=%d list_members=%d dur=%s", summary.TotalEntities, len(failedTweets), len(listMembers), time.Since(start))
 
 	if config.Opts.FollowMembers {
 		followTargets := make([]*twitter.User, 0, len(users)+len(listMembers))
@@ -400,7 +400,7 @@ func (s *downloadServiceImpl) executeDownloadTemplate(ctx context.Context, confi
 	if !config.Opts.NoRetry {
 		pendingTweets := dumper.Count()
 		if pendingTweets == 0 {
-			log.Infof("[download] Retry skipped reason=no_pending_tweets")
+			log.Debug("[download] Retry skipped reason=no_pending_tweets")
 		} else {
 			log.Infof("[download] Retry start task_id=%s pending_tweets=%d", config.TaskID, pendingTweets)
 			retrySummary, retryErr := downloading.RetryFailedTweets(
@@ -413,7 +413,12 @@ func (s *downloadServiceImpl) executeDownloadTemplate(ctx context.Context, confi
 			}
 		}
 	} else {
-		log.Infof("[download] Retry skipped reason=no_retry pending_tweets=%d", dumper.Count())
+		pendingTweets := dumper.Count()
+		if pendingTweets > 0 {
+			log.Warnf("[download] Retry skipped reason=no_retry pending_tweets=%d", pendingTweets)
+		} else {
+			log.Debug("[download] Retry skipped reason=no_retry pending_tweets=0")
+		}
 	}
 
 	var profileResult *ProfileResult
@@ -437,15 +442,17 @@ func (s *downloadServiceImpl) executeDownloadTemplate(ctx context.Context, confi
 		} else if profileResult != nil {
 			log.Infof("[download] Profile complete users=%d downloaded=%d failed=%d versioned=%d", len(profileTargetUsers), profileResult.Downloaded, profileResult.Failed, profileResult.Versioned)
 		}
+	} else if len(profileTargetUsers) == 0 {
+		log.Debug("[download] Profile skipped reason=no_users")
 	} else {
-		log.Infof("[download] Profile skipped users=%d", len(profileTargetUsers))
+		log.Infof("[download] Profile skipped reason=skip_profile users=%d", len(profileTargetUsers))
 	}
 
 	s.completeTask(config.TaskID, reporter, config.CompletionMessage, &Result{
 		Main:    s.buildMainDownloadResult(summary, countRemainingFailedEntities(dumper, mainFailures)),
 		Profile: cloneProfileResult(profileResult),
 	}, profileWarning)
-	log.Infof("[download] Complete duration=%s", time.Since(start))
+	log.Infof("[download] Complete dur=%s", time.Since(start))
 
 	return nil
 }
@@ -841,6 +848,7 @@ func (s *downloadServiceImpl) saveDumper(dumper *downloading.TweetDumper, path s
 
 // RetryAllFailed 重试所有历史失败推文
 func (s *downloadServiceImpl) RetryAllFailed(ctx context.Context, taskID string, reporter ProgressReporter) error {
+	start := time.Now()
 	log.Infof("[download] Retry all start task_id=%s", taskID)
 
 	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
@@ -858,7 +866,8 @@ func (s *downloadServiceImpl) RetryAllFailed(ctx context.Context, taskID string,
 	// 第一阶段：重试常规下载错误
 	regDumper := downloading.NewDumper()
 	s.loadDumperSafely(regDumper, pathHelper.ErrorsPath)
-	if regDumper.Count() > 0 {
+	regularBefore := regDumper.Count()
+	if regularBefore > 0 {
 		if _, err := downloading.RetryFailedTweets(ctx, regDumper, s.deps.DB, s.deps.Client, dwn, fileWriter, runtimeOptions, nil); err != nil {
 			log.Errorf("[download] Retry failed task_id=%s kind=regular error=%q", taskID, safeDownloadError(err))
 			errs = append(errs, fmt.Errorf("regular: %w", err))
@@ -870,7 +879,8 @@ func (s *downloadServiceImpl) RetryAllFailed(ctx context.Context, taskID string,
 	// 第二阶段：重试 JSON 导入错误（无论第一阶段是否失败都执行）
 	jsonDumper := downloading.NewJsonDumper()
 	s.loadJsonDumperSafely(jsonDumper, pathHelper.JSONErrorsPath)
-	if jsonDumper.Count() > 0 {
+	jsonBefore := jsonDumper.Count()
+	if jsonBefore > 0 {
 		if _, err := downloading.RetryFailedJsonTweets(ctx, jsonDumper, s.deps.Client, dwn, fileWriter, runtimeOptions, nil); err != nil {
 			log.Errorf("[download] Retry failed task_id=%s kind=json error=%q", taskID, safeDownloadError(err))
 			errs = append(errs, fmt.Errorf("json: %w", err))
@@ -879,8 +889,16 @@ func (s *downloadServiceImpl) RetryAllFailed(ctx context.Context, taskID string,
 		}
 	}
 
+	regularAfter := regDumper.Count()
+	jsonAfter := jsonDumper.Count()
 	if len(errs) > 0 {
+		log.Warnf("[download] Retry all incomplete regular_tweets=%d remaining_regular=%d json_tweets=%d remaining_json=%d dur=%s errors=%d", regularBefore, regularAfter, jsonBefore, jsonAfter, time.Since(start), len(errs))
 		return errors.Join(errs...)
+	}
+	if regularBefore == 0 && jsonBefore == 0 {
+		log.Infof("[download] Retry all skipped reason=no_pending_errors dur=%s", time.Since(start))
+	} else {
+		log.Infof("[download] Retry all complete regular_tweets=%d remaining_regular=%d json_tweets=%d remaining_json=%d dur=%s", regularBefore, regularAfter, jsonBefore, jsonAfter, time.Since(start))
 	}
 	reporter.OnComplete(taskID, Result{Message: "completed"})
 	return nil

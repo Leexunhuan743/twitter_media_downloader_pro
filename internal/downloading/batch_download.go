@@ -219,10 +219,10 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 	}()
 
 	if userEntityHeap.Empty() {
-		log.Infof("[batch] No visible entities to download users=%d duration=%s", len(users), time.Since(start))
+		log.Infof("[batch] No visible entities to download users=%d dur=%s", len(users), time.Since(start))
 		return nil, BatchDownloadSummary{}, nil
 	}
-	log.Debugf("[batch] Preprocess complete entities=%d missing_tweets=%d duration=%s", userEntityHeap.Size(), missingTweets, time.Since(start))
+	log.Debugf("[batch] Preprocess complete entities=%d missing_tweets=%d dur=%s", userEntityHeap.Size(), missingTweets, time.Since(start))
 	log.Debugf("[batch] Real members count=%d", userEntityHeap.Size())
 	log.Debugf("[batch] Missing tweets count=%d", missingTweets)
 	if symlinkWarnCount > 0 {
@@ -443,7 +443,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 			prodwg.Wait()
 		}
 		close(tweetChan)
-		log.Debugf("[batch] Tweet fetch complete duration=%s", time.Since(start))
+		log.Debugf("[batch] Tweet fetch complete dur=%s", time.Since(start))
 
 		conswg.Wait()
 		close(errChan)
@@ -454,7 +454,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 		fails = append(fails, pt.(*TweetInEntity))
 	}
 	log.Debugf("[batch] Unable to start users=%d", userEntityHeap.Size())
-	log.Debugf("[batch] Complete entities=%d failed_tweets=%d unable_to_start=%d duration=%s", totalUsers, len(fails), userEntityHeap.Size(), time.Since(start))
+	log.Debugf("[batch] Complete entities=%d failed_tweets=%d unable_to_start=%d dur=%s", totalUsers, len(fails), userEntityHeap.Size(), time.Since(start))
 	return fails, summary, context.Cause(ctx)
 }
 

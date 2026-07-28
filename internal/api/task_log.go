@@ -27,10 +27,10 @@ func logTaskStarted(task *Task) {
 
 func logTaskCompleted(task *Task) {
 	if task == nil {
-		log.Warn("[task] Completed type=unknown duration=n/a")
+		log.Warn("[task] Completed type=unknown dur=n/a")
 		return
 	}
-	log.Infof("[task] Completed type=%s duration=%s", task.Type, taskDuration(task))
+	log.Infof("[task] Completed type=%s dur=%s", task.Type, taskDuration(task))
 }
 
 func logTaskFailed(task *Task, err error) {
@@ -41,18 +41,18 @@ func logTaskFailed(task *Task, err error) {
 		message = logging.RedactSensitiveText(task.Error)
 	}
 	if task == nil {
-		log.Warnf("[task] Failed task_id=unknown type=unknown duration=n/a error=%q", message)
+		log.Warnf("[task] Failed task_id=unknown type=unknown dur=n/a error=%q", message)
 		return
 	}
-	log.Warnf("[task] Failed task_id=%s type=%s duration=%s error=%q", task.ID, task.Type, taskDuration(task), message)
+	log.Warnf("[task] Failed task_id=%s type=%s dur=%s error=%q", task.ID, task.Type, taskDuration(task), message)
 }
 
 func logTaskCancelled(task *Task) {
 	if task == nil {
-		log.Warn("[task] Cancelled type=unknown duration=n/a")
+		log.Warn("[task] Cancelled type=unknown dur=n/a")
 		return
 	}
-	log.Infof("[task] Cancelled type=%s duration=%s", task.Type, taskDuration(task))
+	log.Infof("[task] Cancelled type=%s dur=%s", task.Type, taskDuration(task))
 }
 
 func taskDuration(task *Task) string {

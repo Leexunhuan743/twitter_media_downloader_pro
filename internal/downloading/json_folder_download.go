@@ -335,10 +335,10 @@ func DownloadFromLoongTweetFolder(ctx context.Context, client *resty.Client, use
 
 			// 输出文件夹级别的成功/失败统计
 			if result.Success {
-				log.Infof("[jsonfolder] Folder complete folder=%q tweets=%d duration=%s", filepath.Base(fp), result.TweetCount, result.Duration)
+				log.Infof("[jsonfolder] Folder complete folder=%q tweets=%d dur=%s", filepath.Base(fp), result.TweetCount, result.Duration)
 			} else {
 				result.Error = fmt.Sprintf("%d/%d tweets failed", len(failedTweets), len(pts))
-				log.Warnf("[jsonfolder] Folder failed folder=%q tweets=%d failed_tweets=%d duration=%s error=%q", filepath.Base(fp), len(pts), len(failedTweets), result.Duration, result.Error)
+				log.Warnf("[jsonfolder] Folder failed folder=%q tweets=%d failed_tweets=%d dur=%s error=%q", filepath.Base(fp), len(pts), len(failedTweets), result.Duration, result.Error)
 			}
 
 			mu.Lock()

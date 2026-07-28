@@ -46,9 +46,11 @@ Task error messages must pass through `[[internal/logging/sanitize.go#RedactSens
 
 Download logs should make each run diagnosable from summaries without printing every successful media file.
 
-`[[internal/service/download_service.go#downloadOptionsSummary]]` records task-level options at task start. Download phase starts such as media batch, follow members, retry, profile, mark, and JSON import include `task_id`; phase completion summaries omit repeated ids and focus on counts, leftovers, and duration.
+`[[internal/service/download_service.go#downloadOptionsSummary]]` records task-level options at task start. Download phase starts such as media batch, follow members, retry, profile, mark, and JSON import include `task_id`; phase completion summaries omit repeated ids and focus on counts, leftovers, and `dur`.
 
-Batch collect/preprocess internals and profile worker success summaries are debug-only. User-facing info logs keep target summaries and phase boundaries; warnings remain for protected users, permission issues, partial profile file failures, and retry failures. Empty retry rounds log one skipped line instead of start/complete pairs.
+Batch collect/preprocess internals, profile worker success summaries, and ordinary no-work skips are debug-only. User-facing info logs keep target summaries and phase boundaries; warnings remain for protected users, permission issues, partial profile file failures, retry failures, and disabled retry when pending failures exist. Empty retry rounds log one debug skipped line instead of start/complete pairs.
+
+Low-level download helpers that immediately return errors keep phase details at debug level when a caller already emits the user-facing failure. This prevents duplicate failure lines while preserving root-cause context for debug runs.
 
 Protected unfollowed users skipped during batch preprocessing are warnings because they explain why expected content will be absent.
 
@@ -62,7 +64,7 @@ Caller context that explains a file download, such as `tweet_id`, should be pass
 
 Operational logs should be easy to grep without requiring a structured logging backend.
 
-Prefer a short event phrase followed by `key=value` fields: `task_id`, `type`, `target`, `path`, `count`, `duration`, `reason`, and sanitized `error`. Avoid symbol-only success markers, `fmt.Print*` progress output, and sentence variants such as "Failed to ...".
+Prefer a short event phrase followed by `key=value` fields: `task_id`, `type`, `target`, `path`, `count`, `dur`, `reason`, and sanitized `error`. Avoid symbol-only success markers, `fmt.Print*` progress output, and sentence variants such as "Failed to ...".
 
 Local filesystem paths in log fields should pass through `[[internal/logging/sanitize.go#Path]]` before `%q` formatting so Windows paths display with `/` separators while Unix-style paths remain readable.
 
@@ -78,9 +80,9 @@ Rate-limit sleeps and no-client states are warnings because they explain stalled
 
 Peripheral logs should keep integrations and imports observable without competing with the core task and download timeline.
 
-Scheduler logs use `[scheduler]` for lifecycle, reload, manual trigger, scheduled trigger, stale-generation exits, and empty-task failures. Bot logs use provider prefixes such as `[bot-telegram]` and log startup plus delivery failures with action/status/error fields, never credentials. An empty bot config is an info-level skipped state, not a warning.
+Scheduler logs use `[scheduler]` for lifecycle, reload, manual trigger, scheduled trigger, stale-generation exits, and empty-task failures. Stale-generation exits are debug because they are expected after reloads; empty-task, status mismatch, and panic paths remain warnings or errors. Bot logs use provider prefixes such as `[bot-telegram]` and log startup plus delivery failures with action/status/error fields, never credentials. An empty bot config is an info-level skipped state, not a warning.
 
-JSON import logs use `[jsonfile]` for third-party files and `[jsonfolder]` for `.loongtweet` folders. File and folder summaries report tweet/media counts, failed tweet counts, and duration through logrus rather than direct console printing.
+JSON import logs use `[jsonfile]` for third-party files and `[jsonfolder]` for `.loongtweet` folders. File and folder summaries report tweet/media counts, failed tweet counts, and `dur` through logrus rather than direct console printing.
 
 ## Cleanup Phases
 

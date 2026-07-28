@@ -519,6 +519,6 @@ func BatchDownloadTweet(ctx context.Context, client *resty.Client, skipLoongTwee
 	for pt := range errChan {
 		failedTweets = append(failedTweets, pt)
 	}
-	log.Infof("[download] Tweet batch complete tweets=%d failed_tweets=%d duration=%s", len(pts), len(failedTweets), time.Since(start))
+	log.Infof("[download] Tweet batch complete tweets=%d failed_tweets=%d dur=%s", len(pts), len(failedTweets), time.Since(start))
 	return failedTweets
 }

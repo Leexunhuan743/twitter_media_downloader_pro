@@ -18,6 +18,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/unkmonster/tmd/internal/downloading"
+	"github.com/unkmonster/tmd/internal/logging"
 	"github.com/unkmonster/tmd/internal/path"
 	"github.com/unkmonster/tmd/internal/scheduler"
 	"github.com/unkmonster/tmd/internal/service"
@@ -431,7 +432,7 @@ func (s *Server) handleJsonFileUpload(w http.ResponseWriter, r *http.Request) {
 		if uploadDir != "" {
 			_ = os.RemoveAll(uploadDir)
 		}
-		log.Errorf("[upload] Save failed kind=json upload_dir=%q error=%q", uploadDir, err.Error())
+		log.Errorf("[upload] Save failed kind=json upload_dir=%q error=%q", logging.Path(uploadDir), err.Error())
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			s.writeError(w, http.StatusRequestEntityTooLarge, "Upload too large")
@@ -480,7 +481,7 @@ func (s *Server) handleJsonFolderUpload(w http.ResponseWriter, r *http.Request) 
 		if uploadDir != "" {
 			_ = os.RemoveAll(uploadDir)
 		}
-		log.Errorf("[upload] Save failed kind=loongtweet upload_dir=%q error=%q", uploadDir, err.Error())
+		log.Errorf("[upload] Save failed kind=loongtweet upload_dir=%q error=%q", logging.Path(uploadDir), err.Error())
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			s.writeError(w, http.StatusRequestEntityTooLarge, "Upload too large")
@@ -539,7 +540,7 @@ func cleanupUploadDirAfterTask(uploadDir string, task func(ctx context.Context, 
 		defer func() {
 			_ = os.RemoveAll(uploadDir)
 			if r := recover(); r != nil {
-				log.Errorf("[upload] Task panic upload_dir=%q error=%q", uploadDir, fmt.Sprint(r))
+				log.Errorf("[upload] Task panic upload_dir=%q error=%q", logging.Path(uploadDir), fmt.Sprint(r))
 				err = fmt.Errorf("task panicked: %v", r)
 			}
 		}()

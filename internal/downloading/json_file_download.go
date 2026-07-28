@@ -195,10 +195,10 @@ func DownloadThirdPartyTweets(
 
 			// 输出文件级别的成功/失败统计
 			if result.Success {
-				log.Infof("[jsonfile] File complete file=%q tweets=%d media=%d duration=%s", filepath.Base(fp), len(pts), totalMedia, result.Duration)
+				log.Infof("[jsonfile] File complete file=%q tweets=%d media=%d dur=%s", filepath.Base(fp), len(pts), totalMedia, result.Duration)
 			} else {
 				result.Error = fmt.Sprintf("%d/%d tweets failed", len(failedTweets), len(pts))
-				log.Warnf("[jsonfile] File failed file=%q tweets=%d failed_tweets=%d media=%d duration=%s error=%q", filepath.Base(fp), len(pts), len(failedTweets), totalMedia, result.Duration, result.Error)
+				log.Warnf("[jsonfile] File failed file=%q tweets=%d failed_tweets=%d media=%d dur=%s error=%q", filepath.Base(fp), len(pts), len(failedTweets), totalMedia, result.Duration, result.Error)
 			}
 
 			mu.Lock()

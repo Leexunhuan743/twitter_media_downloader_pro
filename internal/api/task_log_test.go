@@ -37,6 +37,8 @@ func TestTaskManagerLifecycleLogs(t *testing.T) {
 	assert.Contains(t, output, "target=@alice")
 	assert.Contains(t, output, "[task] Started")
 	assert.Contains(t, output, "[task] Completed")
+	assert.Contains(t, output, "dur=")
+	assert.NotContains(t, output, "duration=")
 	assert.NotContains(t, output, "[task] Completed task_id=")
 }
 

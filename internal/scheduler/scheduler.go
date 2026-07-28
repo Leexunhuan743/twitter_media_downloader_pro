@@ -416,7 +416,7 @@ func (sc *Scheduler) isStale(gen int64) bool {
 
 func (sc *Scheduler) runIntervalLoop(ctx context.Context, idx int, entry ScheduleEntry, parsed *ParsedSchedule, firstStart bool, gen int64) {
 	if sc.isStale(gen) {
-		log.Warnf("[scheduler] Interval loop exit index=%d name=%q reason=stale_generation", idx, entry.Name)
+		log.Debugf("[scheduler] Interval loop exit index=%d name=%q reason=stale_generation", idx, entry.Name)
 		return
 	}
 	if entry.RunOnStart && firstStart {
@@ -436,7 +436,7 @@ func (sc *Scheduler) runIntervalLoop(ctx context.Context, idx int, entry Schedul
 		select {
 		case <-ticker.C:
 			if sc.isStale(gen) {
-				log.Warnf("[scheduler] Interval loop exit index=%d name=%q reason=stale_generation_at_tick", idx, entry.Name)
+				log.Debugf("[scheduler] Interval loop exit index=%d name=%q reason=stale_generation_at_tick", idx, entry.Name)
 				return
 			}
 			sc.execute(idx, entry, gen)
@@ -463,7 +463,7 @@ func (sc *Scheduler) waitInterval(ctx context.Context, idx int, entry ScheduleEn
 
 func (sc *Scheduler) runDailyLoop(ctx context.Context, idx int, entry ScheduleEntry, parsed *ParsedSchedule, firstStart bool, gen int64) {
 	if sc.isStale(gen) {
-		log.Warnf("[scheduler] Daily loop exit index=%d name=%q reason=stale_generation", idx, entry.Name)
+		log.Debugf("[scheduler] Daily loop exit index=%d name=%q reason=stale_generation", idx, entry.Name)
 		return
 	}
 	if entry.RunOnStart && firstStart {
@@ -482,7 +482,7 @@ func (sc *Scheduler) runDailyLoop(ctx context.Context, idx int, entry ScheduleEn
 		select {
 		case <-timer.C:
 			if sc.isStale(gen) {
-				log.Warnf("[scheduler] Daily loop exit index=%d name=%q reason=stale_generation_at_trigger", idx, entry.Name)
+				log.Debugf("[scheduler] Daily loop exit index=%d name=%q reason=stale_generation_at_trigger", idx, entry.Name)
 				return
 			}
 			sc.execute(idx, entry, gen)
@@ -500,7 +500,7 @@ func (sc *Scheduler) runDailyLoop(ctx context.Context, idx int, entry ScheduleEn
 
 func (sc *Scheduler) updateNextRunAt(idx int, entry ScheduleEntry, next time.Time, gen int64) {
 	if sc.isStale(gen) {
-		log.Warnf("[scheduler] Next run update skipped index=%d name=%q reason=stale_generation", idx, entry.Name)
+		log.Debugf("[scheduler] Next run update skipped index=%d name=%q reason=stale_generation", idx, entry.Name)
 		return
 	}
 	if !sc.updateStatus(idx, entry, func(status *ScheduleStatus) {
@@ -512,7 +512,7 @@ func (sc *Scheduler) updateNextRunAt(idx int, entry ScheduleEntry, next time.Tim
 
 func (sc *Scheduler) execute(idx int, entry ScheduleEntry, gen int64) {
 	if sc.isStale(gen) {
-		log.Warnf("[scheduler] Execution skipped index=%d name=%q reason=stale_generation", idx, entry.Name)
+		log.Debugf("[scheduler] Execution skipped index=%d name=%q reason=stale_generation", idx, entry.Name)
 		return
 	}
 	acquiredGen, ok := sc.tryAcquireExecution(idx, entry, &gen)

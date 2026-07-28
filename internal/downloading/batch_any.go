@@ -69,7 +69,7 @@ func BatchDownloadAny(ctx context.Context, client *resty.Client, db *sqlx.DB, li
 	}
 
 	log.Debugf("[batch] Collect users complete users=%d", len(packgedUsers))
-	log.Debugf("[batch] Collect complete users=%d list_members=%d duration=%s", len(packgedUsers), len(listMembers), time.Since(start))
+	log.Debugf("[batch] Collect complete users=%d list_members=%d dur=%s", len(packgedUsers), len(listMembers), time.Since(start))
 	failedTweets, summary, err = BatchUserDownload(ctx, client, db, packgedUsers, realDir, autoFollow, additional, dwn, fileWriter, opts, progress)
 	return failedTweets, listMembers, summary, err
 }
