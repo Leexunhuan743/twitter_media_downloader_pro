@@ -4,7 +4,7 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](./LICENSE)
 [![CI/CD](https://github.com/Leexunhuan743/twitter_media_downloader_pro/actions/workflows/go.yml/badge.svg)](.github/workflows/go.yml)
 
-> **版本**: 3.4.25 | **状态**: 活跃维护 | **许可证**: GPL-3.0
+> **版本**: 3.7.0 | **状态**: 活跃维护 | **许可证**: GPL-3.0
 
 Twitter Media Downloader Pro（简称 `tmdp`）的代码基于 [unkmonster/tmd](https://github.com/unkmonster/tmd) 项目，修改了部分代码，添加了新的功能特性。新增的功能见 [CHANGELOG.md文件](CHANGELOG.md)
 
@@ -150,11 +150,11 @@ GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o tmdp-macos .
 ```bash
 # Docker Hub
 docker pull leeexx00/tmdp:latest
-docker pull leeexx00/tmdp:v3.4.25
+docker pull leeexx00/tmdp:v3.7.0
 
 # GHCR
 docker pull ghcr.io/leexunhuan743/twitter_media_downloader_pro:latest
-ghcr.io/leexunhuan743/twitter_media_downloader_pro:v3.4.25
+ghcr.io/leexunhuan743/twitter_media_downloader_pro:v3.7.0
 ```
 
 **推荐方式：使用 docker compose**
