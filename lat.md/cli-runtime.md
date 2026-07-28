@@ -1,6 +1,6 @@
 # CLI Runtime
 
-Startup and CLI orchestration define how TMD separates bootstrap flags, loads runtime dependencies, and dispatches command-line download work.
+Startup and CLI orchestration define how TMDP separates bootstrap flags, loads runtime dependencies, and dispatches command-line download work.
 
 ## Bootstrap Flags
 
@@ -15,6 +15,8 @@ Port selection is layered: explicit `-port` wins, then `TMD_PORT`, then default 
 The app root determines where config, logs, cookies, and schedules live.
 
 `[[main.go#resolveAppRootPath]]` uses `TMD_HOME` when set, otherwise `%APPDATA%\.tmd2` on Windows or `$HOME/.tmd2` elsewhere. Startup loads `conf.yaml` from this app root, applies supported `TMD_*` environment overrides, and exits after `-conf` interactive configuration.
+
+Release binaries, Docker entrypoints, and user-facing command examples use the `tmdp` executable name. Existing `TMD_*` environment variables and `.tmd2` config paths remain compatibility interfaces.
 
 Proxy setup is centralized in startup: `proxy_url` from config sets both `HTTP_PROXY` and `HTTPS_PROXY`; otherwise a single existing proxy environment variable is mirrored to the missing pair.
 

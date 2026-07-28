@@ -6,7 +6,7 @@
 
 > **版本**: 3.4.25 | **状态**: 活跃维护 | **许可证**: GPL-3.0
 
-Twitter Media Downloader Pro 的代码基于 [unkmonster/tmd](https://github.com/unkmonster/tmd) 项目，修改了部分代码，添加了新的功能特性。新增的功能见 [CHANGELOG.md文件](CHANGELOG.md)
+Twitter Media Downloader Pro（简称 `tmdp`）的代码基于 [unkmonster/tmd](https://github.com/unkmonster/tmd) 项目，修改了部分代码，添加了新的功能特性。新增的功能见 [CHANGELOG.md文件](CHANGELOG.md)
 
 ## 目录
 
@@ -37,7 +37,7 @@ Twitter Media Downloader Pro 的代码基于 [unkmonster/tmd](https://github.com
 - **增量拉取**：基于 `latest_release_time` 时间戳，只拉取新推文
 - **失败重试**：失败项记录到 `.data/errors.json`（403/404 除外），支持自动重试
 - **多账号分流**：支持附加 Cookie 多账号分摊 API 请求压力
-- **JSON 导入**：支持第三方导出 JSON（`-jsonfile`）和 TMD 元数据文件夹（`-jsonfolder`）补下载
+- **JSON 导入**：支持第三方导出 JSON（`-jsonfile`）和 tmdp 元数据文件夹（`-jsonfolder`）补下载
 - **文件写入**：小文件 Buffer / 大文件流式(≥10MB)，原子写入，MD5 跳过未变化文件，版本备份
 - **标记已下载**：`-mark-downloaded` 指定时间戳，跳过历史推文
 - **Web 管理界面**：内置 HTTP API + SSE 实时推送 + 任务队列 + 定时调度 + 数据库管理
@@ -67,9 +67,9 @@ Twitter Media Downloader Pro 的代码基于 [unkmonster/tmd](https://github.com
 
 | 平台 | 文件名 |
 |------|--------|
-| Windows | `tmd-windows-amd64.exe` |
-| Linux | `tmd-linux-amd64` |
-| macOS | `tmd-darwin-amd64` |
+| Windows | `tmdp-windows-amd64.exe` |
+| Linux | `tmdp-linux-amd64` |
+| macOS | `tmdp-darwin-amd64` |
 
 > **单文件，无依赖**：下载后即可直接运行，无需安装任何运行时或依赖库。放桌面就能用，放到 `PATH` 目录下更方便全局调用。
 
@@ -77,13 +77,13 @@ Twitter Media Downloader Pro 的代码基于 [unkmonster/tmd](https://github.com
 
 ```bash
 # Windows（cmd / PowerShell）
-tmd-windows-amd64.exe
+tmdp-windows-amd64.exe
 
 # Linux / macOS
-./tmd-linux-amd64
+./tmdp-linux-amd64
 ```
 
-> 注意：Twitter Media Downloader Pro 是命令行程序，当前可执行文件/命令名仍为 `tmd`，请在终端中运行，**不要直接双击 exe 文件**（会一闪而过）。
+> 注意：Twitter Media Downloader Pro 是命令行程序，当前可执行文件/命令名仍为 `tmdp`，请在终端中运行，**不要直接双击 exe 文件**（会一闪而过）。
 
 首次运行会自动检测配置文件，不存在时进入**交互式配置向导**，依次填写：
 1. Twitter 登录凭据（`auth_token` 和 `ct0`）
@@ -92,7 +92,7 @@ tmd-windows-amd64.exe
 
 配置完成后即可正常使用。
 
-如需重新配置或修改参数，运行 `tmd -conf` 可再次进入配置向导，各配置项说明如下：
+如需重新配置或修改参数，运行 `tmdp -conf` 可再次进入配置向导，各配置项说明如下：
 
 | 配置项 | 说明 | 默认值 | 示例 |
 | --- | --- | --- | --- |
@@ -109,14 +109,14 @@ tmd-windows-amd64.exe
 
 ```bash
 # CLI 下载模式：下载某用户的所有媒体
-./tmd-windows-amd64.exe -user elonmusk
+./tmdp-windows-amd64.exe -user elonmusk
 
 # Server 模式：启动 Web 管理界面（默认端口 25556）
-./tmd-windows-amd64.exe -server
+./tmdp-windows-amd64.exe -server
 # 打开浏览器访问 http://localhost:25556
 
 # 查看全部命令
-./tmd-windows-amd64.exe -help
+./tmdp-windows-amd64.exe -help
 ```
 
 **2.2 自行编译**
@@ -127,13 +127,13 @@ git clone https://github.com/Leexunhuan743/twitter_media_downloader_pro.git
 cd twitter_media_downloader_pro
 
 # 编译 Windows 版本
-go build -o tmd.exe .
+go build -o tmdp.exe .
 
 # 交叉编译 Linux 版本
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o tmd-linux .
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o tmdp-linux .
 
 # 交叉编译 macOS 版本
-GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o tmd-macos .
+GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o tmdp-macos .
 ```
 
 > **说明**: SQLite 使用 `modernc.org/sqlite` 纯 Go driver，源码构建不再需要 GCC/MingW 等 C 编译器。
@@ -144,13 +144,13 @@ GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o tmd-macos .
 
 | 镜像源 | 地址 |
 |--------|------|
-| **Docker Hub**（推荐） | `docker.io/leeexx00/tmd:<tag>` |
+| **Docker Hub**（推荐） | `docker.io/leeexx00/tmdp:<tag>` |
 | **GHCR** | `ghcr.io/leexunhuan743/twitter_media_downloader_pro:<tag>` |
 
 ```bash
 # Docker Hub
-docker pull leeexx00/tmd:latest
-docker pull leeexx00/tmd:v3.4.25
+docker pull leeexx00/tmdp:latest
+docker pull leeexx00/tmdp:v3.4.25
 
 # GHCR
 docker pull ghcr.io/leexunhuan743/twitter_media_downloader_pro:latest
@@ -194,9 +194,9 @@ README 中的 compose 示例与仓库根目录的 [docker-compose.yml](./docker-
 
 ```yaml
 services:
-  tmd:
-    image: leeexx00/tmd:latest
-    container_name: tmd
+  tmdp:
+    image: leeexx00/tmdp:latest
+    container_name: tmdp
     restart: unless-stopped
     ports:
       - "25556:25556"
@@ -227,7 +227,7 @@ image: ghcr.io/leexunhuan743/twitter_media_downloader_pro:latest
 ```bash
 # Docker Hub
 docker run -d \
-  --name tmd \
+  --name tmdp \
   -p 25556:25556 \
   -v /path/to/config:/config \
   -v /path/to/data:/data \
@@ -241,7 +241,7 @@ docker run -d \
   -e TMD_MAX_DOWNLOAD_ROUTINE=8 \
   -e TMD_MAX_FILE_NAME_LEN=158 \
   -e TZ=Asia/Shanghai \
-  leeexx00/tmd:latest -server
+  leeexx00/tmdp:latest -server
 
 # 或使用 GHCR（将最后一行镜像地址替换即可）
 # ghcr.io/leexunhuan743/twitter_media_downloader_pro:latest -server
@@ -264,7 +264,7 @@ http://localhost:25556/api/v1/health
 - `TMD_MAX_DOWNLOAD_ROUTINE`：可选，默认 `8`
 - `TMD_MAX_FILE_NAME_LEN`：可选，默认 `158`
 - `TZ`：可选，默认 `Asia/Shanghai`
-- 同一个 `/data` 卷只建议同时运行一个 TMD 实例
+- 同一个 `/data` 卷只建议同时运行一个 tmdp 实例
 - 如果宿主机端口 `25556` 被占用，可改 compose 里的左侧端口，例如 `"8080:25556"`
 - 如果不想把数据放在当前目录，可把 `./config`、`./data` 改成宿主机绝对路径
 
@@ -343,7 +343,7 @@ http://localhost:25556/api/v1/health
 
 ### API Server 安全
 
-TMD Server 模式内置 **Bearer Token 认证**，通过 `api_key` 配置项控制。开启后所有 API 请求需要携带 `Authorization: Bearer <key>` 头，Web UI 页面本身不受影响（公开路径免认证）。
+tmdp Server 模式内置 **Bearer Token 认证**，通过 `api_key` 配置项控制。开启后所有 API 请求需要携带 `Authorization: Bearer <key>` 头，Web UI 页面本身不受影响（公开路径免认证）。
 
 #### 快速开启
 
@@ -360,7 +360,7 @@ docker run -e TMD_API_KEY="your-secret-api-key" ...
 
 # 本地
 export TMD_API_KEY="your-secret-api-key"
-tmd -server
+tmdp -server
 ```
 
 `api_key` 为空时认证层完全跳过，向后兼容。
@@ -368,7 +368,7 @@ tmd -server
 #### 认证流程
 
 ```
-客户端                                 TMD Server
+客户端                                 tmdp Server
   │                                          │
   │ GET /api/v1/tasks                        │
   │ Authorization: Bearer <jwt or key>       │
@@ -403,7 +403,7 @@ tmd -server
 ```nginx
 server {
     listen 443 ssl;
-    server_name tmd.example.com;
+    server_name tmdp.example.com;
 
     ssl_certificate /etc/nginx/certs/fullchain.pem;
     ssl_certificate_key /etc/nginx/certs/privkey.pem;
@@ -430,112 +430,112 @@ server {
 
 ```bash
 # 1. 配置
-tmd -conf
+tmdp -conf
 
 # 2. 测试下载
-tmd -user elonmusk -dbg
+tmdp -user elonmusk -dbg
 ```
 
 ### 场景2：下载单个用户
 
 ```bash
 # 下载推文 + Profile（默认行为）
-tmd -user elonmusk
+tmdp -user elonmusk
 
 # 仅下载推文，不下载 Profile
-tmd -user elonmusk -noprofile
+tmdp -user elonmusk -noprofile
 
 # 使用数字用户名（如纯数字的 screen_name）
-tmd -user 44196397
+tmdp -user 44196397
 
 # 使用 @ 前缀
-tmd -user @elonmusk
+tmdp -user @elonmusk
 ```
 
 ### 场景3：批量下载多个用户
 
 ```bash
 # 下载多个用户的推文 + Profile
-tmd -user elonmusk -user NASA -user SpaceX
+tmdp -user elonmusk -user NASA -user SpaceX
 
 # 下载多个用户的推文，不下载 Profile
-tmd -user elonmusk -user NASA -user SpaceX -noprofile
+tmdp -user elonmusk -user NASA -user SpaceX -noprofile
 
 # 仅下载多个用户的 Profile
-tmd -profile-user elonmusk -profile-user NASA -profile-user SpaceX
+tmdp -profile-user elonmusk -profile-user NASA -profile-user SpaceX
 ```
 
 ### 场景4：下载列表
 
 ```bash
 # 下载列表成员推文 + Profile
-tmd -list 1234567890123
+tmdp -list 1234567890123
 
 # 下载列表成员推文，不下载 Profile
-tmd -list 1234567890123 -noprofile
+tmdp -list 1234567890123 -noprofile
 
 # 仅下载列表成员 Profile
-tmd -profile-list 1234567890123
+tmdp -profile-list 1234567890123
 
 # 多个列表
-tmd -list 111111 -list 222222
+tmdp -list 111111 -list 222222
 ```
 
 ### 场景5：下载关注列表
 
 ```bash
 # 下载某用户关注的所有人
-tmd -foll myusername
+tmdp -foll myusername
 ```
 
 ### 场景6：混合下载
 
 ```bash
 # 用户 + 列表 + 关注列表
-tmd -user elonmusk -list 123456 -foll myusername
+tmdp -user elonmusk -list 123456 -foll myusername
 
 # Profile 专用下载，只下载 profile
-tmd -profile-user elonmusk -profile-list 123456
+tmdp -profile-user elonmusk -profile-list 123456
 ```
 
 ### 场景7：处理受保护用户
 
 ```bash
 # 自动发送关注请求
-tmd -user protected_user -auto-follow
+tmdp -user protected_user -auto-follow
 ```
 
 ### 场景8：标记已下载
 
 ```bash
 # 标记为当前时间
-tmd -user elonmusk -mark-downloaded
+tmdp -user elonmusk -mark-downloaded
 
 # 标记为指定时间
-tmd -user elonmusk -mark-downloaded -mark-time "2024-01-01T00:00:00"
+tmdp -user elonmusk -mark-downloaded -mark-time "2024-01-01T00:00:00"
 
 # 批量标记
-tmd -user a -user b -user c -mark-downloaded
+tmdp -user a -user b -user c -mark-downloaded
 ```
 
 ### 场景9：从 JSON 文件/文件夹下载
 
 ```bash
 # 从第三方工具导出的推文搜索结果 JSON 下载推文媒体（图片/视频/txt/json）
-tmd -jsonfile ./twitter-search-results-123.json
+tmdp -jsonfile ./twitter-search-results-123.json
 
 # 从多个 JSON 文件下载
-tmd -jsonfile ./search1.json -jsonfile ./search2.json -jsonfile ./followers.json
+tmdp -jsonfile ./search1.json -jsonfile ./search2.json -jsonfile ./followers.json
 
-# 从 TMD 生成的 .loongtweet 文件夹下载推文媒体（仅媒体，无元数据）
-tmd -jsonfolder ./path/to/.loongtweet
+# 从 tmdp 生成的 .loongtweet 文件夹下载推文媒体（仅媒体，无元数据）
+tmdp -jsonfolder ./path/to/.loongtweet
 
 # 从多个 .loongtweet 文件夹下载
-tmd -jsonfolder ./folder1/.loongtweet -jsonfolder ./folder2/.loongtweet
+tmdp -jsonfolder ./folder1/.loongtweet -jsonfolder ./folder2/.loongtweet
 
 # 注意：-jsonfile 和 -jsonfolder 是独占参数，优先级最高
 # 以下命令只会执行 -jsonfile，-user 被忽略
-tmd -jsonfile ./search.json -user elonmusk
+tmdp -jsonfile ./search.json -user elonmusk
 ```
 
 **`-jsonfile` 输出示例**：
@@ -558,10 +558,10 @@ tmd -jsonfile ./search.json -user elonmusk
 
 ```bash
 # 调试模式
-tmd -user elonmusk -dbg
+tmdp -user elonmusk -dbg
 
 # 快速退出（不重试）
-tmd -user elonmusk -no-retry
+tmdp -user elonmusk -no-retry
 ```
 
 ***
@@ -590,7 +590,7 @@ tmd -user elonmusk -no-retry
 | 参数           | 类型     | 可重复 | 说明                                                         |
 | -------------- | ------ | --- | ---------------------------------------------------------- |
 | `-jsonfile`    | string | ✅   | 从第三方工具导出的 JSON 文件下载推文媒体（图片/视频/txt/json） |
-| `-jsonfolder`  | string | ✅   | 从 TMD 生成的 `.loongtweet` 文件夹下载推文媒体 |
+| `-jsonfolder`  | string | ✅   | 从 tmdp 生成的 `.loongtweet` 文件夹下载推文媒体 |
 
 **`-jsonfile` 参数**：
 - 用于第三方工具导出的 Twitter 推文搜索结果 JSON（包含推文列表和 media 数组）
@@ -601,14 +601,14 @@ tmd -user elonmusk -no-retry
     - `{推文文本}_{tweetID}.txt` — 推文文本内容
     - `{推文文本}_{tweetID}.json` — 完整 metadata（已转换+清理）
 - 文件命名与 `-user` 模式完全一致（使用 `TweetNaming`）
-- **格式转换**：自动将第三方新格式 JSON 转换为 TMD 兼容旧格式
+- **格式转换**：自动将第三方新格式 JSON 转换为 tmdp 兼容旧格式
   - 嵌套对象扁平化：`RelationshipPerspectives.blocked_by` → `legacy.blocked_by`
   - 头像 URL 清理：移除 `_normal` 后缀
   - **高清参数**：图片 URL 自动追加 `?name=4096x4096`
 - 转换失败时降级使用原始 metadata（不阻塞下载）
 
 **`-jsonfolder` 参数**：
-- 用于 TMD 之前下载保存的 `.loongtweet` 文件夹中的 JSON 文件
+- 用于 tmdp 之前下载保存的 `.loongtweet` 文件夹中的 JSON 文件
 - **仅下载推文媒体文件**（图片/视频），**不保存** `.json`、`.txt`、`.profile` 等元数据
 - 适合重新下载或迁移媒体文件
 - 文件命名与 `-user` 模式完全一致
@@ -684,16 +684,16 @@ tmd -user elonmusk -no-retry
 
 ## API Server 模式
 
-TMD 支持以 API Server 模式运行，提供 HTTP REST API 和 Web 管理界面，便于远程控制、自动化集成和实时监控。
+tmdp 支持以 API Server 模式运行，提供 HTTP REST API 和 Web 管理界面，便于远程控制、自动化集成和实时监控。
 
 ### 启动 API Server
 
 ```bash
 # 使用默认端口 25556 启动
-tmd -server
+tmdp -server
 
 # 指定端口启动
-tmd -server -port 8080
+tmdp -server -port 8080
 ```
 
 ### 功能特性
@@ -930,7 +930,7 @@ http://localhost:25556/
 
 ```bash
 # 1. 启动 Server
-tmd -server
+tmdp -server
 
 # (可选) 如已启用 API Key，先获取 JWT 会话令牌，后续请求用 $TOKEN 替代 API Key
 #   TOKEN=$(curl -s -X POST -H "Authorization: Bearer your-key" \
@@ -967,7 +967,7 @@ curl -X DELETE http://localhost:25556/api/v1/errors
 
 ## 定时任务调度器
 
-TMD Server 内置定时任务调度器，支持按时间间隔或每天固定时间自动执行下载任务。
+tmdp Server 内置定时任务调度器，支持按时间间隔或每天固定时间自动执行下载任务。
 
 ### 调度模式
 
@@ -1137,7 +1137,7 @@ Profile 下载功能可以保存用户的完整个人资料：
 - 用户信息（头像已清理为高清 URL）
 - 媒体信息（已清理冗余字段，图片追加 `?name=4096x4096` 高清参数）
 - 完整的原始数据
-- **`-jsonfile` 模式额外处理**：第三方新格式自动转换为 TMD 兼容旧格式（嵌套对象扁平化）
+- **`-jsonfile` 模式额外处理**：第三方新格式自动转换为 tmdp 兼容旧格式（嵌套对象扁平化）
 
 ### 用途
 
@@ -1197,7 +1197,7 @@ media:2
 
 **方式一：配置文件设置（推荐）**
 
-在 `tmd -conf` 配置时输入 `proxy_url`，或直接编辑 `conf.yaml`：
+在 `tmdp -conf` 配置时输入 `proxy_url`，或直接编辑 `conf.yaml`：
 
 ```yaml
 proxy_url: http://127.0.0.1:7890
@@ -1214,7 +1214,7 @@ proxy_url: http://127.0.0.1:7890
 ```bash
 set HTTP_PROXY=http://127.0.0.1:7890
 set HTTPS_PROXY=http://127.0.0.1:7890
-tmd -user elonmusk
+tmdp -user elonmusk
 ```
 
 **Windows PowerShell:**
@@ -1222,7 +1222,7 @@ tmd -user elonmusk
 ```powershell
 $Env:HTTP_PROXY="http://127.0.0.1:7890"
 $Env:HTTPS_PROXY="http://127.0.0.1:7890"
-tmd -user elonmusk
+tmdp -user elonmusk
 ```
 
 **Linux/macOS:**
@@ -1230,7 +1230,7 @@ tmd -user elonmusk
 ```bash
 export HTTP_PROXY=http://127.0.0.1:7890
 export HTTPS_PROXY=http://127.0.0.1:7890
-tmd -user elonmusk
+tmdp -user elonmusk
 ```
 
 ### 添加额外 Cookie
@@ -1268,7 +1268,7 @@ start-server.bat
 start-server.bat -port 8080
 ```
 
-> 脚本行为：自动查找同目录下的 `tmd.exe` 并以 `-server` 模式启动，额外参数会透传给 tmd。
+> 脚本行为：自动查找同目录下的 `tmdp.exe` 并以 `-server` 模式启动，额外参数会透传给 tmdp。
 
 ***
 
@@ -1296,10 +1296,10 @@ start-server.bat -port 8080
 
 ```bash
 # 默认级别：Info（显示重要信息）
-tmd -user elonmusk
+tmdp -user elonmusk
 
 # 调试级别：Debug（显示所有请求详情）
-tmd -user elonmusk -dbg
+tmdp -user elonmusk -dbg
 ```
 
 **Debug 模式额外输出：**
@@ -1417,7 +1417,7 @@ API 模式下，标记结果可以通过任务详情查看（`GET /api/v1/tasks/
 
 > 完整的架构分层图、Service 层接口设计、开发指南（项目结构/测试/CI/CD/设计模式）已移至 [doc/architecture.md](doc/architecture.md)，面向开发者，普通用户无需阅读。
 
-TMD 采用"入口层 → 服务层 → 业务层 → 基础设施层"的四层结构，CLI 和 API Server 统一通过 `internal/service.DownloadService` 编排下载流程。
+tmdp 采用"入口层 → 服务层 → 业务层 → 基础设施层"的四层结构，CLI 和 API Server 统一通过 `internal/service.DownloadService` 编排下载流程。
 
 ***
 
@@ -1435,11 +1435,11 @@ TMD 采用"入口层 → 服务层 → 业务层 → 基础设施层"的四层�
 
 ```bash
 # 方式1: 首次配置时设置
-tmd -conf
+tmdp -conf
 # 输入 max download routine: 35
 
 # 方式2: 修改配置文件后更新
-tmd -conf
+tmdp -conf
 # 仅修改需要调整的字段，其他留空保持原值
 ```
 
@@ -1455,7 +1455,7 @@ tmd -conf
 
 ### 性能优化特性
 
-TMD 内置多项性能优化机制：
+tmdp 内置多项性能优化机制：
 
 #### 1. 流式下载（v2.12.3+）
 
@@ -1528,7 +1528,7 @@ lists/新闻/users/   -> ../../users/Elon Musk(elonmusk)/
 
 ```bash
 # 启用调试模式查看详细性能指标
-tmd -user elonmusk -dbg
+tmdp -user elonmusk -dbg
 
 # 输出示例：
 # [INFO] Download routine count: 35
@@ -1547,7 +1547,7 @@ tmd -user elonmusk -dbg
 | HTTP 状态码 | 错误类型 | 原因 | 解决方案 |
 |------------|---------|------|---------|
 | **429** | Too Many Requests | 触发 Twitter API 速率限制 | 等待 15 分钟自动恢复；或添加备用 Cookie |
-| **401** | Unauthorized | Cookie 失效或过期 | 运行 `tmd -conf` 更新 Cookie |
+| **401** | Unauthorized | Cookie 失效或过期 | 运行 `tmdp -conf` 更新 Cookie |
 | **403** | Forbidden | 用户受保护且未关注 | 使用 `-auto-follow` / `-follow-members` 或手动关注后重试 |
 | **404** | Not Found | 用户不存在/已注销/被封禁 | 检查用户名是否正确；用户可能已被封禁 |
 | **500** | Internal Server Error | Twitter 服务器内部错误 | 稍后自动重试；检查网络连接 |
@@ -1560,26 +1560,26 @@ tmd -user elonmusk -dbg
 
 ```bash
 # 1. 启用调试模式（查看请求计数和详细日志）
-tmd -user elonmusk -dbg
+tmdp -user elonmusk -dbg
 
 # 2. 快速退出模式（不重试失败项，快速验证配置）
-tmd -user elonmusk -no-retry
+tmdp -user elonmusk -no-retry
 
 # 3. 仅标记不下载（测试同步逻辑，不实际下载文件）
-tmd -user elonmusk -mark-downloaded
+tmdp -user elonmusk -mark-downloaded
 
 # 4. 指定标记时间（回溯到特定时间点）
-tmd -user elonmusk -mark-downloaded -mark-time "2024-01-01T00:00:00"
+tmdp -user elonmusk -mark-downloaded -mark-time "2024-01-01T00:00:00"
 ```
 
 #### 高级诊断
 
 ```bash
 # 5. 测试单用户下载（最小化变量）
-tmd -user elonmusk -noprofile -dbg
+tmdp -user elonmusk -noprofile -dbg
 
 # 6. 检查 API Server 是否正常
-tmd -server
+tmdp -server
 # 然后在浏览器访问 http://localhost:25556/api/v1/health
 
 # 7. 查看数据库内容（确认同步状态）
@@ -1595,10 +1595,10 @@ cat .data/errors.json | head -20
 # 9. 测试代理连通性（Windows PowerShell）
 $Env:HTTP_PROXY="http://127.0.0.1:7890"
 $Env:HTTPS_PROXY="http://127.0.0.1:7890"
-tmd -user elonmusk -dbg
+tmdp -user elonmusk -dbg
 
 # 10. 绕过代理直连（TUN 模式下不需要设置代理）
-# 直接运行 tmd，不设置 HTTP_PROXY/HTTPS_PROXY
+# 直接运行 tmdp，不设置 HTTP_PROXY/HTTPS_PROXY
 ```
 
 
@@ -1614,7 +1614,7 @@ tmd -user elonmusk -dbg
 **排查步骤：**
 1. ✅ 确认 Cookie 正确性（重新从浏览器复制）
 2. ✅ 检查 Cookie 是否过期（Twitter 会定期刷新）
-3. ✅ 尝试重新配置：`tmd -conf`
+3. ✅ 尝试重新配置：`tmdp -conf`
 4. ✅ 确认网络可以访问 Twitter（非墙内环境）
 
 ---
@@ -1645,10 +1645,10 @@ tmd -user elonmusk -dbg
 **原因：** Windows 需要管理员权限才能创建符号链接
 
 **解决方案：**
-1. 右键点击 `tmd.exe` → **"以管理员身份运行"**
+1. 右键点击 `tmdp.exe` → **"以管理员身份运行"**
 2. 或在管理员 PowerShell 中执行：
    ```powershell
-   Start-Process tmd.exe -Verb RunAs -ArgumentList "-user elonmusk"
+   Start-Process tmdp.exe -Verb RunAs -ArgumentList "-user elonmusk"
    ```
 
 ---

@@ -25,7 +25,7 @@ Six GraphQL endpoints are used for user resolution, timeline fetching, and list 
 | User following | Paginated following list fetch | `list.go` |
 
 ## Multi-Account Mechanism
-TMD supports one master account plus multiple additional accounts for rate limit distribution.
+TMDP supports one master account plus multiple additional accounts for rate limit distribution.
 
 - **Master account**: `auth_token` + `ct0` from `conf.yaml`
 - **Additional accounts**: list from `additional_cookies.yaml`

@@ -1,6 +1,6 @@
 # Development
 
-Conventions and gotchas for working on the TMD codebase.
+Conventions and gotchas for working on the TMDP codebase.
 
 ## Logging Conventions
 Every log line must follow the project's domain-prefix and capitalization standards.
@@ -31,7 +31,7 @@ Both `tmd2.log` and `client.log` are rotated via lumberjack (2 MB max, 2 backups
 Detailed logging sinks, redaction, and access-log rules are documented in [[logging]].
 
 ## Concurrency Model
-TMD uses diverse concurrency patterns across its components, each suited to its workload.
+TMDP uses diverse concurrency patterns across its components, each suited to its workload.
 
 | Component | Model |
 |-----------|-------|
@@ -50,7 +50,7 @@ Standard Go testing commands and the current CI pipeline configuration.
 ```bash
 go test ./...
 go test -race -covermode atomic -coverprofile=covprofile ./...
-go build -o tmd.exe .
+go build -o tmdp.exe .
 go vet ./...
 ```
 

@@ -8,7 +8,16 @@ if "%TMD_DEV%"=="1" (
     exit /b %errorlevel%
 )
 
-set "TMD_EXE=%~dp0tmd-Windows-amd64.exe"
+set "TMD_EXE=%~dp0tmdp-Windows-amd64.exe"
+if not exist "%TMD_EXE%" (
+    set "TMD_EXE=%~dp0tmdp.exe"
+)
+if not exist "%TMD_EXE%" (
+    set "TMD_EXE=%~dp0tmdp"
+)
+if not exist "%TMD_EXE%" (
+    set "TMD_EXE=%~dp0tmd-Windows-amd64.exe"
+)
 if not exist "%TMD_EXE%" (
     set "TMD_EXE=%~dp0tmd.exe"
 )
@@ -19,18 +28,18 @@ if not exist "%TMD_EXE%" (
 if not exist "%TMD_EXE%" (
     where go >nul 2>nul
     if %errorlevel% equ 0 if exist "%~dp0go.mod" (
-        echo Building tmd-test.exe from source with Go...
-        set "TMD_EXE=%~dp0tmd-test.exe"
-        go build -ldflags "-X github.com/unkmonster/tmd/internal/api.Version=test" -o tmd-test.exe .
+        echo Building tmdp-test.exe from source with Go...
+        set "TMD_EXE=%~dp0tmdp-test.exe"
+        go build -ldflags "-X github.com/unkmonster/tmd/internal/api.Version=test" -o tmdp-test.exe .
         if %errorlevel% equ 0 (
             set "TMD_DEV=1"
             goto :run
         )
-        echo Build failed, falling back to existing tmd-test.exe...
+        echo Build failed, falling back to existing tmdp-test.exe...
     )
-    set "TMD_EXE=%~dp0tmd-test.exe"
+    set "TMD_EXE=%~dp0tmdp-test.exe"
     if not exist "%TMD_EXE%" (
-        echo tmd executable not found.
+        echo tmdp executable not found.
         echo Install Go from https://go.dev/dl/ or download a pre-built release.
         echo.
         pause

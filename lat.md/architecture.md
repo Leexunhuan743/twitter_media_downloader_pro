@@ -1,6 +1,6 @@
 # Architecture
 
-TMD (Twitter Media Downloader) is a Go application that downloads media from Twitter/X. It supports both CLI and API Server modes, sharing a common service layer.
+TMDP (Twitter Media Downloader Pro) is a Go application that downloads media from Twitter/X. It supports both CLI and API Server modes, sharing a common service layer.
 
 ## Layered Structure
 

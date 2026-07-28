@@ -1,6 +1,6 @@
 # Bot Integration
 
-TMD supports six bot platforms for receiving download notifications and sending commands. Each platform implements the `Bot` interface in `internal/bot/bot.go`.
+TMDP supports six bot platforms for receiving download notifications and sending commands. Each platform implements the `Bot` interface in `internal/bot/bot.go`.
 
 ## Bot Interface
 

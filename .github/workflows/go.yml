@@ -38,8 +38,20 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           suffix=""
-          [ "${{ runner.os }}" = "Windows" ] && suffix=".exe"
-          go build -o "bin/tmd-${{ runner.os }}-${{ matrix.arch }}${suffix}" \
+          os_name="${{ runner.os }}"
+          case "$os_name" in
+            Windows)
+              os_name="windows"
+              suffix=".exe"
+              ;;
+            Linux)
+              os_name="linux"
+              ;;
+            macOS)
+              os_name="darwin"
+              ;;
+          esac
+          go build -o "bin/tmdp-${os_name}-${{ matrix.arch }}${suffix}" \
             -v -ldflags "-w -s -X github.com/unkmonster/tmd/internal/api.Version=${{ github.ref_name }}" .
 
       - name: Upload release artifacts

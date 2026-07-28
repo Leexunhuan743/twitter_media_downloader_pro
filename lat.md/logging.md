@@ -1,6 +1,6 @@
 # Logging
 
-TMD logs should read as a coherent operational timeline while remaining safe to expose in the Web UI, exported files, and bot alerts.
+TMDP logs should read as a coherent operational timeline while remaining safe to expose in the Web UI, exported files, and bot alerts.
 
 ## Log Sinks
 

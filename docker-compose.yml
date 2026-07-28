@@ -1,9 +1,9 @@
 services:
-  tmd:
+  tmdp:
     # 发布镜像地址。默认使用 latest，也可以改成固定版本标签，例如 v3.4.0
-    image: leeexx00/tmd:latest
+    image: leeexx00/tmdp:latest
     # 容器名称，可按需修改
-    container_name: tmd
+    container_name: tmdp
     # 容器异常退出后自动重启
     restart: unless-stopped
     ports:
@@ -32,9 +32,9 @@ services:
       # 可选：时区
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
-      # 宿主机配置目录。可改成绝对路径，例如 /srv/tmd/config:/config 或 D:\tmd\config:/config
+      # 宿主机配置目录。可改成绝对路径，例如 /srv/tmdp/config:/config 或 D:\tmdp\config:/config
       - ./config:/config
-      # 宿主机数据目录。可改成绝对路径，例如 /srv/tmd/data:/data 或 D:\twitter_dl:/data
+      # 宿主机数据目录。可改成绝对路径，例如 /srv/tmdp/data:/data 或 D:\twitter_dl:/data
       - ./data:/data
     # 停止容器时给程序 30 秒做优雅关闭，避免数据库和任务中断过于生硬
     stop_grace_period: 30s
