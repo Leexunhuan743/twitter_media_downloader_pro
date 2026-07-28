@@ -1,12 +1,12 @@
-# Twitter Media Downloader
+# Twitter Media Downloader Pro
 
 [![Go Version](https://img.shields.io/badge/Go-1.25.0-blue.svg)](https://go.dev/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](./LICENSE)
-[![CI/CD](https://github.com/leeexx2001/tmd/actions/workflows/go.yml/badge.svg)](.github/workflows/go.yml)
+[![CI/CD](https://github.com/Leexunhuan743/twitter_media_downloader_pro/actions/workflows/go.yml/badge.svg)](.github/workflows/go.yml)
 
 > **版本**: 3.4.25 | **状态**: 活跃维护 | **许可证**: GPL-3.0
 
-本项目的代码基于 [unkmonster/tmd](https://github.com/unkmonster/tmd) 项目，修改了部分代码，添加了新的功能特性。新增的功能见 [CHANGELOG.md文件](CHANGELOG.md)
+Twitter Media Downloader Pro 的代码基于 [unkmonster/tmd](https://github.com/unkmonster/tmd) 项目，修改了部分代码，添加了新的功能特性。新增的功能见 [CHANGELOG.md文件](CHANGELOG.md)
 
 ## 目录
 
@@ -63,7 +63,7 @@
 
 **2.1 直接下载（推荐）**
 
-前往 [Release](https://github.com/leeexx2001/tmd/releases/latest) 下载对应平台的单文件可执行程序：
+前往 [Release](https://github.com/Leexunhuan743/twitter_media_downloader_pro/releases/latest) 下载对应平台的单文件可执行程序：
 
 | 平台 | 文件名 |
 |------|--------|
@@ -83,7 +83,7 @@ tmd-windows-amd64.exe
 ./tmd-linux-amd64
 ```
 
-> 注意：TMD 是命令行程序，请在终端中运行，**不要直接双击 exe 文件**（会一闪而过）。
+> 注意：Twitter Media Downloader Pro 是命令行程序，当前可执行文件/命令名仍为 `tmd`，请在终端中运行，**不要直接双击 exe 文件**（会一闪而过）。
 
 首次运行会自动检测配置文件，不存在时进入**交互式配置向导**，依次填写：
 1. Twitter 登录凭据（`auth_token` 和 `ct0`）
@@ -123,8 +123,8 @@ tmd-windows-amd64.exe
 
 ```bash
 # 克隆项目
-git clone https://github.com/leeexx2001/tmd.git
-cd tmd
+git clone https://github.com/Leexunhuan743/twitter_media_downloader_pro.git
+cd twitter_media_downloader_pro
 
 # 编译 Windows 版本
 go build -o tmd.exe .
@@ -145,7 +145,7 @@ GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o tmd-macos .
 | 镜像源 | 地址 |
 |--------|------|
 | **Docker Hub**（推荐） | `docker.io/leeexx00/tmd:<tag>` |
-| **GHCR** | `ghcr.io/leeexx2001/tmd:<tag>` |
+| **GHCR** | `ghcr.io/leexunhuan743/twitter_media_downloader_pro:<tag>` |
 
 ```bash
 # Docker Hub
@@ -153,8 +153,8 @@ docker pull leeexx00/tmd:latest
 docker pull leeexx00/tmd:v3.4.25
 
 # GHCR
-docker pull ghcr.io/leeexx2001/tmd:latest
-ghcr.io/leeexx2001/tmd:v3.4.25
+docker pull ghcr.io/leexunhuan743/twitter_media_downloader_pro:latest
+ghcr.io/leexunhuan743/twitter_media_downloader_pro:v3.4.25
 ```
 
 **推荐方式：使用 docker compose**
@@ -219,7 +219,7 @@ services:
 
 如需切换为 GHCR 镜像源，将上述 `image` 改为：
 ```yaml
-image: ghcr.io/leeexx2001/tmd:latest
+image: ghcr.io/leexunhuan743/twitter_media_downloader_pro:latest
 ```
 
 **单容器最小运行示例**
@@ -244,7 +244,7 @@ docker run -d \
   leeexx00/tmd:latest -server
 
 # 或使用 GHCR（将最后一行镜像地址替换即可）
-# ghcr.io/leeexx2001/tmd:latest -server
+# ghcr.io/leexunhuan743/twitter_media_downloader_pro:latest -server
 ```
 
 启动后可访问：
