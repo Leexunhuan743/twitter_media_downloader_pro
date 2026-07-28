@@ -2556,32 +2556,18 @@ function escapeAttr(str) {
 function stripAnsi(str) { return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, ''); }
 
 function getLineColor(line) {
+  if (line.startsWith('FATA[')) return 'var(--danger)';
   if (line.startsWith('ERRO[')) return 'var(--danger)';
   if (line.startsWith('WARN[')) return 'var(--warning)';
   if (line.startsWith('INFO[')) return 'var(--info)';
   if (line.startsWith('DEBU[')) return 'var(--text-tertiary)';
-  const levelColors = {
-    DEBUG: 'var(--text-tertiary)',
-    INFO: 'var(--info)',
-    WARNING: 'var(--warning)',
-    WARN: 'var(--warning)',
-    ERROR: 'var(--danger)'
-  };
-  // 用正则匹配结构化日志的 level 字段（限定单词边界，避免正文误匹配）
-  const levelMatch = line.match(/\blevel=(debug|info|warn(?:ing)?|error)\b/);
-  if (levelMatch) return levelColors[levelMatch[1].toUpperCase()];
   return 'var(--text-secondary)';
 }
 
 function highlightLogTimestamp(line) {
-  // logrus 格式: time="..." → escapeHtml 后 time=&quot;...&quot;
+  // 当前 logrus TextFormatter 格式: LEVEL[TIMESTAMP]
   line = line.replace(
-    /time=(&quot;)(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[-+]\d{2}:\d{2})(&quot;)/g,
-    'time=<span class="log-timestamp">$2</span>'
-  );
-  // text 格式: LEVEL[TIMESTAMP]
-  line = line.replace(
-    /(ERRO|WARN|INFO|DEBU)\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\]/g,
+    /(FATA|ERRO|WARN|INFO|DEBU)\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[-+]\d{2}:\d{2})\]/g,
     '$1[<span class="log-timestamp">$2</span>]'
   );
   return line;

@@ -10,13 +10,13 @@ The logging stack fans one application log stream out to local files, console ca
 
 `[[internal/consolelog/hub.go#StopCapture]]` restores logrus output before closing capture pipes, so start-server shutdown logs do not write to a closed stderr pipe. `main.go` owns final rotated-log writer cleanup after shutdown completes.
 
-Terminal-only ANSI color may be used for compact human scan points such as tweet title fields. File and Web UI log paths strip ANSI through `[[internal/logging/sanitize.go#StripANSI]]` or console capture.
+Terminal-only ANSI color may be used for compact human scan points such as tweet title fields. File and Web UI log paths strip ANSI through `[[internal/logging/sanitize.go#StripANSI]]` or console capture. Web log filters and both UI themes use the current `INFO[...]` TextFormatter lines.
 
 ## Public Log Contract
 
 Logs shown outside the process must be concise, consistently prefixed, and safe for operators to scan.
 
-Every user-visible log line starts with a domain prefix such as `[cli]`, `[api]`, `[download]`, `[scheduler]`, or `[auth]`. The JSON API and Web UI may parse `level=...`, timestamps, `task_id`, and domain text, but the raw line remains the stable fallback.
+Every user-visible log line starts with a domain prefix such as `[cli]`, `[api]`, `[download]`, `[scheduler]`, or `[auth]`. The JSON API and Web UI parse current `INFO[...]` TextFormatter prefixes, timestamps, task ids, and domain text, but the raw line remains the stable fallback.
 
 ## Sensitive Data
 
@@ -54,7 +54,7 @@ Low-level download helpers that immediately return errors keep phase details at 
 
 Protected unfollowed users skipped during batch preprocessing are warnings because they explain why expected content will be absent.
 
-Downloader and media failure logs must sanitize URLs with `[[internal/logging/sanitize.go#SanitizeURL]]`. Per-tweet summary lines start with the quoted tweet title, without a redundant event phrase or `title=` label. Clean successes print only the title; when failures or skips exist, summaries expand to `succeeded/failed/skipped/total` and affected count fields may be colored for terminal readability. Per-media successes stay out of logrus.
+Downloader and media failure logs must sanitize URLs with `[[internal/logging/sanitize.go#SanitizeURL]]`. Per-tweet summary lines start with the readable tweet title, without outer quotes, a redundant event phrase, or a `title=` label. Clean successes print only the title; when failures or skips exist, summaries expand to `succeeded/failed/skipped/total` and affected count fields may be colored for terminal readability. Per-media successes stay out of logrus.
 
 Tweet title logs use `[[internal/naming/tweet_naming.go#TweetNaming#LogFormat]]` so the displayed title stays close to the saved file name base while inserting a readable space before `_tweet_id` and trimming trailing title whitespace. Completion summaries rely on that title for the tweet id instead of adding a separate `tweet_id` field.
 
@@ -83,6 +83,8 @@ Peripheral logs should keep integrations and imports observable without competin
 Scheduler logs use `[scheduler]` for lifecycle, reload, manual trigger, scheduled trigger, stale-generation exits, and empty-task failures. Stale-generation exits are debug because they are expected after reloads; empty-task, status mismatch, and panic paths remain warnings or errors. Bot logs use provider prefixes such as `[bot-telegram]` and log startup plus delivery failures with action/status/error fields, never credentials. An empty bot config is an info-level skipped state, not a warning.
 
 JSON import logs use `[jsonfile]` for third-party files and `[jsonfolder]` for `.loongtweet` folders. File and folder summaries report tweet/media counts, failed tweet counts, and `dur` through logrus rather than direct console printing.
+
+Bot alert loops treat current `ERRO[...]`/`FATA[...]` TextFormatter lines as alert-worthy, keeping provider alerts aligned with terminal and Web UI output.
 
 ## Cleanup Phases
 

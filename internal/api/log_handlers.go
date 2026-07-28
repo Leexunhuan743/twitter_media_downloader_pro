@@ -19,15 +19,15 @@ const (
 	maxLogsPageSize     = 200
 )
 
-// logrus 时间格式: time="2024-06-04T10:00:00+08:00"
-var logTimeRegex = regexp.MustCompile(`time="([^"]+)"`)
+// logrus TextFormatter 时间格式: INFO[2024-06-04T10:00:00+08:00]
+var logTimeRegex = regexp.MustCompile(`^(?:DEBU|INFO|WARN|ERRO|FATA)\[([^\]]+)\]`)
 
 func parseLogTime(line string) (time.Time, bool) {
 	m := logTimeRegex.FindStringSubmatch(line)
 	if m == nil {
 		return time.Time{}, false
 	}
-	t, err := time.Parse("2006-01-02T15:04:05-07:00", m[1])
+	t, err := time.Parse(time.RFC3339, m[1])
 	if err != nil {
 		return time.Time{}, false
 	}
@@ -100,7 +100,7 @@ func (s *Server) handleLogStats(w http.ResponseWriter, r *http.Request) {
 	stats := map[string]int{"debug": 0, "info": 0, "warn": 0, "error": 0, "total": len(lines)}
 	for _, line := range lines {
 		switch {
-		case matchLogLevel(line, "error"):
+		case matchLogLevel(line, "error") || matchLogLevel(line, "fatal"):
 			stats["error"]++
 		case matchLogLevel(line, "warn"):
 			stats["warn"]++
@@ -173,13 +173,6 @@ func matchLogLevel(line, level string) bool {
 		return true
 	}
 
-	lowerLine := strings.ToLower(line)
-	if strings.Contains(lowerLine, "level="+level+" ") ||
-		strings.Contains(lowerLine, "level="+level+"\n") ||
-		strings.Contains(lowerLine, "level="+level+"\t") {
-		return true
-	}
-
 	return strings.HasPrefix(line, logLevelPrefix(level)+"[")
 }
 
@@ -189,10 +182,12 @@ func logLevelPrefix(level string) string {
 		return "DEBU"
 	case "info":
 		return "INFO"
-	case "warn", "warning":
+	case "warn":
 		return "WARN"
 	case "error":
 		return "ERRO"
+	case "fatal":
+		return "FATA"
 	default:
 		return ""
 	}
@@ -200,7 +195,7 @@ func logLevelPrefix(level string) string {
 
 func isValidLogLevel(level string) bool {
 	switch level {
-	case "debug", "info", "warn", "warning", "error", "all":
+	case "debug", "info", "warn", "error", "all":
 		return true
 	}
 	return false

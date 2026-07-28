@@ -34,7 +34,7 @@ func RunBotEventLoop(eb *EventBus, stopCh <-chan struct{}, wg *sync.WaitGroup, f
 	}()
 }
 
-// RunBotLogLoop 启动日志订阅协程：监听 LogHub，筛选 error/fatal 级别日志，
+// RunBotLogLoop 启动日志订阅协程：监听 LogHub，筛选 ERRO/FATA 级别日志，
 // 以 1 秒速率限制回调。所有 bot 平台的 handleLogs() 均替换为此函数。
 func RunBotLogLoop(lh *consolelog.Hub, stopCh <-chan struct{}, wg *sync.WaitGroup, fn func(line string)) {
 	wg.Add(1)
@@ -51,7 +51,7 @@ func RunBotLogLoop(lh *consolelog.Hub, stopCh <-chan struct{}, wg *sync.WaitGrou
 				if !ok {
 					return
 				}
-				if !strings.Contains(line, "level=error") && !strings.Contains(line, "level=fatal") {
+				if !isBotAlertLogLine(line) {
 					continue
 				}
 				now := time.Now()
@@ -63,6 +63,11 @@ func RunBotLogLoop(lh *consolelog.Hub, stopCh <-chan struct{}, wg *sync.WaitGrou
 			}
 		}
 	}()
+}
+
+func isBotAlertLogLine(line string) bool {
+	return strings.HasPrefix(line, "ERRO[") ||
+		strings.HasPrefix(line, "FATA[")
 }
 
 // FormatTaskResult 格式化任务结果描述。

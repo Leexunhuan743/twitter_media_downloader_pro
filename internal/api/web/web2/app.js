@@ -126,15 +126,15 @@ function getTweetId(text) {
 }
 
 function getLogLineColor(line) {
-  if (line.startsWith('ERRO[') || line.includes('level=error')) return 'var(--red)';
-  if (line.startsWith('WARN[') || line.includes('level=warn') || line.includes('level=warning')) return 'var(--amber)';
-  if (line.startsWith('INFO[') || line.includes('level=info')) return 'var(--blue)';
-  if (line.startsWith('DEBU[') || line.includes('level=debug')) return 'var(--text-muted)';
+  if (line.startsWith('FATA[')) return 'var(--red)';
+  if (line.startsWith('ERRO[')) return 'var(--red)';
+  if (line.startsWith('WARN[')) return 'var(--amber)';
+  if (line.startsWith('INFO[')) return 'var(--blue)';
+  if (line.startsWith('DEBU[')) return 'var(--text-muted)';
   return 'var(--text-secondary)';
 }
 function highlightLogTimestamp(line) {
-  line = line.replace(/time=(&quot;)(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[-+]\d{2}:\d{2})(&quot;)/g, 'time=<span class="log-timestamp">$2</span>');
-  line = line.replace(/(ERRO|WARN|INFO|DEBU)\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\]/g, '$1[<span class="log-timestamp">$2</span>]');
+  line = line.replace(/(FATA|ERRO|WARN|INFO|DEBU)\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[-+]\d{2}:\d{2})\]/g, '$1[<span class="log-timestamp">$2</span>]');
   return line;
 }
 

@@ -370,7 +370,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 	// Log one compact per-tweet completion line only when at least one media item succeeded.
 	if len(successUrls) > 0 {
 		totalAttempted := len(successUrls) + len(tweet.Urls) + len(skippedUrls)
-		titleField := color.FgLightMagenta.Render(fmt.Sprintf("%q", tweetNaming.LogFormat()))
+		titleField := color.FgLightMagenta.Render(tweetNaming.LogFormat())
 		summaryFields := tweetMediaSummaryFields(len(successUrls), len(tweet.Urls), len(skippedUrls), totalAttempted)
 		if summaryFields == "" {
 			log.Infof("[download] %s", titleField)

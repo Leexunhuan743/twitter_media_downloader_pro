@@ -150,7 +150,10 @@ func TestDownloadTweetMedia_CompleteLogOmitsRedundantEventPhrase(t *testing.T) {
 	if strings.Contains(stripped, "succeeded=") || strings.Contains(stripped, "failed=") || strings.Contains(stripped, "skipped=") || strings.Contains(stripped, "total=") {
 		t.Fatalf("clean success summary should omit all count fields, got: %s", stripped)
 	}
-	if !strings.Contains(stripped, `"[Jade Vow(JadeVow)] golden hour _2082192002397925511"`) {
+	if strings.Contains(stripped, `"[Jade Vow(JadeVow)] golden hour _2082192002397925511"`) {
+		t.Fatalf("summary log should omit outer title quotes, got: %s", stripped)
+	}
+	if !strings.Contains(stripped, `[Jade Vow(JadeVow)] golden hour _2082192002397925511`) {
 		t.Fatalf("summary log should preserve readable title, got: %s", stripped)
 	}
 }
