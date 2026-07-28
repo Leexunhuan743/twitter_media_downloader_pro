@@ -25,10 +25,10 @@ func MarkUsersAsDownloaded(ctx context.Context, client *resty.Client, db *sqlx.D
 	if markTimeStr == "" {
 		now := time.Now()
 		timestamp = &now
-		log.Infoln("[download] Marking users as downloaded, timestamp:", timestamp.Format(time.RFC3339))
+		log.Infof("[download] Mark downloaded start mode=timestamp timestamp=%s lists=%d users=%d", timestamp.Format(time.RFC3339), len(lists), len(users))
 	} else if strings.ToLower(markTimeStr) == "null" || strings.ToLower(markTimeStr) == "nil" {
 		timestamp = nil
-		log.Infoln("[download] Marking users as downloaded, timestamp: NULL (full download)")
+		log.Infof("[download] Mark downloaded start mode=full lists=%d users=%d", len(lists), len(users))
 	} else {
 		loc, locErr := time.LoadLocation("Local")
 		if locErr != nil {
@@ -39,7 +39,7 @@ func MarkUsersAsDownloaded(ctx context.Context, client *resty.Client, db *sqlx.D
 			return nil, fmt.Errorf("invalid mark-time format '%s', expected: 2006-01-02T15:04:05 (example: 2024-01-15T10:30:00) or 'null' for full download: %v", markTimeStr, err)
 		}
 		timestamp = &parsedTime
-		log.Infoln("[download] Marking users as downloaded, timestamp:", timestamp.Format(time.RFC3339))
+		log.Infof("[download] Mark downloaded start mode=timestamp timestamp=%s lists=%d users=%d", timestamp.Format(time.RFC3339), len(lists), len(users))
 	}
 
 	var results []MarkedUserInfo
@@ -61,7 +61,7 @@ func MarkUsersAsDownloaded(ctx context.Context, client *resty.Client, db *sqlx.D
 				strings.Contains(errStr, "unable to get timeline data") {
 				return nil, fmt.Errorf("list %s does not exist or is not accessible", lst.Title())
 			}
-			log.Warnf("[download] ✗ %s - failed to get list members: %v", lst.Title(), err)
+			log.Warnf("[download] Mark list members fetch failed list=%q error=%q", lst.Title(), err.Error())
 			continue
 		}
 
@@ -102,7 +102,7 @@ func MarkUsersAsDownloaded(ctx context.Context, client *resty.Client, db *sqlx.D
 		}
 	}
 
-	log.Infoln("[download] Finished marking users as downloaded, success:", successCount, "failed:", failCount)
+	log.Infof("[download] Mark downloaded complete success=%d failed=%d", successCount, failCount)
 	return results, nil
 }
 
@@ -123,28 +123,28 @@ func markSingleUserWithInfo(db *sqlx.DB, user *twitter.User, dir string, timesta
 		if r := recover(); r != nil {
 			info.Success = false
 			info.Error = fmt.Sprintf("panic: %v", r)
-			log.Errorf("[download] markSingleUserWithInfo: panic recovered: %v", r)
+			log.Errorf("[download] Mark user panic user=%q uid=%d error=%q", user.Title(), user.Id, fmt.Sprint(r))
 		}
 	}()
 
 	entity, err := syncUserAndEntity(db, user, dir, maxLen)
 	if err != nil {
 		info.Error = fmt.Sprintf("failed to sync user and entity: %v", err)
-		log.Warnf("[download] ✗ %s - failed to mark user: %v", user.Title(), err)
+		log.Warnf("[download] Mark user failed user=%q uid=%d phase=sync error=%q", user.Title(), user.Id, err.Error())
 		return info
 	}
 
 	if timestamp == nil {
 		if err := entity.ClearLatestReleaseTime(); err != nil {
 			info.Error = fmt.Sprintf("failed to clear latest release time: %v", err)
-			log.Warnf("[download] ✗ %s - failed to clear latest release time: %v", user.Title(), err)
+			log.Warnf("[download] Mark user failed user=%q uid=%d phase=clear_latest_release_time error=%q", user.Title(), user.Id, err.Error())
 			return info
 		}
-		log.Infoln("[download] ✓", user.Title(), "-", "cleared latest release time for full download")
+		log.Infof("[download] Mark user full reset user=%q uid=%d", user.Title(), user.Id)
 	} else {
 		if err := entity.SetLatestReleaseTime(*timestamp); err != nil {
 			info.Error = fmt.Sprintf("failed to set latest release time: %v", err)
-			log.Warnf("[download] ✗ %s - failed to set latest release time: %v", user.Title(), err)
+			log.Warnf("[download] Mark user failed user=%q uid=%d phase=set_latest_release_time error=%q", user.Title(), user.Id, err.Error())
 			return info
 		}
 	}
@@ -153,10 +153,10 @@ func markSingleUserWithInfo(db *sqlx.DB, user *twitter.User, dir string, timesta
 	eid, err := entity.Id()
 	if err != nil {
 		info.Error = fmt.Sprintf("failed to get entity id: %v", err)
-		log.Warnf("[download] ✗ %s - failed to get entity id: %v", user.Title(), err)
+		log.Warnf("[download] Mark user failed user=%q uid=%d phase=entity_id error=%q", user.Title(), user.Id, err.Error())
 		return info
 	}
 	info.EntityID = eid
-	log.Infoln("[download] ✓", user.Title(), "-", "marked as downloaded")
+	log.Infof("[download] Mark user complete user=%q uid=%d entity_id=%d", user.Title(), user.Id, eid)
 	return info
 }

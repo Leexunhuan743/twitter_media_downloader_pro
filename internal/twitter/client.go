@@ -180,7 +180,7 @@ func (rl *xRateLimit) preRequest(ctx context.Context, nonBlocking bool) error {
 	}
 
 	if time.Now().After(rl.ResetTime) {
-		log.Debugln("[RateLimiter] Rate limit expired - path:", rl.Url)
+		log.Debugf("[rate-limit] Expired endpoint=%s", endpointForLog(rl.Url))
 		rl.Ready = false // 后续的请求等待本次请求完成更新速率限制
 		return nil
 	}
@@ -190,18 +190,20 @@ func (rl *xRateLimit) preRequest(ctx context.Context, nonBlocking bool) error {
 		return nil
 	} else {
 		if nonBlocking {
+			log.Debugf("[rate-limit] Would block endpoint=%s remaining=%d limit=%d reset_at=%s", endpointForLog(rl.Url), rl.Remaining, rl.Limit, rl.ResetTime.Format(time.RFC3339))
 			return ErrWouldBlock
 		}
 
 		insurance := 5 * time.Second
-		log.Warnf("[RateLimiter] Sleeping until: %s - path: %s", rl.ResetTime.Add(insurance), rl.Url)
+		wakeAt := rl.ResetTime.Add(insurance)
+		log.Warnf("[rate-limit] Sleeping endpoint=%s wake_at=%s remaining=%d limit=%d", endpointForLog(rl.Url), wakeAt.Format(time.RFC3339), rl.Remaining, rl.Limit)
 
 		origin, err := utils.GetConsoleTitle()
 		if err == nil {
-			utils.SetConsoleTitle(fmt.Sprintf("idle - sleeping until %v", rl.ResetTime.Add(insurance).Format(time.TimeOnly)))
+			utils.SetConsoleTitle(fmt.Sprintf("idle - sleeping until %v", wakeAt.Format(time.TimeOnly)))
 			defer utils.SetConsoleTitle(origin)
 		} else {
-			log.Warnf("[RateLimiter] Failed to set console title: %v", err)
+			log.Debugf("[rate-limit] Console title update failed error=%q", errorForLog(err))
 		}
 
 		select {
@@ -337,10 +339,16 @@ func (rateLimiter *rateLimiter) reset(url *url.URL, resp *resty.Response) {
 		// 请求成功，或发生了错误/触发了重试条件但有能力更新速率限制
 		rateLimit := makeRateLimit(resp)
 		rateLimiter.limits.Store(path, rateLimit)
+		if rateLimit != nil {
+			log.Debugf("[rate-limit] Updated endpoint=%s remaining=%d limit=%d reset_at=%s", endpointForLog(rateLimit.Url), rateLimit.Remaining, rateLimit.Limit, rateLimit.ResetTime.Format(time.RFC3339))
+		} else {
+			log.Debugf("[rate-limit] Disabled endpoint=%s reason=no_headers", endpointForLog(path))
+		}
 		cond.Broadcast()
 	} else {
 		// 将此路径设为首次请求前的状态
 		rateLimiter.limits.Delete(path)
+		log.Debugf("[rate-limit] Reset endpoint=%s reason=no_response", endpointForLog(path))
 		cond.Signal()
 	}
 }
@@ -420,7 +428,7 @@ func EnableRequestCounting(client *resty.Client) {
 func ReportRequestCount() {
 	apiCounts.Range(func(key, value any) bool {
 		if counter, ok := value.(*atomic.Int32); ok {
-			log.Debugf("[RateLimiter] * %s request count: %d", key, counter.Load())
+			log.Debugf("[rate-limit] Request count endpoint=%s count=%d", endpointForLog(fmt.Sprint(key)), counter.Load())
 		}
 		return true
 	})
@@ -467,7 +475,7 @@ func GetClientError(cli *resty.Client) error {
 func SetClientError(cli *resty.Client, err error) {
 	clientErrors.Store(cli, err)
 	if err != nil {
-		log.Debugln("[RateLimiter] Client no longer available:", GetClientScreenName(cli), "-", err)
+		log.Warnf("[twitter] Account unavailable account=%s error=%q", clientNameForLog(cli), errorForLog(err))
 	}
 }
 
@@ -504,13 +512,13 @@ func SelectClient(ctx context.Context, clients []*resty.Client, path string) *re
 		default:
 		case showStateToken <- struct{}{}:
 			defer func() { <-showStateToken }()
-			log.Warnf("[RateLimiter] Waiting for any client to wake up")
+			log.Warnf("[rate-limit] Waiting for available client endpoint=%s total=%d errors=%d", endpointForLog(path), len(clients), errs)
 			origin, err := utils.GetConsoleTitle()
 			if err == nil {
 				defer utils.SetConsoleTitle(origin)
 				utils.SetConsoleTitle("waiting for any client to wake up")
 			} else {
-				log.Debugln("[RateLimiter] Failed to get console title:", err)
+				log.Debugf("[rate-limit] Console title read failed error=%q", errorForLog(err))
 			}
 		}
 
@@ -529,6 +537,7 @@ func SelectClient(ctx context.Context, clients []*resty.Client, path string) *re
 func SelectClientMFQ(ctx context.Context, master *resty.Client, additional []*resty.Client, user *User, path string) *resty.Client {
 	// Q3: 受保护用户 → 主账户独占（仅在已知用户信息时生效）
 	if user != nil && user.IsProtected {
+		log.Debugf("[rate-limit] Selected protected-user client endpoint=%s account=%s user=@%s", endpointForLog(path), clientNameForLog(master), user.ScreenName)
 		return master
 	}
 
@@ -539,6 +548,7 @@ func SelectClientMFQ(ctx context.Context, master *resty.Client, additional []*re
 		}
 		rl := GetClientRateLimiter(cli)
 		if rl == nil || !rl.wouldBlock(path) {
+			log.Debugf("[rate-limit] Selected additional client endpoint=%s account=%s", endpointForLog(path), clientNameForLog(cli))
 			return cli
 		}
 	}
@@ -559,6 +569,7 @@ func SelectClientMFQ(ctx context.Context, master *resty.Client, additional []*re
 			}
 			rl := GetClientRateLimiter(cli)
 			if rl == nil || !rl.wouldBlock(path) {
+				log.Debugf("[rate-limit] Selected fallback client endpoint=%s account=%s backoff=%s", endpointForLog(path), clientNameForLog(cli), backoff)
 				return cli
 			}
 			rateLimited++ // 有客户端只是被限速，不是错误
@@ -566,6 +577,7 @@ func SelectClientMFQ(ctx context.Context, master *resty.Client, additional []*re
 
 		// 所有客户端都有错误，返回 nil
 		if errs == len(clients) {
+			log.Warnf("[rate-limit] No available clients endpoint=%s total=%d errors=%d", endpointForLog(path), len(clients), errs)
 			return nil
 		}
 
@@ -576,8 +588,8 @@ func SelectClientMFQ(ctx context.Context, master *resty.Client, additional []*re
 
 		// 本轮全部失败，指数退避等待
 		log.Debugf(
-			"[MFQ] All clients blocked for path %s: rate_limited=%d, errors=%d, total=%d, backoff=%v",
-			path,
+			"[rate-limit] All clients blocked endpoint=%s rate_limited=%d errors=%d total=%d backoff=%s",
+			endpointForLog(path),
 			rateLimited,
 			errs,
 			len(clients),

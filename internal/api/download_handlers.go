@@ -44,7 +44,7 @@ func (s *Server) enqueueTask(task *Task, run func(ctx context.Context, taskID st
 func (s *Server) buildAndEnqueueTask(w http.ResponseWriter, task *Task) bool {
 	runFunc, err := s.buildTaskRunFunc(task)
 	if err != nil {
-		log.Errorf("[tasks] Failed to build task run func: %v", err)
+		log.Errorf("[tasks] Run function build failed task_id=%s type=%s error=%q", task.ID, task.Type, err.Error())
 		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
 		return false
 	}
@@ -114,7 +114,7 @@ func (s *Server) handleFollowingMarkRoute(w http.ResponseWriter, r *http.Request
 func (s *Server) handleUserDownload(w http.ResponseWriter, r *http.Request, screenName string) {
 	var req UserDownloadTaskData
 	if err := decodeOptionalJSON(r, &req); err != nil {
-		log.Debugf("[download] Invalid request body: %v", err)
+		log.Debugf("[download] Invalid request body route=user_download error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -162,7 +162,7 @@ func (s *Server) handleUserProfile(w http.ResponseWriter, _ *http.Request, scree
 func (s *Server) handleUserMark(w http.ResponseWriter, r *http.Request, screenName string) {
 	var req MarkDownloadedTaskData
 	if err := decodeOptionalJSON(r, &req); err != nil {
-		log.Debugf("[download] Invalid request body: %v", err)
+		log.Debugf("[download] Invalid request body route=user_mark error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -188,7 +188,7 @@ func (s *Server) handleUserMark(w http.ResponseWriter, r *http.Request, screenNa
 func (s *Server) handleListMark(w http.ResponseWriter, r *http.Request, listID uint64) {
 	var req ListMarkDownloadedTaskData
 	if err := decodeOptionalJSON(r, &req); err != nil {
-		log.Debugf("[download] Invalid request body: %v", err)
+		log.Debugf("[download] Invalid request body route=list_mark error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -214,7 +214,7 @@ func (s *Server) handleListMark(w http.ResponseWriter, r *http.Request, listID u
 func (s *Server) handleFollowingMark(w http.ResponseWriter, r *http.Request, screenName string) {
 	var req FollowingMarkDownloadedTaskData
 	if err := decodeOptionalJSON(r, &req); err != nil {
-		log.Debugf("[download] Invalid request body: %v", err)
+		log.Debugf("[download] Invalid request body route=following_mark error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -240,7 +240,7 @@ func (s *Server) handleFollowingMark(w http.ResponseWriter, r *http.Request, scr
 func (s *Server) handleFollowingDownload(w http.ResponseWriter, r *http.Request, screenName string) {
 	var req FollowingDownloadTaskData
 	if err := decodeOptionalJSON(r, &req); err != nil {
-		log.Debugf("[download] Invalid request body: %v", err)
+		log.Debugf("[download] Invalid request body route=following_download error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -269,7 +269,7 @@ func (s *Server) handleFollowingDownload(w http.ResponseWriter, r *http.Request,
 func (s *Server) listIDFromPath(w http.ResponseWriter, r *http.Request) (uint64, bool) {
 	listID, err := strconv.ParseUint(r.PathValue("list_id"), 10, 64)
 	if err != nil {
-		log.Debugf("[download] Invalid list ID: %v", err)
+		log.Debugf("[download] Invalid list ID value=%q error=%q", r.PathValue("list_id"), err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid list ID")
 		return 0, false
 	}
@@ -310,7 +310,7 @@ func (s *Server) handleListMarkRoute(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListDownload(w http.ResponseWriter, r *http.Request, listID uint64) {
 	var req ListDownloadTaskData
 	if err := decodeOptionalJSON(r, &req); err != nil {
-		log.Debugf("[download] Invalid request body: %v", err)
+		log.Debugf("[download] Invalid request body route=list_download error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -363,7 +363,7 @@ func (s *Server) handleJsonFileDownload(w http.ResponseWriter, r *http.Request) 
 
 	var req JsonFileDownloadTaskData
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Debugf("[download] Invalid request body: %v", err)
+		log.Debugf("[download] Invalid request body route=json_file_download error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -397,7 +397,7 @@ func (s *Server) handleJsonFolderDownload(w http.ResponseWriter, r *http.Request
 
 	var req JsonFolderDownloadTaskData
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Debugf("[download] Invalid request body: %v", err)
+		log.Debugf("[download] Invalid request body route=json_folder_download error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -431,7 +431,7 @@ func (s *Server) handleJsonFileUpload(w http.ResponseWriter, r *http.Request) {
 		if uploadDir != "" {
 			_ = os.RemoveAll(uploadDir)
 		}
-		log.Errorf("[upload] Failed to save JSON files: %v", err)
+		log.Errorf("[upload] Save failed kind=json upload_dir=%q error=%q", uploadDir, err.Error())
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			s.writeError(w, http.StatusRequestEntityTooLarge, "Upload too large")
@@ -457,7 +457,7 @@ func (s *Server) handleJsonFileUpload(w http.ResponseWriter, r *http.Request) {
 	runFunc, err := s.buildTaskRunFunc(task)
 	if err != nil {
 		_ = os.RemoveAll(uploadDir)
-		log.Errorf("[tasks] Failed to build task run func: %v", err)
+		log.Errorf("[tasks] Run function build failed task_id=%s type=%s error=%q", task.ID, task.Type, err.Error())
 		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
 		return
 	}
@@ -480,7 +480,7 @@ func (s *Server) handleJsonFolderUpload(w http.ResponseWriter, r *http.Request) 
 		if uploadDir != "" {
 			_ = os.RemoveAll(uploadDir)
 		}
-		log.Errorf("[upload] Failed to save loongtweet files: %v", err)
+		log.Errorf("[upload] Save failed kind=loongtweet upload_dir=%q error=%q", uploadDir, err.Error())
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			s.writeError(w, http.StatusRequestEntityTooLarge, "Upload too large")
@@ -506,7 +506,7 @@ func (s *Server) handleJsonFolderUpload(w http.ResponseWriter, r *http.Request) 
 	runFunc, err := s.buildTaskRunFunc(task)
 	if err != nil {
 		_ = os.RemoveAll(uploadDir)
-		log.Errorf("[tasks] Failed to build task run func: %v", err)
+		log.Errorf("[tasks] Run function build failed task_id=%s type=%s error=%q", task.ID, task.Type, err.Error())
 		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
 		return
 	}
@@ -539,7 +539,7 @@ func cleanupUploadDirAfterTask(uploadDir string, task func(ctx context.Context, 
 		defer func() {
 			_ = os.RemoveAll(uploadDir)
 			if r := recover(); r != nil {
-				log.Errorf("[upload] task panicked: %v", r)
+				log.Errorf("[upload] Task panic upload_dir=%q error=%q", uploadDir, fmt.Sprint(r))
 				err = fmt.Errorf("task panicked: %v", r)
 			}
 		}()
@@ -706,7 +706,7 @@ func parseScheduledListIDs(values []string) ([]StringUint64, error) {
 func (s *Server) handleBatchDownload(w http.ResponseWriter, r *http.Request) {
 	var req BatchDownloadTaskData
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Debugf("[download] Invalid request body: %v", err)
+		log.Debugf("[download] Invalid request body route=batch_download error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -718,25 +718,24 @@ func (s *Server) handleBatchDownload(w http.ResponseWriter, r *http.Request) {
 
 	users, err := normalizeBatchScreenNames(req.Users)
 	if err != nil {
-		log.Debugf("[download] Invalid screen names: %v", err)
+		log.Debugf("[download] Invalid batch targets route=batch_download field=users error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	followingNames, err := normalizeBatchScreenNames(req.FollowingNames)
 	if err != nil {
-		log.Debugf("[download] Invalid following names: %v", err)
+		log.Debugf("[download] Invalid batch targets route=batch_download field=following_names error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	_, err = validateBatchListIDs(req.Lists)
 	if err != nil {
-		log.Debugf("[download] Invalid list IDs: %v", err)
+		log.Debugf("[download] Invalid batch targets route=batch_download field=lists error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	req.Users = users
 	req.FollowingNames = followingNames
-
 
 	task := s.taskManager.CreateTask(TaskTypeBatchDownload, &req)
 	taskID := task.ID
@@ -766,7 +765,7 @@ func (s *Server) handleBatchDownload(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBatchMark(w http.ResponseWriter, r *http.Request) {
 	var req BatchMarkDownloadedTaskData
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Debugf("[download] Invalid request body: %v", err)
+		log.Debugf("[download] Invalid request body route=batch_mark error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -778,25 +777,24 @@ func (s *Server) handleBatchMark(w http.ResponseWriter, r *http.Request) {
 
 	users, err := normalizeBatchScreenNames(req.Users)
 	if err != nil {
-		log.Debugf("[download] Invalid screen names: %v", err)
+		log.Debugf("[download] Invalid batch targets route=batch_mark field=users error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	followingNames, err := normalizeBatchScreenNames(req.FollowingNames)
 	if err != nil {
-		log.Debugf("[download] Invalid following names: %v", err)
+		log.Debugf("[download] Invalid batch targets route=batch_mark field=following_names error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	_, err = validateBatchListIDs(req.Lists)
 	if err != nil {
-		log.Debugf("[download] Invalid list IDs: %v", err)
+		log.Debugf("[download] Invalid batch targets route=batch_mark field=lists error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	req.Users = users
 	req.FollowingNames = followingNames
-
 
 	task := s.taskManager.CreateTask(TaskTypeMarkDownloaded, &req)
 	taskID := task.ID
@@ -914,7 +912,7 @@ func (s *Server) handleRetryTask(w http.ResponseWriter, r *http.Request) {
 
 	runFunc, err := s.buildTaskRunFunc(original)
 	if err != nil {
-		log.Errorf("[tasks] Failed to build task run func: %v", err)
+		log.Errorf("[tasks] Run function build failed task_id=%s type=%s error=%q", original.ID, original.Type, err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid task type")
 		return
 	}
@@ -1093,7 +1091,7 @@ func (s *Server) handleRetryAllFailed(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleClearErrors(w http.ResponseWriter, r *http.Request) {
 	if err := s.downloadService.ClearErrors(); err != nil {
-		log.Errorf("[download] Failed to clear errors: %v", err)
+		log.Errorf("[download] Error records clear failed error=%q", err.Error())
 		s.writeError(w, http.StatusInternalServerError, "Failed to clear errors")
 		return
 	}
@@ -1136,11 +1134,11 @@ func (s *Server) scheduledDownload(entry scheduler.ScheduleEntry) string {
 	case scheduler.ScheduleTypeList:
 		listID, err := strconv.ParseUint(entry.Target, 10, 64)
 		if err != nil {
-			log.Warnf("[scheduler] Invalid list_id %q: %v", entry.Target, err)
+			log.Warnf("[scheduler] Invalid target entry_id=%q type=%s field=list_id value=%q error=%q", entry.ID, entry.Type, entry.Target, err.Error())
 			return ""
 		}
 		if listID == 0 {
-			log.Warnf("[scheduler] Invalid list_id %q: must be a positive integer", entry.Target)
+			log.Warnf("[scheduler] Invalid target entry_id=%q type=%s field=list_id value=%q reason=not_positive", entry.ID, entry.Type, entry.Target)
 			return ""
 		}
 		req := &ListDownloadTaskData{
@@ -1160,7 +1158,7 @@ func (s *Server) scheduledDownload(entry scheduler.ScheduleEntry) string {
 	case scheduler.ScheduleTypeUser:
 		screenName := utils.NormalizeScreenName(strings.TrimSpace(entry.Target))
 		if !utils.IsValidScreenName(screenName) {
-			log.Warnf("[scheduler] Invalid user screen_name %q", entry.Target)
+			log.Warnf("[scheduler] Invalid target entry_id=%q type=%s field=screen_name value=%q", entry.ID, entry.Type, entry.Target)
 			return ""
 		}
 		req := &UserDownloadTaskData{
@@ -1180,7 +1178,7 @@ func (s *Server) scheduledDownload(entry scheduler.ScheduleEntry) string {
 	case scheduler.ScheduleTypeFollowing:
 		screenName := utils.NormalizeScreenName(strings.TrimSpace(entry.Target))
 		if !utils.IsValidScreenName(screenName) {
-			log.Warnf("[scheduler] Invalid following screen_name %q", entry.Target)
+			log.Warnf("[scheduler] Invalid target entry_id=%q type=%s field=screen_name value=%q", entry.ID, entry.Type, entry.Target)
 			return ""
 		}
 		req := &FollowingDownloadTaskData{
@@ -1200,26 +1198,26 @@ func (s *Server) scheduledDownload(entry scheduler.ScheduleEntry) string {
 	case scheduler.ScheduleTypeMixed:
 		lists, err := parseScheduledListIDs(entry.Lists)
 		if err != nil {
-			log.Warnf("[scheduler] Invalid mixed schedule %q: %v", entry.Name, err)
+			log.Warnf("[scheduler] Invalid mixed schedule entry_id=%q name=%q field=lists error=%q", entry.ID, entry.Name, err.Error())
 			return ""
 		}
 		users, err := normalizeBatchScreenNames(entry.Users)
 		if err != nil {
-			log.Warnf("[scheduler] Invalid mixed schedule %q: %v", entry.Name, err)
+			log.Warnf("[scheduler] Invalid mixed schedule entry_id=%q name=%q field=users error=%q", entry.ID, entry.Name, err.Error())
 			return ""
 		}
 		followingNames, err := normalizeBatchScreenNames(entry.FollowingNames)
 		if err != nil {
-			log.Warnf("[scheduler] Invalid mixed schedule %q: %v", entry.Name, err)
+			log.Warnf("[scheduler] Invalid mixed schedule entry_id=%q name=%q field=following error=%q", entry.ID, entry.Name, err.Error())
 			return ""
 		}
 		listIDs, err := validateBatchListIDs(lists)
 		if err != nil {
-			log.Warnf("[scheduler] Invalid mixed schedule %q: %v", entry.Name, err)
+			log.Warnf("[scheduler] Invalid mixed schedule entry_id=%q name=%q field=list_ids error=%q", entry.ID, entry.Name, err.Error())
 			return ""
 		}
 		if len(users) == 0 && len(lists) == 0 && len(followingNames) == 0 {
-			log.Warnf("[scheduler] Mixed schedule %q has no targets", entry.Name)
+			log.Warnf("[scheduler] Invalid mixed schedule entry_id=%q name=%q reason=no_targets", entry.ID, entry.Name)
 			return ""
 		}
 
@@ -1240,7 +1238,7 @@ func (s *Server) scheduledDownload(entry scheduler.ScheduleEntry) string {
 		return task.ID
 
 	default:
-		log.Warnf("[scheduler] Unknown schedule type: %q", entry.Type)
+		log.Warnf("[scheduler] Unknown schedule type entry_id=%q type=%q", entry.ID, entry.Type)
 	}
 
 	return ""

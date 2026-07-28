@@ -47,7 +47,7 @@ func parseTweetResults(tweet_results *gjson.Result) (*Tweet, error) {
 
 	tweet.Creator, _, err = parseUserResults(&user_results)
 	if err != nil {
-		log.Debugf("[twitter] Failed to parse creator for tweet %d: %v", tweet.Id, err)
+		log.Debugf("[twitter] Tweet creator parse failed tweet_id=%d error=%q", tweet.Id, errorForLog(err))
 	}
 	tweet.CreatedAt, err = time.Parse(time.RubyDate, legacy.Get("created_at").String())
 	if err != nil {

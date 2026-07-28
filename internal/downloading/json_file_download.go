@@ -13,6 +13,7 @@ import (
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/downloader"
+	"github.com/unkmonster/tmd/internal/logging"
 	"github.com/unkmonster/tmd/internal/naming"
 	"github.com/unkmonster/tmd/internal/twitter"
 )
@@ -78,7 +79,7 @@ func convertToTwitterTweet(entry ThirdPartyTweetEntry) *twitter.Tweet {
 	if converted, err := ConvertThirdPartyTweetJSON(entry.Metadata); err == nil {
 		cleanedMetadata = converted
 	} else {
-		log.Warnf("[jsonfile] Failed to convert metadata for tweet %s, using original: %v", entry.ID, err)
+		log.Warnf("[jsonfile] Metadata conversion failed tweet_id=%s error=%q", entry.ID, err.Error())
 	}
 
 	return &twitter.Tweet{
@@ -162,7 +163,7 @@ func DownloadThirdPartyTweets(
 				userNaming := naming.NewUserNaming(entries[i].Name, entries[i].ScreenName, opts.normalizedMaxFileNameLen())
 				userDir := filepath.Join(usersDir, userNaming.SanitizedTitle())
 				if err := os.MkdirAll(userDir, 0755); err != nil {
-					log.Warnf("[jsonfile] Failed to create user dir for tweet %s: %v", entries[i].ID, err)
+					log.Warnf("[jsonfile] User directory failed tweet_id=%s path=%q error=%q", entries[i].ID, logging.Path(userDir), err.Error())
 				}
 
 				pts = append(pts, JsonPackagedTweet{Tweet: tweet, Dir: userDir})
@@ -194,10 +195,10 @@ func DownloadThirdPartyTweets(
 
 			// 输出文件级别的成功/失败统计
 			if result.Success {
-				log.Infof("[jsonfile] %s: %d media ✓", filepath.Base(fp), totalMedia)
+				log.Infof("[jsonfile] File complete file=%q tweets=%d media=%d duration=%s", filepath.Base(fp), len(pts), totalMedia, result.Duration)
 			} else {
 				result.Error = fmt.Sprintf("%d/%d tweets failed", len(failedTweets), len(pts))
-				log.Warnf("[jsonfile] %s: %s ✗", filepath.Base(fp), result.Error)
+				log.Warnf("[jsonfile] File failed file=%q tweets=%d failed_tweets=%d media=%d duration=%s error=%q", filepath.Base(fp), len(pts), len(failedTweets), totalMedia, result.Duration, result.Error)
 			}
 
 			mu.Lock()

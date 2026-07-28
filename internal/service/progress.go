@@ -3,6 +3,8 @@ package service
 import (
 	"fmt"
 	"strings"
+
+	"github.com/unkmonster/tmd/internal/logging"
 )
 
 // Progress 下载进度
@@ -70,19 +72,19 @@ func (l *LogReporter) OnProgress(taskID string, p Progress) {
 	}
 	switch p.Stage {
 	case "syncing":
-		l.logger("[%s] Syncing: %s", taskID, p.Current)
+		l.logger("[task] Progress stage=syncing current=%q", p.Current)
 	case "retrying":
 		if p.Total > 0 {
-			l.logger("[%s] Retrying failed tweets (%d/%d, Failedtweet=%d)", taskID, p.Completed, p.Total, p.Failed)
+			l.logger("[task] Progress stage=retrying completed=%d total=%d failed=%d", p.Completed, p.Total, p.Failed)
 		} else {
-			l.logger("[%s] Retrying failed tweets...", taskID)
+			l.logger("[task] Progress stage=retrying")
 		}
 	case "marking":
-		l.logger("[%s] Marking: %s", taskID, p.Current)
+		l.logger("[task] Progress stage=marking current=%q", p.Current)
 	case "preparing":
-		l.logger("[%s] Preparing...", taskID)
+		l.logger("[task] Progress stage=preparing")
 	default:
-		l.logger("[%s] %s: %s", taskID, p.Stage, p.Current)
+		l.logger("[task] Progress stage=%s current=%q", p.Stage, p.Current)
 	}
 }
 
@@ -99,17 +101,21 @@ func (l *LogReporter) OnComplete(taskID string, r Result) {
 		parts = append(parts, formatProfileResult(*r.Profile))
 	}
 	if len(parts) > 0 {
-		l.logger("[%s] Completed (%s)", taskID, strings.Join(parts, ", "))
+		l.logger("[task] Result summary=%q", strings.Join(parts, ", "))
 		return
 	}
-	l.logger("[%s] Completed: %s", taskID, r.Message)
+	l.logger("[task] Result message=%q", r.Message)
 }
 
 func (l *LogReporter) OnError(taskID string, err error) {
 	if l.logger == nil {
 		return
 	}
-	l.logger("[%s] Error: %v", taskID, err)
+	message := "<nil>"
+	if err != nil {
+		message = logging.RedactSensitiveText(err.Error())
+	}
+	l.logger("[task] Failed task_id=%s error=%q", taskID, message)
 }
 
 func formatMainResult(r MainResult) string {

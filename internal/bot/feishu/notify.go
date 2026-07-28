@@ -7,6 +7,7 @@ import (
 
 	"github.com/unkmonster/tmd/internal/api"
 )
+
 func (b *Bot) notifyTaskChanges(data interface{}) {
 	tasks, ok := data.([]*api.Task)
 	if !ok {
@@ -55,7 +56,7 @@ func (b *Bot) sendLogAlert(line string) {
 		ctx := context.Background()
 		_, _, err := b.cli.Message.Send().ToChatID(chatID).SendText(ctx, "🔴 "+line)
 		if err != nil {
-			log.Warnf("[bot-feishu] Failed to send log notification: %v", err)
+			log.Warnf("[bot-feishu] Send log alert failed chat_id=%s error=%q", chatID, err.Error())
 		}
 	}
 }

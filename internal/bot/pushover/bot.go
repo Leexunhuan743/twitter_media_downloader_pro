@@ -42,7 +42,7 @@ func (b *Bot) Start() error {
 	if b.logHub != nil {
 		api.RunBotLogLoop(b.logHub, b.stopCh, &b.wg, b.sendLogAlert)
 	}
-	log.Infof("[bot-pushover] Started")
+	log.Infof("[bot-pushover] Started device=%q sound=%q", b.config.Device, b.config.Sound)
 	return nil
 }
 
@@ -92,11 +92,11 @@ func (b *Bot) sendNotification(title, message string) {
 
 	resp, err := b.client.PostForm("https://api.pushover.net/1/messages.json", vals)
 	if err != nil {
-		log.Warnf("[bot-pushover] Failed to send notification: %v", err)
+		log.Warnf("[bot-pushover] Send notification failed error=%q", err.Error())
 		return
 	}
 	resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		log.Warnf("[bot-pushover] Pushover returned %d", resp.StatusCode)
+		log.Warnf("[bot-pushover] Send notification failed status=%d", resp.StatusCode)
 	}
 }

@@ -15,7 +15,7 @@ main.go ─→ CLI → service → downloading → downloader ─→ fileWriter 
            Bot (6 platforms, goroutine-based)
 ```
 - **main.go** — entry point: config, login, DB init, mode dispatch
-- **CLI** (`internal/cli`) — synchronous, progress via LogReporter
+- **CLI** ([[cli-runtime|internal/cli]]) — synchronous, progress via LogReporter
 - **API Server** (`internal/api`) — async tasks, SSE push, Web UI
 - **Service** (`internal/service`) — [[service-layer|DownloadService]] interface, 11 operations
 - **Downloading** (`internal/downloading`) — batch orchestration, producer-consumer
@@ -38,6 +38,8 @@ The application runs in one of two modes, selected at startup. The table below h
 | Signal handling | context cancel | GracefulShutdown |
 | Resource cleanup | defer db.Close() | GracefulShutdown unified |
 | Client log | Rotated via lumberjack | Rotated via lumberjack |
+
+Startup flag handling, app root resolution, and CLI task priority are documented in [[cli-runtime]].
 
 ## Data Directory
 

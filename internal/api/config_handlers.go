@@ -11,6 +11,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/unkmonster/tmd/internal/config"
+	"github.com/unkmonster/tmd/internal/logging"
 )
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -36,7 +37,7 @@ func (s *Server) handleGetConfigRaw(w http.ResponseWriter, _ *http.Request) {
 			defaultConf := config.Config{}
 			yamlData, err := config.MarshalConf(&defaultConf)
 			if err != nil {
-				log.Errorf("[config] Failed to marshal default config: %v", err)
+				log.Errorf("[config] Default config marshal failed error=%q", err.Error())
 				s.writeErrorDetail(w, http.StatusInternalServerError, "Failed to marshal default config", err.Error())
 				return
 			}
@@ -47,7 +48,7 @@ func (s *Server) handleGetConfigRaw(w http.ResponseWriter, _ *http.Request) {
 			}))
 			return
 		}
-		log.Errorf("[config] Failed to read config: %v", err)
+		log.Errorf("[config] Config read failed path=%q error=%q", logging.Path(confPath), err.Error())
 		s.writeErrorDetail(w, http.StatusInternalServerError, "Failed to read config", err.Error())
 		return
 	}
@@ -62,7 +63,7 @@ func (s *Server) handleGetConfigRaw(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleUpdateConfigRaw(w http.ResponseWriter, r *http.Request) {
 	var req ConfigUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Errorf("[config] Invalid request body: %v", err)
+		log.Debugf("[config] Invalid request body operation=update_raw error=%q", err.Error())
 		s.writeErrorDetail(w, http.StatusBadRequest, "Invalid request body", err.Error())
 		return
 	}
@@ -74,7 +75,7 @@ func (s *Server) handleUpdateConfigRaw(w http.ResponseWriter, r *http.Request) {
 
 	testConf, err := config.ParseConfYAML([]byte(req.Content))
 	if err != nil {
-		log.Errorf("[config] Invalid config: %v", err)
+		log.Debugf("[config] Validation failed operation=update_raw error=%q", err.Error())
 		s.writeErrorDetail(w, http.StatusBadRequest, "Invalid config", err.Error())
 		return
 	}
@@ -86,16 +87,16 @@ func (s *Server) handleUpdateConfigRaw(w http.ResponseWriter, r *http.Request) {
 
 	backupName, err := config.CreateBackup(confPath)
 	if err != nil {
-		log.Warnf("[config] Failed to create config backup: %v", err)
+		log.Warnf("[config] Backup create failed path=%q error=%q", logging.Path(confPath), err.Error())
 	}
 
 	if err := config.WriteConf(confPath, testConf); err != nil {
-		log.Errorf("[config] Failed to write config: %v", err)
+		log.Errorf("[config] Config write failed path=%q error=%q", logging.Path(confPath), err.Error())
 		s.writeErrorDetail(w, http.StatusInternalServerError, "Failed to write config", err.Error())
 		return
 	}
 
-	log.Infoln("[WebUI] config saved via raw editor")
+	log.Infof("[config] Saved operation=update_raw path=%q backup=%q", logging.Path(confPath), logging.Path(backupName))
 
 	// 检测 api_key 是否被修改，以确定生效消息
 	oldAPIKey := s.config.APIKey
@@ -104,7 +105,7 @@ func (s *Server) handleUpdateConfigRaw(w http.ResponseWriter, r *http.Request) {
 
 	yamlPreview, err := config.MarshalConf(testConf)
 	if err != nil {
-		log.Warnf("[config] Failed to marshal yaml preview: %v", err)
+		log.Warnf("[config] YAML preview marshal failed operation=update_raw error=%q", err.Error())
 	}
 
 	message := "Configuration saved successfully. Please restart TMD manually for changes to take effect."
@@ -213,7 +214,7 @@ func (s *Server) handleGetConfigFields(w http.ResponseWriter, _ *http.Request) {
 			if os.IsNotExist(err) {
 				currentConf = &config.Config{}
 			} else {
-				log.Errorf("[config] Failed to read config: %v", err)
+				log.Errorf("[config] Config read failed path=%q error=%q", logging.Path(confPath), err.Error())
 				s.writeErrorDetail(w, http.StatusInternalServerError, "Failed to read config", err.Error())
 				return
 			}
@@ -229,7 +230,7 @@ func (s *Server) handleGetConfigFields(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleSaveConfigFields(w http.ResponseWriter, r *http.Request) {
 	var req ConfigFieldsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Errorf("[config] Invalid request body: %v", err)
+		log.Debugf("[config] Invalid request body operation=save_fields error=%q", err.Error())
 		s.writeErrorDetail(w, http.StatusBadRequest, "Invalid request body", err.Error())
 		return
 	}
@@ -265,8 +266,8 @@ func (s *Server) handleSaveConfigFields(w http.ResponseWriter, r *http.Request) 
 		}
 
 		if err := fd.Setter(newConf, userVal); err != nil {
-			log.Debugf("[config] Invalid field %s: %v", fd.Name, err)
-			s.writeErrorDetail(w, http.StatusBadRequest, "Invalid field " + fd.Name, err.Error())
+			log.Debugf("[config] Invalid field operation=save_fields field=%s error=%q", fd.Name, err.Error())
+			s.writeErrorDetail(w, http.StatusBadRequest, "Invalid field "+fd.Name, err.Error())
 			return
 		}
 	}
@@ -275,16 +276,16 @@ func (s *Server) handleSaveConfigFields(w http.ResponseWriter, r *http.Request) 
 
 	backupName, err := config.CreateBackup(confPath)
 	if err != nil {
-		log.Warnf("[config] Failed to create config backup: %v", err)
+		log.Warnf("[config] Backup create failed path=%q error=%q", logging.Path(confPath), err.Error())
 	}
 
 	if err := config.WriteConf(confPath, newConf); err != nil {
-		log.Errorf("[config] Failed to save config: %v", err)
+		log.Errorf("[config] Config write failed path=%q error=%q", logging.Path(confPath), err.Error())
 		s.writeErrorDetail(w, http.StatusInternalServerError, "Failed to save config", err.Error())
 		return
 	}
 
-	log.Infoln("[WebUI] config saved via structured form")
+	log.Infof("[config] Saved operation=save_fields path=%q backup=%q", logging.Path(confPath), logging.Path(backupName))
 
 	// 检测 api_key 是否被修改，以确定生效消息
 	// 使用生效值比较而非原始表单值，避免 web2 空字符串误判为变更
@@ -294,7 +295,7 @@ func (s *Server) handleSaveConfigFields(w http.ResponseWriter, r *http.Request) 
 
 	yamlPreview, err := config.MarshalConf(newConf)
 	if err != nil {
-		log.Warnf("[config] Failed to marshal yaml preview: %v", err)
+		log.Warnf("[config] YAML preview marshal failed operation=save_fields error=%q", err.Error())
 	}
 
 	message := "Configuration saved successfully. Please restart TMD manually for changes to take effect."
@@ -325,7 +326,7 @@ func maskSensitive(s string) string {
 const maskedValueMarker = "•••"
 
 // isMaskedValue 检查字符串是否为 maskSensitive 产生的掩码值
-//（如 "abc•••xyz" 或 "***"），用于阻止用户误将占位文本当作真实值提交。
+// （如 "abc•••xyz" 或 "***"），用于阻止用户误将占位文本当作真实值提交。
 func isMaskedValue(s string) bool {
 	return s == "***" || strings.Contains(s, maskedValueMarker)
 }

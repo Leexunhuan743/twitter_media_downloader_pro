@@ -8,17 +8,18 @@ import (
 
 	log "github.com/sirupsen/logrus"
 )
+
 func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
 	flusher, err := setupSSE(w)
 	if err != nil {
-		log.Errorf("[SSE] Log stream setup failed: %v", err)
+		log.Errorf("[sse] Log stream setup failed error=%q", err.Error())
 		s.writeError(w, http.StatusInternalServerError, "Streaming not supported")
 		return
 	}
 
 	levelStr := r.URL.Query().Get("level")
 	if levelStr != "" && !isValidLogLevel(levelStr) {
-		log.Debugf("[SSE] Invalid log level requested: %q", levelStr)
+		log.Debugf("[sse] Invalid log level requested level=%q", levelStr)
 		s.writeError(w, http.StatusBadRequest, "Invalid log level: "+levelStr)
 		return
 	}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	log "github.com/sirupsen/logrus"
+	"github.com/unkmonster/tmd/internal/logging"
 )
 
 // JWT constants
@@ -104,7 +105,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	s.configMu.RUnlock()
 
 	if apiKey == "" {
-		log.Warnf("[auth] API key is not configured")
+		log.Warn("[auth] API key missing")
 		s.writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -112,7 +113,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	// Rate limit check (基于纯 IP，排除端口)
 	clientAddr := clientIP(r.RemoteAddr)
 	if !s.authRateLimit.Allow(clientAddr) {
-		log.Warnf("[auth] Rate limit exceeded for %s", clientAddr)
+		log.Warnf("[auth] Rate limit exceeded ip=%s operation=login", clientAddr)
 		s.writeError(w, http.StatusTooManyRequests, "too many requests")
 		return
 	}
@@ -120,16 +121,16 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	// Validate
 	if token != apiKey {
 		s.authRateLimit.Fail(clientAddr)
-		log.Warnf("[auth] Failed login attempt from %s", clientAddr)
-		if len(token) >= 4 {
-			log.Debugf("[auth] Failed login token prefix: %q", token[:4])
+		log.Warnf("[auth] Login rejected ip=%s reason=api_key_mismatch", clientAddr)
+		if token != "" {
+			log.Debugf("[auth] Rejected token fingerprint=%s", logging.MaskSecret(token))
 		}
 		s.writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	jwtToken, err := generateSessionToken(apiKey)
 	if err != nil {
-		log.Errorf("[auth] Failed to generate token: %v", err)
+		log.Errorf("[auth] Token generate failed operation=login error=%q", err.Error())
 		s.writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
@@ -163,7 +164,7 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 	s.configMu.RUnlock()
 
 	if apiKey == "" {
-		log.Warnf("[auth] API key is not configured")
+		log.Warn("[auth] API key missing")
 		s.writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -171,7 +172,7 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 	// Rate limit check
 	clientAddr := clientIP(r.RemoteAddr)
 	if !s.authRateLimit.Allow(clientAddr) {
-		log.Warnf("[auth] Refresh rate limit exceeded for %s", clientAddr)
+		log.Warnf("[auth] Rate limit exceeded ip=%s operation=refresh", clientAddr)
 		s.writeError(w, http.StatusTooManyRequests, "too many requests")
 		return
 	}
@@ -181,7 +182,7 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 	if err != nil && !isJWTExpiredError(err) {
 		// Token is invalid (bad signature, wrong format, etc.)
 		w.Header().Set("X-Token-Type", "invalid")
-		log.Warnf("[auth] Refresh rejected from %s: %v", clientIP(r.RemoteAddr), err)
+		log.Warnf("[auth] Refresh rejected ip=%s error=%q", clientAddr, err.Error())
 		s.writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -190,7 +191,7 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 	// Generate new JWT
 	jwtToken, err := generateSessionToken(apiKey)
 	if err != nil {
-		log.Errorf("[auth] Failed to generate refresh token: %v", err)
+		log.Errorf("[auth] Token generate failed operation=refresh error=%q", err.Error())
 		s.writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
@@ -234,7 +235,7 @@ func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
 	// Rate limit check
 	clientAddr := clientIP(r.RemoteAddr)
 	if !s.authRateLimit.Allow(clientAddr) {
-		log.Warnf("[auth] Check rate limit exceeded for %s", clientAddr)
+		log.Warnf("[auth] Rate limit exceeded ip=%s operation=check", clientAddr)
 		s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]interface{}{
 			"authenticated": false,
 			"auth_enabled":  authEnabled,
@@ -259,7 +260,7 @@ func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
 		if isExpired {
 			errMsg = "token expired"
 		}
-		log.Debugf("[auth] Check: %v", err)
+		log.Debugf("[auth] Check rejected ip=%s expired=%t error=%q", clientAddr, isExpired, err.Error())
 		s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]interface{}{
 			"authenticated": false,
 			"auth_enabled":  true,
@@ -272,7 +273,7 @@ func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
 
 	claims, ok := token.Claims.(*jwtClaims)
 	if !ok {
-		log.Errorf("[auth] Check: unexpected claims type %T", token.Claims)
+		log.Errorf("[auth] Check failed reason=unexpected_claims_type type=%T", token.Claims)
 		s.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -322,9 +323,8 @@ type rateLimitEntry struct {
 
 const (
 	maxLoginAttempts = 5
-	loginWindow     = 1 * time.Minute
+	loginWindow      = 1 * time.Minute
 )
-
 
 func (rl *authRateLimiter) Allow(addr string) bool {
 	rl.mu.Lock()

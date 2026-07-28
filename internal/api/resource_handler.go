@@ -18,7 +18,7 @@ import (
 func (s *Server) resolvePathID(w http.ResponseWriter, r *http.Request, paramName, resourceName string) (uint64, bool) {
 	id, err := strconv.ParseUint(r.PathValue(paramName), 10, 64)
 	if err != nil {
-		log.Debugf("[db] Invalid %s ID: %v", resourceName, err)
+		log.Debugf("[db] Invalid path id resource=%s param=%s value=%q error=%q", resourceName, paramName, r.PathValue(paramName), err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid "+resourceName+" ID")
 		return 0, false
 	}
@@ -30,7 +30,7 @@ func (s *Server) resolvePathID(w http.ResponseWriter, r *http.Request, paramName
 // decodeBody 解析 JSON 请求体，解析失败时自动写入 400 响应。
 func (s *Server) decodeBody(w http.ResponseWriter, r *http.Request, dest interface{}) bool {
 	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		log.Debugf("[db] Invalid request body: %v", err)
+		log.Debugf("[api] Invalid request body path=%q error=%q", r.URL.Path, err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return false
 	}
@@ -49,7 +49,7 @@ func (s *Server) decodeBody(w http.ResponseWriter, r *http.Request, dest interfa
 //	}
 func requireResource[T any](resource *T, err error, resourceName string, writeError func(int, string)) bool {
 	if err != nil {
-		log.Errorf("[db] Failed to get %s: %v", resourceName, err)
+		log.Errorf("[db] Resource load failed resource=%s error=%q", resourceName, err.Error())
 		writeError(http.StatusInternalServerError, "Failed to get "+resourceName)
 		return false
 	}
@@ -78,7 +78,7 @@ func (s *Server) writeResourceDeleted(w http.ResponseWriter, resourceName string
 func (s *Server) countWithError(w http.ResponseWriter, table string, where string, args []interface{}) (int, bool) {
 	total, err := database.Count(s.db, table, &database.QueryOptions{Where: where, Args: args})
 	if err != nil {
-		log.Errorf("[db] Failed to count %s: %v", table, err)
+		log.Errorf("[db] Count failed table=%s error=%q", table, err.Error())
 		s.writeError(w, http.StatusInternalServerError, "Failed to query database")
 		return 0, false
 	}
@@ -91,7 +91,7 @@ func (s *Server) countWithError(w http.ResponseWriter, table string, where strin
 // op 用于日志标识具体操作（如 "UpdateUser"、"DelUser"），便于排查；
 // 响应消息使用 "Database operation failed"（涵盖 Query/Update/Delete 等所有操作，语义一致）。
 func (s *Server) dbWriteError(w http.ResponseWriter, err error, op string) {
-	log.Errorf("[db] %s failed: %v", op, err)
+	log.Errorf("[db] Operation failed op=%s error=%q", op, err.Error())
 	s.writeError(w, http.StatusInternalServerError, "Database operation failed")
 }
 
@@ -103,7 +103,7 @@ func (s *Server) dbWriteError(w http.ResponseWriter, err error, op string) {
 func (s *Server) getListName(lstID uint64) string {
 	lst, err := database.GetLst(s.db, lstID)
 	if err != nil {
-		log.Warnf("[db] Failed to get list %d for name lookup: %v", lstID, err)
+		log.Warnf("[db] Related name lookup failed resource=list id=%d error=%q", lstID, err.Error())
 		return ""
 	}
 	if lst == nil {
@@ -118,7 +118,7 @@ func (s *Server) getListName(lstID uint64) string {
 func (s *Server) getListEntityName(entityID int) string {
 	entity, err := database.GetLstEntity(s.db, entityID)
 	if err != nil {
-		log.Warnf("[db] Failed to get list entity %d for name lookup: %v", entityID, err)
+		log.Warnf("[db] Related name lookup failed resource=list_entity id=%d error=%q", entityID, err.Error())
 		return ""
 	}
 	if entity == nil {
@@ -205,15 +205,13 @@ type userCascadeCount struct {
 func (s *Server) countUserCascade(id uint64) userCascadeCount {
 	var c userCascadeCount
 	if err := s.db.Get(&c.linkCount, "SELECT COUNT(*) FROM user_links WHERE user_id = ?", id); err != nil {
-		log.Warnf("[db] Failed to count user_links for user %d: %v", id, err)
+		log.Warnf("[db] Cascade count failed table=user_links user_id=%d error=%q", id, err.Error())
 	}
 	if err := s.db.Get(&c.entityCount, "SELECT COUNT(*) FROM user_entities WHERE user_id = ?", id); err != nil {
-		log.Warnf("[db] Failed to count user_entities for user %d: %v", id, err)
+		log.Warnf("[db] Cascade count failed table=user_entities user_id=%d error=%q", id, err.Error())
 	}
 	if err := s.db.Get(&c.nameCount, "SELECT COUNT(*) FROM user_previous_names WHERE user_id = ?", id); err != nil {
-		log.Warnf("[db] Failed to count user_previous_names for user %d: %v", id, err)
+		log.Warnf("[db] Cascade count failed table=user_previous_names user_id=%d error=%q", id, err.Error())
 	}
 	return c
 }
-
-

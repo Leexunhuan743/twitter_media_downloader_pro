@@ -11,7 +11,7 @@ import (
 
 func syncUserAndEntity(db *sqlx.DB, user *twitter.User, dir string, maxLen int) (*entity.UserEntity, error) {
 	if err := database.SyncUser(db, user.Id, user.Name, user.ScreenName, user.IsProtected, user.FriendsCount, true); err != nil {
-		log.Errorf("[download] Failed to sync user %s: %v", user.Title(), err)
+		log.Errorf("[download] User sync failed user=%q uid=%d error=%q", user.Title(), user.Id, err.Error())
 		return nil, err
 	}
 	userNaming := naming.NewUserNaming(user.Name, user.ScreenName, maxLen)
@@ -19,11 +19,11 @@ func syncUserAndEntity(db *sqlx.DB, user *twitter.User, dir string, maxLen int) 
 
 	ent, err := entity.NewUserEntity(db, user.Id, dir)
 	if err != nil {
-		log.Errorf("[download] Failed to create user entity for %s: %v", user.Title(), err)
+		log.Errorf("[download] User entity create failed user=%q uid=%d dir=%q error=%q", user.Title(), user.Id, dir, err.Error())
 		return nil, err
 	}
 	if err = entity.Sync(ent, expectedTitle); err != nil {
-		log.Errorf("[download] Failed to sync entity for %s: %v", user.Title(), err)
+		log.Errorf("[download] User entity sync failed user=%q uid=%d expected_title=%q error=%q", user.Title(), user.Id, expectedTitle, err.Error())
 		return nil, err
 	}
 	return ent, nil

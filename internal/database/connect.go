@@ -5,6 +5,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	log "github.com/sirupsen/logrus"
+	"github.com/unkmonster/tmd/internal/logging"
 	"github.com/unkmonster/tmd/internal/utils"
 )
 
@@ -39,7 +40,7 @@ func Connect(path string) (*sqlx.DB, error) {
 	}
 
 	if !exists {
-		log.Debugln("[db] Created new db file", path)
+		log.Debugf("[db] Created database file path=%q", logging.Path(path))
 	}
 	return db, nil
 }

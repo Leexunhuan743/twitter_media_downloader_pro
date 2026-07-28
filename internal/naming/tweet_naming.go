@@ -24,7 +24,7 @@ func NewTweetNaming(text string, tweetID uint64, creator string, maxLen int) *Tw
 	}
 }
 
-func (tn *TweetNaming) baseName() string {
+func (tn *TweetNaming) textPart() string {
 	idPart := fmt.Sprintf("_%d", tn.tweetID)
 	maxTextLen := tn.maxLen - len(idPart) - ExtReserveLen
 	if maxTextLen < 0 {
@@ -43,7 +43,11 @@ func (tn *TweetNaming) baseName() string {
 		text = "tweet"
 	}
 
-	return text + idPart
+	return text
+}
+
+func (tn *TweetNaming) baseName() string {
+	return tn.textPart() + fmt.Sprintf("_%d", tn.tweetID)
 }
 
 func (tn *TweetNaming) LogFormat() string {

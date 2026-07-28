@@ -20,6 +20,7 @@ import (
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/consolelog"
 	"github.com/unkmonster/tmd/internal/downloading"
+	"github.com/unkmonster/tmd/internal/logging"
 	"github.com/unkmonster/tmd/internal/scheduler"
 	"github.com/unkmonster/tmd/internal/service"
 )
@@ -69,7 +70,7 @@ func NewServerWithConsoleLogHub(client *resty.Client, additionalClients []*resty
 		logHub:            logHub,
 		taskManager:       NewTaskManager(eventBus),
 		shutdownDone:      make(chan struct{}),
-		botCallbacks:     make(map[string]http.HandlerFunc),
+		botCallbacks:      make(map[string]http.HandlerFunc),
 		eventBus:          eventBus,
 		authRateLimit: &authRateLimiter{
 			attempts: make(map[string]*rateLimitEntry),
@@ -89,20 +90,19 @@ func NewServerWithConsoleLogHub(client *resty.Client, additionalClients []*resty
 		AdditionalClients: additionalClients,
 		DB:                db,
 		Config:            &configCopy,
-		AppRootPath:      appRootPath,
+		AppRootPath:       appRootPath,
 		ListSyncManager:   downloading.NewListSyncManager(db),
 	})
 	if err != nil {
-		log.Fatalf("[server] Failed to create download service: %v", err)
+		log.Fatalf("[server] Download service create failed error=%q", err.Error())
 	}
 	s.downloadService = downloadService
 	s.downloadQueue = NewDownloadQueue(s)
 
-
 	schedulesPath := filepath.Join(appRootPath, "schedules.yaml")
 	sched, err := scheduler.New(schedulesPath, s.scheduledDownload)
 	if err != nil {
-		log.Warnf("[scheduler] Failed to initialize scheduler: %v", err)
+		log.Warnf("[scheduler] Initialize failed path=%q error=%q", logging.Path(schedulesPath), err.Error())
 	} else {
 		sched.OnStatusChange = s.handleScheduleStatusChange
 		s.scheduler = sched
@@ -249,7 +249,6 @@ func (s *Server) buildHandler() http.Handler {
 		mux.HandleFunc(pattern, cb)
 	}
 
-
 	var handler http.Handler = mux
 
 	// authMiddleware 在 CORS 内层：OPTIONS 预检请求由 CORS 直接处理，不经过 auth。
@@ -276,7 +275,6 @@ func (s *Server) buildHandler() http.Handler {
 	return handler
 }
 
-
 // getPrimaryIP 通过 UDP 连接获取主网卡 IP（不发送数据包、无网络开销）
 // OS 路由表自动选择默认网关路由的网卡，过滤掉所有虚拟网卡
 func getPrimaryIP() string {
@@ -291,11 +289,11 @@ func (s *Server) Start(port int) error {
 	handler := s.buildHandler()
 
 	addr := fmt.Sprintf(":%d", port)
-	log.Infof("[server] API server starting on %s", addr)
+	log.Infof("[server] API server starting addr=%s", addr)
 	blue := color.FgLightBlue.Render
-	log.Infof("[server] Visit %s to get started", blue("http://localhost"+addr+"/"))
+	log.Infof("[server] Visit url=%s", blue("http://localhost"+addr+"/"))
 	if lanIP := getPrimaryIP(); lanIP != "" {
-		log.Infof("[server] Visit %s to get started", blue("http://"+lanIP+addr+"/"))
+		log.Infof("[server] Visit url=%s", blue("http://"+lanIP+addr+"/"))
 	}
 
 	s.httpServer = &http.Server{
@@ -311,10 +309,10 @@ func (s *Server) Start(port int) error {
 
 	for _, b := range s.bots {
 		if err := b.Start(); err != nil {
-			log.Errorf("[bot] Failed to start %s: %v", b.Name(), err)
+			log.Errorf("[bot] Start failed provider=%s error=%q", b.Name(), err.Error())
 			continue
 		}
-		log.Infof("[bot] %s started", b.Name())
+		log.Infof("[bot] Started provider=%s", b.Name())
 	}
 
 	return s.httpServer.ListenAndServe()
@@ -331,18 +329,18 @@ func (s *Server) handleSetTheme(w http.ResponseWriter, r *http.Request) {
 		Theme string `json:"theme"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Debugf("[theme] Invalid request body: %v", err)
+		log.Debugf("[theme] Invalid request body error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid JSON body")
 		return
 	}
 
 	if !setFrontendTheme(req.Theme) {
-		log.Warnf("[theme] Invalid theme directory: %q", req.Theme)
+		log.Warnf("[theme] Invalid theme directory theme=%q", req.Theme)
 		s.writeError(w, http.StatusBadRequest, "Invalid theme: directory not found or missing index.html")
 		return
 	}
 
-	log.Infof("[theme] Switched to %s", req.Theme)
+	log.Infof("[theme] Switched theme=%s", req.Theme)
 	s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]string{
 		"theme": getFrontendTheme(),
 	}))
@@ -351,7 +349,7 @@ func (s *Server) handleSetTheme(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetThemes(w http.ResponseWriter, r *http.Request) {
 	themes := listThemes()
 	if themes == nil {
-		log.Errorf("[theme] Failed to list themes")
+		log.Error("[theme] List failed")
 		s.writeError(w, http.StatusInternalServerError, "Failed to list themes")
 		return
 	}
@@ -384,7 +382,7 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, data interface{}) 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		log.Warnf("[api] Failed to write response: %v", err)
+		log.Warnf("[api] Response write failed error=%q", err.Error())
 	}
 }
 
@@ -401,7 +399,7 @@ func (s *Server) handleServerShutdown(w http.ResponseWriter, _ *http.Request) {
 		"action":  "shutdown",
 	}))
 
-	log.Infoln("[server] Received shutdown request, performing graceful shutdown...")
+	log.Info("[server] Shutdown requested source=api")
 
 	go func() {
 		time.Sleep(500 * time.Millisecond)
@@ -420,12 +418,12 @@ func (s *Server) GracefulShutdown(reason string) {
 			time.Sleep(100 * time.Millisecond)
 		}
 
-		log.Infof("[server] Graceful shutdown started (reason: %s)", reason)
+		log.Infof("[server] Graceful shutdown started reason=%q", reason)
 
 		if s.taskManager != nil {
 			s.taskManager.CancelAllTasks()
 			s.taskManager.Close()
-			log.Infoln("[server] All running tasks cancelled")
+			log.Info("[server] Running tasks cancelled")
 			time.Sleep(1 * time.Second)
 		}
 		if s.downloadQueue != nil {
@@ -438,7 +436,7 @@ func (s *Server) GracefulShutdown(reason string) {
 
 		for _, b := range s.bots {
 			b.Stop()
-			log.Infof("[bot] %s stopped", b.Name())
+			log.Infof("[bot] Stopped provider=%s", b.Name())
 		}
 
 		// Close SSE connections so httpServer.Shutdown() doesn't wait 30s for them.
@@ -458,30 +456,30 @@ func (s *Server) GracefulShutdown(reason string) {
 			defer shutdownCancel()
 
 			if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
-				log.Warnf("[server] HTTP server shutdown error: %v", err)
+				log.Warnf("[server] HTTP shutdown failed error=%q", err.Error())
 			} else {
-				log.Infoln("[server] HTTP server stopped gracefully")
+				log.Info("[server] HTTP server stopped")
 			}
 		}
 
 		if s.logWriter != nil {
 			if err := s.logWriter.Close(); err != nil {
-				log.Warnf("[server] Failed to close log writer: %v", err)
+				log.Warnf("[server] Log writer close failed error=%q", err.Error())
 			} else {
-				log.Infoln("[server] Log writer closed")
+				log.Info("[server] Log writer closed")
 			}
 		}
 
 		if s.db != nil {
 			if err := s.db.Close(); err != nil {
-				log.Warnf("[server] Failed to close database: %v", err)
+				log.Warnf("[server] Database close failed error=%q", err.Error())
 			} else {
-				log.Infoln("[server] Database connection closed")
+				log.Info("[server] Database connection closed")
 			}
 		}
 
 		time.Sleep(100 * time.Millisecond)
-		log.Infoln("[server] Shutdown complete")
+		log.Info("[server] Shutdown complete")
 		close(s.shutdownDone)
 	})
 }

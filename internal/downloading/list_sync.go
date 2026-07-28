@@ -10,6 +10,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/database"
 	"github.com/unkmonster/tmd/internal/database/tx"
+	"github.com/unkmonster/tmd/internal/logging"
 )
 
 type ListSyncManager struct {
@@ -47,7 +48,7 @@ func (lsm *ListSyncManager) SyncListMembers(ctx context.Context, lstEntityId int
 
 	for _, p := range pathsToRemove {
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-			log.Warnf("[download] Failed to remove symlink: %s - %v", p, err)
+			log.Warnf("[download] Symlink remove failed path=%q error=%q", logging.Path(p), err.Error())
 		}
 	}
 
@@ -72,7 +73,7 @@ func (lsm *ListSyncManager) syncListMembersInTx(_ context.Context, tx *sqlx.Tx, 
 		if !memberSet[link.UserId] {
 			linkPaths, linkErr := lsm.removeUserLinkInTx(tx, link, lstEntityId)
 			if linkErr != nil {
-				log.Warnf("[download] Failed to remove user link: %d - %v", link.UserId, linkErr)
+				log.Warnf("[download] User link remove failed user_id=%d list_entity_id=%d error=%q", link.UserId, lstEntityId, linkErr.Error())
 				return nil, linkErr
 			}
 			pathsToRemove = append(pathsToRemove, linkPaths...)
@@ -81,7 +82,7 @@ func (lsm *ListSyncManager) syncListMembersInTx(_ context.Context, tx *sqlx.Tx, 
 	}
 
 	if removedCount > 0 {
-		log.Infoln("[download] Removed", removedCount, "users from list", lstName, "(no longer members)")
+		log.Infof("[download] List members removed list=%q removed=%d reason=no_longer_members", lstName, removedCount)
 	}
 
 	return pathsToRemove, nil

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/unkmonster/tmd/internal/logging"
 )
 
 var tweetIDRe = regexp.MustCompile(`_(\d+(?:\(\d+\))?)\.\w+$`)
@@ -61,7 +62,7 @@ func (fw *DefaultFileWriter) Write(req WriteRequest) (WriteResult, error) {
 			if fileInfo.Size() == result.NewSize {
 				oldHash, hashErr := fw.computeFileHash(req.Path)
 				if hashErr != nil {
-				log.Warnf("[downloader] Failed to compute file hash for SkipUnchanged check: %v, path: %s", hashErr, req.Path)
+					log.Warnf("[downloader] Hash check failed path=%q error=%q", logging.Path(req.Path), hashErr.Error())
 					return result, hashErr
 				}
 				newHash := fw.computeDataHash(req.Data)
@@ -75,15 +76,15 @@ func (fw *DefaultFileWriter) Write(req WriteRequest) (WriteResult, error) {
 	}
 
 	// 2. 创建版本备份（如果需要）
-		if req.Options.CreateVersion && fw.versionManager != nil {
-			if _, err := os.Stat(req.Path); err == nil {
-				_, err = fw.versionManager.CreateVersion(req.Path)
-				if err != nil {
-					return result, err
-				}
-				result.Versioned = true
+	if req.Options.CreateVersion && fw.versionManager != nil {
+		if _, err := os.Stat(req.Path); err == nil {
+			_, err = fw.versionManager.CreateVersion(req.Path)
+			if err != nil {
+				return result, err
 			}
+			result.Versioned = true
 		}
+	}
 
 	// 3. 原子写入
 	written, err := fw.atomicWriteFromReader(req.Path, bytes.NewReader(req.Data))
@@ -95,7 +96,7 @@ func (fw *DefaultFileWriter) Write(req WriteRequest) (WriteResult, error) {
 	// 4. 设置修改时间
 	if req.Options.ModTime != nil {
 		if err := os.Chtimes(req.Path, time.Time{}, *req.Options.ModTime); err != nil {
-			log.Warnf("[downloader] Failed to set modification time for %s: %v", req.Path, err)
+			log.Warnf("[downloader] Mod time set failed path=%q error=%q", logging.Path(req.Path), err.Error())
 		}
 	}
 
@@ -127,15 +128,15 @@ func (fw *DefaultFileWriter) writeStream(path string, reader io.Reader, size int
 	}
 
 	// 创建版本备份（如果需要）
-		if options.CreateVersion && fw.versionManager != nil {
-			if _, err := os.Stat(path); err == nil {
-				_, err = fw.versionManager.CreateVersion(path)
-				if err != nil {
-					return result, err
-				}
-				result.Versioned = true
+	if options.CreateVersion && fw.versionManager != nil {
+		if _, err := os.Stat(path); err == nil {
+			_, err = fw.versionManager.CreateVersion(path)
+			if err != nil {
+				return result, err
 			}
+			result.Versioned = true
 		}
+	}
 
 	// 原子流式写入
 	written, err := fw.atomicWriteFromReader(path, reader)
@@ -149,7 +150,7 @@ func (fw *DefaultFileWriter) writeStream(path string, reader io.Reader, size int
 	// 设置修改时间
 	if options.ModTime != nil {
 		if err := os.Chtimes(path, time.Time{}, *options.ModTime); err != nil {
-			log.Warnf("[downloader] Failed to set modification time for %s: %v", path, err)
+			log.Warnf("[downloader] Mod time set failed path=%q error=%q", logging.Path(path), err.Error())
 		}
 	}
 
@@ -186,7 +187,7 @@ func (fw *DefaultFileWriter) atomicWriteFromReader(path string, reader io.Reader
 		return 0, fmt.Errorf("failed to close temp file: %w", err)
 	}
 
-	log.Debugf("[downloader] Atomic write: written %d bytes to %s", written, path)
+	log.Debugf("[downloader] Atomic write complete path=%q bytes=%d", logging.Path(path), written)
 
 	if err := os.Rename(tempPath, path); err != nil {
 		return 0, fmt.Errorf("failed to rename temp file: %w", err)

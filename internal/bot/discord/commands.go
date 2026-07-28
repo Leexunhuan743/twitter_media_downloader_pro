@@ -155,6 +155,6 @@ func (b *Bot) respond(s *discordgo.Session, i *discordgo.InteractionCreate, cont
 			Content: content,
 		},
 	}); err != nil {
-		log.Warnf("[bot-discord] Failed to respond: %v", err)
+		log.Warnf("[bot-discord] Respond failed error=%q", err.Error())
 	}
 }

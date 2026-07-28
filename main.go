@@ -13,11 +13,10 @@ import (
 	"strings"
 
 	"github.com/go-resty/resty/v2"
-	"github.com/gookit/color"
 	"github.com/jmoiron/sqlx"
 	"github.com/natefinch/lumberjack"
-	"github.com/unkmonster/tmd/internal/logging"
 	log "github.com/sirupsen/logrus"
+	"github.com/unkmonster/tmd/internal/logging"
 
 	"github.com/unkmonster/tmd/internal/api"
 	"github.com/unkmonster/tmd/internal/bot"
@@ -53,7 +52,7 @@ func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
 	}
 
 	if err := consolelog.StartCapture(logHub); err != nil {
-		log.Warnf("[startup] Failed to start console log capture: %v", err)
+		log.Warnf("[startup] Console log capture failed error=%q", err.Error())
 	} else {
 		log.SetOutput(os.Stderr)
 	}
@@ -94,7 +93,7 @@ func main() {
 	cliLogPath := filepath.Join(appRootPath, "client.log")
 	logPath := filepath.Join(appRootPath, "tmd2.log")
 	if err = os.MkdirAll(appRootPath, 0755); err != nil {
-		log.Fatalln("[startup] Failed to make app dir", err)
+		log.Fatalf("[startup] App directory create failed path=%q error=%q", logging.Path(appRootPath), err.Error())
 	}
 
 	logWriter := &lumberjack.Logger{
@@ -124,34 +123,31 @@ func main() {
 
 	loadResult, err := config.LoadStartupConfig(confPath, bootstrap.confArg, os.Stderr)
 	if err != nil {
-		log.Fatalln("[startup] Config failure with", err)
+		log.Fatalf("[startup] Config load failed path=%q error=%q", logging.Path(confPath), err.Error())
 	}
 	conf := loadResult.Config
 	if loadResult.UsedEnvFallback {
-		log.Infoln("Config file not found, using TMD_* environment configuration")
+		log.Infof("[config] Env fallback used path=%q", logging.Path(confPath))
 	}
 	if loadResult.EnvApplied {
-		log.Infoln("TMD_* environment configuration applied")
+		log.Info("[config] Env configuration applied prefix=TMD_")
 	}
 	if bootstrap.confArg {
-		log.Infoln("[config] Config done")
+		log.Info("[config] Config template written")
 		return
 	}
 	if err := config.Validate(conf); err != nil {
-		log.Fatalln("[startup] Invalid config:", err)
+		log.Fatalf("[startup] Config validation failed path=%q error=%q", logging.Path(confPath), err.Error())
 	}
-	log.Infoln("[startup] Config is loaded")
-	log.Infoln("[startup] Download path:", conf.RootPath)
 	maxDownloadRoutine := conf.MaxDownloadRoutine
 	if maxDownloadRoutine <= 0 {
 		maxDownloadRoutine = config.DefaultMaxDownloadRoutine()
 	}
-	log.Infoln("[startup] Max download routine set to:", maxDownloadRoutine)
 	maxFileNameLen := conf.MaxFileNameLen
 	if maxFileNameLen <= 0 {
 		maxFileNameLen = utils.DefaultMaxFileNameLen
 	}
-	log.Infoln("[startup] Max file name length set to:", maxFileNameLen)
+	log.Infof("[startup] Config loaded root=%q max_download_routine=%d max_file_name_len=%d", logging.Path(conf.RootPath), maxDownloadRoutine, maxFileNameLen)
 
 	if conf.ProxyURL != "" {
 		os.Setenv("HTTP_PROXY", conf.ProxyURL)
@@ -187,7 +183,7 @@ func main() {
 	// CLI 模式
 	client, additional, _, db := initializeClients(ctx, conf, appRootPath, loginOpts, bootstrap.dbg)
 	if client == nil || db == nil {
-		log.Fatalln("[startup] Failed to initialize clients or database")
+		log.Fatal("[startup] Dependency initialization failed client_ready=false_or_db_ready=false")
 	}
 	defer db.Close()
 
@@ -205,7 +201,7 @@ func main() {
 	go func() {
 		sig, ok := <-sigChan
 		if ok {
-			log.Warnln("[listener] Caught signal:", sig)
+			log.Warnf("[listener] Signal caught signal=%s", sig)
 			cancel()
 		}
 	}()
@@ -223,7 +219,7 @@ func main() {
 
 	// 将 cli 参数传递给 Execute
 	if err := cli.Execute(ctx, bootstrap.cliArgs, deps); err != nil {
-		log.Fatalln("[startup] Execute failed:", err)
+		log.Fatalf("[startup] CLI execute failed error=%q", err.Error())
 	}
 }
 
@@ -310,21 +306,21 @@ func initializeClients(
 	// 登录主账户
 	client, screenName, err := twitter.LoginWithOptions(ctx, conf.Cookie.AuthToken, conf.Cookie.Ct0, loginOpts)
 	if err != nil {
-		log.Fatalln("[startup] Failed to login:", err)
+		log.Fatalf("[startup] Login failed error=%q", err.Error())
 	}
 	twitter.EnableRateLimit(client)
 	if enableRequestCounting {
 		twitter.EnableRequestCounting(client)
 	}
-	log.Infoln("[startup] Signed in as:", color.FgLightBlue.Render(screenName))
+	log.Infof("[startup] Signed in account=%s", screenName)
 
 	// 加载额外 cookies
 	additionalCookiesPath := filepath.Join(appRootPath, "additional_cookies.yaml")
 	cookies, err := config.ReadAdditionalCookies(additionalCookiesPath)
 	if err != nil {
-		log.Warnln("[startup] Failed to load additional cookies:", err)
+		log.Warnf("[startup] Additional cookies load failed path=%q error=%q", logging.Path(additionalCookiesPath), err.Error())
 	}
-	log.Debugln("[startup] Loaded additional cookies:", len(cookies))
+	log.Debugf("[startup] Additional cookies loaded count=%d", len(cookies))
 
 	twitterCookies := make([]twitter.AccountCookie, len(cookies))
 	for i, c := range cookies {
@@ -337,15 +333,15 @@ func initializeClients(
 	// 初始化路径和数据库
 	pathHelper, err := path.NewStorePath(conf.RootPath)
 	if err != nil {
-		log.Warnln("[startup] Failed to make store dir:", err)
+		log.Warnf("[startup] Store directory create failed root=%q error=%q", logging.Path(conf.RootPath), err.Error())
 		return nil, nil, nil, nil
 	}
 
 	db, err := database.Connect(pathHelper.DB)
 	if err != nil {
-		log.Fatalln("[startup] Failed to connect to database:", err)
+		log.Fatalf("[db] Connect failed path=%q error=%q", logging.Path(pathHelper.DB), err.Error())
 	}
-	log.Infoln("[startup] Database is connected")
+	log.Infof("[db] Connected path=%q", logging.Path(pathHelper.DB))
 
 	return client, additional, pathHelper, db
 }
@@ -355,7 +351,7 @@ func runServer(conf *config.Config, appRootPath string, port int, loginOpts twit
 
 	client, additional, _, db := initializeClients(ctx, conf, appRootPath, loginOpts, false)
 	if client == nil {
-		_, _ = fmt.Fprintln(os.Stderr, "Failed to initialize: unable to create store directory.")
+		log.Error("[startup] Dependency initialization failed reason=store_directory")
 		return
 	}
 
@@ -381,17 +377,17 @@ func runServer(conf *config.Config, appRootPath string, port int, loginOpts twit
 	if err != nil {
 		if os.IsNotExist(err) {
 			if writeErr := writeDefaultBotConfig(botConfPath); writeErr != nil {
-				log.Warnf("[startup] Failed to create default bot config: %v", writeErr)
+				log.Warnf("[startup] Default bot config create failed path=%q error=%q", logging.Path(botConfPath), writeErr.Error())
 			}
 		} else {
-			log.Warnf("[startup] Failed to load bot config: %v", err)
+			log.Warnf("[startup] Bot config load failed path=%q error=%q", logging.Path(botConfPath), err.Error())
 		}
 	}
 	server.InitBot(initBot(botConf, server))
 
 	err = server.Start(port)
 	if err != nil && err != http.ErrServerClosed {
-		log.Fatalln("[startup] Failed to start server:", err)
+		log.Fatalf("[server] Start failed port=%d error=%q", port, err.Error())
 	}
 	if err == http.ErrServerClosed {
 		server.WaitForShutdown()
@@ -401,7 +397,7 @@ func runServer(conf *config.Config, appRootPath string, port int, loginOpts twit
 func startServerSignalHandler(sigChan <-chan os.Signal, shutdown func(string)) {
 	go func() {
 		sig := <-sigChan
-		log.Warnln("[server] Caught signal:", sig)
+		log.Warnf("[server] Signal caught signal=%s", sig)
 		// SIGKILL 无法捕获；这里只处理可拦截的退出信号，确保数据库等资源优雅关闭。
 		shutdown("signal:" + sig.String())
 	}()

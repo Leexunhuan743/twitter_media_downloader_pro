@@ -44,7 +44,7 @@ func (b *Bot) Start() error {
 	if b.logHub != nil {
 		api.RunBotLogLoop(b.logHub, b.stopCh, &b.wg, b.sendLogAlert)
 	}
-	log.Infof("[bot-gotify] Started (server: %s)", b.config.ServerURL)
+	log.Infof("[bot-gotify] Started server=%s", strings.TrimRight(b.config.ServerURL, "/"))
 	return nil
 }
 
@@ -98,7 +98,7 @@ func (b *Bot) sendNotification(title, message string) {
 	url := strings.TrimRight(b.config.ServerURL, "/") + "/message"
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
-		log.Warnf("[bot-gotify] Failed to create request: %v", err)
+		log.Warnf("[bot-gotify] Create request failed error=%q", err.Error())
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -106,11 +106,11 @@ func (b *Bot) sendNotification(title, message string) {
 
 	resp, err := b.client.Do(req)
 	if err != nil {
-		log.Warnf("[bot-gotify] Failed to send: %v", err)
+		log.Warnf("[bot-gotify] Send notification failed error=%q", err.Error())
 		return
 	}
 	resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		log.Warnf("[bot-gotify] Gotify returned %d", resp.StatusCode)
+		log.Warnf("[bot-gotify] Send notification failed status=%d", resp.StatusCode)
 	}
 }

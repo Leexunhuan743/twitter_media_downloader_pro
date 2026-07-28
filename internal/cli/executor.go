@@ -117,11 +117,11 @@ func Execute(ctx context.Context, args []string, deps *Dependencies) error {
 
 	selection := newCLITaskSelection(cfg)
 	if !selection.hasAnyTasks() {
-		log.Infoln("no download tasks specified")
+		log.Info("[cli] No download tasks specified")
 		return nil
 	}
 
-	log.Infoln("start working for...")
+	log.Info("[cli] Start")
 
 	// 如果没有提供 Service，为本次执行创建默认 Service；不写回 deps，避免复用同一 deps 时产生隐式共享。
 	downloadService := deps.DownloadService
@@ -130,7 +130,7 @@ func Execute(ctx context.Context, args []string, deps *Dependencies) error {
 		downloadService, err = service.NewDownloadService(&deps.Dependencies)
 
 		if err != nil {
-			log.Errorf("[cli] Failed to create download service: %v", err)
+			log.Errorf("[cli] Download service create failed error=%q", err.Error())
 			return fmt.Errorf("failed to create download service: %w", err)
 		}
 	}
@@ -161,34 +161,34 @@ func Execute(ctx context.Context, args []string, deps *Dependencies) error {
 
 	switch selection.primaryMode() {
 	case cliTaskModeJSONFile:
-		log.Infof("jsonfile: %d files", len(cfg.JsonFileArgs.GetPaths()))
+		log.Infof("[cli] Mode selected mode=json_file files=%d", len(cfg.JsonFileArgs.GetPaths()))
 		if selection.shouldWarnExclusiveMode(cliTaskModeJSONFile) {
-			log.Warn("-jsonfile is exclusive; jsonfolder/mark-downloaded/batch/profile will be ignored")
+			log.Warn("[cli] -jsonfile is exclusive; jsonfolder/mark-downloaded/batch/profile will be ignored")
 		}
 		if err := downloadService.JsonFileDownload(ctx, "cli", cfg.JsonFileArgs.GetPaths(), cfg.NoRetry, reporter); err != nil {
-			log.Warnf("[cli] JSON file download failed: %v", err)
+			log.Warnf("[cli] Task failed mode=json_file error=%q", err.Error())
 			return err
 		}
 		return nil
 	case cliTaskModeJSONFolder:
-		log.Infof("jsonfolder: %d folders", len(cfg.JsonFolderArgs.GetPaths()))
+		log.Infof("[cli] Mode selected mode=json_folder folders=%d", len(cfg.JsonFolderArgs.GetPaths()))
 		if selection.shouldWarnExclusiveMode(cliTaskModeJSONFolder) {
-			log.Warn("-jsonfolder is exclusive; jsonfile/mark-downloaded/batch/profile will be ignored")
+			log.Warn("[cli] -jsonfolder is exclusive; jsonfile/mark-downloaded/batch/profile will be ignored")
 		}
 		if err := downloadService.JsonFolderDownload(ctx, "cli", cfg.JsonFolderArgs.GetPaths(), cfg.NoRetry, reporter); err != nil {
-			log.Warnf("[cli] JSON folder download failed: %v", err)
+			log.Warnf("[cli] Task failed mode=json_folder error=%q", err.Error())
 			return err
 		}
 		return nil
 	case cliTaskModeMarkDownloaded:
-		log.Infoln("mark downloaded mode")
+		log.Info("[cli] Mode selected mode=mark_downloaded")
 		if selection.shouldWarnExclusiveMode(cliTaskModeMarkDownloaded) {
-			log.Warn("-mark-downloaded is exclusive; profile download parameters will be ignored")
+			log.Warn("[cli] -mark-downloaded is exclusive; profile download parameters will be ignored")
 		}
 		if err := downloadService.MarkDownloaded(ctx, "cli",
 			cfg.UsrArgs.ScreenName, cfg.ListArgs.ID, cfg.FollArgs.ScreenName,
 			markTime, reporter); err != nil {
-			log.Warnf("[cli] Mark downloaded failed: %v", err)
+			log.Warnf("[cli] Task failed mode=mark_downloaded error=%q", err.Error())
 			return err
 		}
 		return nil
@@ -200,24 +200,24 @@ func Execute(ctx context.Context, args []string, deps *Dependencies) error {
 	followingNames := cfg.FollArgs.ScreenName
 
 	if selection.hasBatchDownload() {
-		log.Infof("users: %d, lists: %d, following: %d", len(screenNames), len(listIDs), len(followingNames))
+		log.Infof("[cli] Batch targets users=%d lists=%d following=%d", len(screenNames), len(listIDs), len(followingNames))
 
 		var batchErr error
 		if len(screenNames) == 1 && len(listIDs) == 0 && len(followingNames) == 0 {
 			if err := downloadService.UserDownload(ctx, "cli", screenNames[0], opts, reporter); err != nil {
-				log.Warnf("User download failed: %v", err)
+				log.Warnf("[cli] Task failed mode=user_download target=%q error=%q", screenNames[0], err.Error())
 				batchErr = err
 			}
 		} else if len(screenNames) == 0 && len(listIDs) == 0 && len(followingNames) == 1 {
 			if err := downloadService.FollowingDownload(ctx, "cli", followingNames[0], opts, reporter); err != nil {
-				log.Warnf("Following download failed: %v", err)
+				log.Warnf("[cli] Task failed mode=following_download target=%q error=%q", followingNames[0], err.Error())
 				batchErr = err
 			}
 		} else {
 			// 直接使用 BatchDownload 处理单个列表或多个列表的下载
 			// BatchDownload 在底层处理单个列表时不会产生性能浪费，并且能正确处理各种类型的 ListBase
 			if err := downloadService.BatchDownload(ctx, "cli", screenNames, listIDs, followingNames, opts, reporter); err != nil {
-				log.Warnf("Batch download failed: %v", err)
+				log.Warnf("[cli] Task failed mode=batch_download error=%q", err.Error())
 				batchErr = err
 			}
 		}
@@ -239,19 +239,19 @@ func Execute(ctx context.Context, args []string, deps *Dependencies) error {
 		var profileErr error
 		// 先处理用户 Profile
 		if hasProfileUsers {
-			log.Infof("profile users: %d", len(cfg.ProfileUsers.ScreenName))
+			log.Infof("[cli] Profile targets kind=users count=%d", len(cfg.ProfileUsers.ScreenName))
 			if err := downloadService.ProfileDownload(ctx, "cli", cfg.ProfileUsers.ScreenName, reporter); err != nil {
-				log.Warnf("Profile download failed for users: %v", err)
+				log.Warnf("[cli] Task failed mode=profile_users error=%q", err.Error())
 				profileErr = err
 			}
 		}
 
 		// 再处理列表 Profile
 		if hasProfileLists {
-			log.Infof("profile lists: %d", len(cfg.ProfileList.ID))
+			log.Infof("[cli] Profile targets kind=lists count=%d", len(cfg.ProfileList.ID))
 			for _, listID := range cfg.ProfileList.ID {
 				if err := downloadService.ListProfileDownload(ctx, "cli", listID, reporter); err != nil {
-					log.Warnf("Failed to download profile for list %d: %v", listID, err)
+					log.Warnf("[cli] Task failed mode=profile_list list_id=%d error=%q", listID, err.Error())
 					profileErr = errors.Join(profileErr, err)
 				}
 			}

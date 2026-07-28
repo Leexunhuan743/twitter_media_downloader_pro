@@ -29,7 +29,7 @@ func RetryFailedTweets(ctx context.Context, dumper *TweetDumper, db *sqlx.DB, cl
 	}
 	totalEntities := dumper.EntityCount()
 
-	log.Infoln("[download] Starting to retry failed tweets")
+	log.Infof("[download] Retry load regular entities=%d tweets=%d", totalEntities, dumper.Count())
 	legacy, err := dumper.GetTotal(db)
 	if err != nil {
 		return RetrySummary{}, err
@@ -46,11 +46,11 @@ func RetryFailedTweets(ctx context.Context, dumper *TweetDumper, db *sqlx.DB, cl
 	}
 
 	if len(toretry) == 0 {
-		log.Infoln("[download] No tweets need to be retried")
+		log.Infof("[download] Retry skip regular reason=no_tweets entities=%d", totalEntities)
 		return RetrySummary{}, nil
 	}
 
-	log.Infof("[download] Retrying %d tweets with %d total media(s)", len(toretry), countTotalUrls(toretry))
+	log.Infof("[download] Retry start regular tweets=%d media=%d entities=%d", len(toretry), countTotalUrls(toretry), totalEntities)
 	totalTweets := len(toretry)
 	if progress != nil {
 		progress(RetryProgress{
@@ -99,18 +99,18 @@ func RetryFailedTweets(ctx context.Context, dumper *TweetDumper, db *sqlx.DB, cl
 		}
 		eid, err := te.Entity.Id()
 		if err != nil {
-			log.Warnf("[download] Skip tweet %d: entity id error (%v), will retry next time", te.Tweet.Id, err)
+			log.Warnf("[download] Retry skipped tweet_id=%d reason=entity_id_error error=%q", te.Tweet.Id, err.Error())
 			continue
 		}
 
 		if _, isFailed := failedSet[te.Tweet.Id]; !isFailed {
 			dumper.Remove(eid, te.Tweet.Id)
-			log.Infof("[download] Tweet %d all media downloaded successfully on retry", te.Tweet.Id)
+			log.Debugf("[download] Retry recovered tweet_id=%d", te.Tweet.Id)
 		} else if len(te.Tweet.Urls) > 0 {
-			log.Warnf("[download] Tweet %d still has %d media(s) to download", te.Tweet.Id, len(te.Tweet.Urls))
+			log.Warnf("[download] Retry remaining tweet_id=%d media=%d", te.Tweet.Id, len(te.Tweet.Urls))
 		} else {
 			dumper.Remove(eid, te.Tweet.Id)
-			log.Infof("[download] Tweet %d all media handled (non-retriable skipped) on retry", te.Tweet.Id)
+			log.Debugf("[download] Retry handled non-retriable tweet_id=%d", te.Tweet.Id)
 		}
 	}
 
@@ -125,6 +125,7 @@ func RetryFailedTweets(ctx context.Context, dumper *TweetDumper, db *sqlx.DB, cl
 			Failed:    dumper.Count(),
 		})
 	}
+	log.Infof("[download] Retry complete regular tweets=%d remaining_tweets=%d entities=%d remaining_entities=%d", totalTweets, dumper.Count(), summary.TotalEntities, summary.RemainingEntities)
 	return summary, nil
 }
 
@@ -145,7 +146,7 @@ func RetryFailedJsonTweets(ctx context.Context, dumper *JsonTweetDumper, client 
 	}
 	totalEntries := dumper.EntryCount()
 
-	log.Infoln("[download] Starting to retry failed JSON tweets")
+	log.Infof("[download] Retry load json entries=%d tweets=%d", totalEntries, dumper.Count())
 	legacy := dumper.GetTotal()
 
 	toretry := make([]PackagedTweet, 0, len(legacy))
@@ -162,7 +163,7 @@ func RetryFailedJsonTweets(ctx context.Context, dumper *JsonTweetDumper, client 
 	}
 
 	if len(toretry) == 0 {
-		log.Infoln("[download] No JSON tweets need to be retried")
+		log.Infof("[download] Retry skip json reason=no_tweets entries=%d", totalEntries)
 		return RetrySummary{}, nil
 	}
 
@@ -173,7 +174,7 @@ func RetryFailedJsonTweets(ctx context.Context, dumper *JsonTweetDumper, client 
 		}
 	}
 
-	log.Infof("[download] Retrying %d JSON tweets with %d total media(s)", len(toretry), countTotalUrls(toretry))
+	log.Infof("[download] Retry start json tweets=%d media=%d entries=%d", len(toretry), countTotalUrls(toretry), totalEntries)
 	totalTweets := len(toretry)
 	if progress != nil {
 		progress(RetryProgress{
@@ -215,12 +216,12 @@ func RetryFailedJsonTweets(ctx context.Context, dumper *JsonTweetDumper, client 
 		}
 		if _, isFailed := failedSet[jpt.Tweet.Id]; !isFailed {
 			dumper.Remove(sourcePath, jpt.Tweet.Id)
-			log.Infof("[download] JSON tweet %d all media downloaded successfully on retry", jpt.Tweet.Id)
+			log.Debugf("[download] Retry recovered json tweet_id=%d", jpt.Tweet.Id)
 		} else if len(jpt.Tweet.Urls) > 0 {
-			log.Warnf("[download] JSON tweet %d still has %d media(s) to download", jpt.Tweet.Id, len(jpt.Tweet.Urls))
+			log.Warnf("[download] Retry remaining json tweet_id=%d media=%d", jpt.Tweet.Id, len(jpt.Tweet.Urls))
 		} else {
 			dumper.Remove(sourcePath, jpt.Tweet.Id)
-			log.Infof("[download] JSON tweet %d all media handled (non-retriable skipped) on retry", jpt.Tweet.Id)
+			log.Debugf("[download] Retry handled non-retriable json tweet_id=%d", jpt.Tweet.Id)
 		}
 	}
 
@@ -241,5 +242,6 @@ func RetryFailedJsonTweets(ctx context.Context, dumper *JsonTweetDumper, client 
 			Failed:    dumper.Count(),
 		})
 	}
+	log.Infof("[download] Retry complete json tweets=%d remaining_tweets=%d entries=%d remaining_entries=%d", totalTweets, dumper.Count(), summary.TotalEntities, summary.RemainingEntities)
 	return summary, nil
 }

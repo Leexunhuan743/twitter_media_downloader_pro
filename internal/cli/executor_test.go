@@ -432,7 +432,7 @@ func TestExecute_NoArgs_LogsHint(t *testing.T) {
 	err := Execute(context.Background(), nil, deps)
 
 	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "no download tasks specified")
+	assert.Contains(t, buf.String(), "[cli] No download tasks specified")
 }
 
 func TestExecute_DefaultServiceCreation(t *testing.T) {

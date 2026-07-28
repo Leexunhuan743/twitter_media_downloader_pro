@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	log "github.com/sirupsen/logrus"
 	"net/http"
 	"os"
 	"path"
@@ -12,16 +13,15 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	log "github.com/sirupsen/logrus"
 )
 
 //go:embed web/*
 var webFS embed.FS
 
 var (
-	themeMu      sync.RWMutex
+	themeMu       sync.RWMutex
 	frontendTheme = "web1" // web1 或 web2，运行时热切换
-	devWebRoot   string    // TMD_DEV=1 时设为本地 web 目录路径
+	devWebRoot    string   // TMD_DEV=1 时设为本地 web 目录路径
 )
 
 func init() {
@@ -32,7 +32,6 @@ func init() {
 		}
 	}
 }
-
 
 func readFrontendFile(name string) ([]byte, error) {
 	themeMu.RLock()
@@ -107,7 +106,7 @@ func listThemes() []string {
 func (s *Server) handleWeb(w http.ResponseWriter, r *http.Request) {
 	data, err := readFrontendFile("index.html")
 	if err != nil {
-		log.Errorf("[web] Failed to load index.html: %v", err)
+		log.Errorf("[web] Index load failed error=%q", err.Error())
 		s.writeError(w, http.StatusInternalServerError, "Failed to load web page")
 		return
 	}

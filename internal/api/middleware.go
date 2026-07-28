@@ -9,6 +9,7 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/unkmonster/tmd/internal/logging"
 )
 
 // responseRecorder 包装 http.ResponseWriter 以记录状态码
@@ -57,7 +58,7 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		start := time.Now()
 		rr := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(rr, r)
-		log.Infof("[%s] %s %s %d (%v)", r.Method, r.URL.Path, r.RemoteAddr, rr.statusCode, time.Since(start))
+		log.Infof("[api] %s %s status=%d dur=%s ip=%s", r.Method, logging.RequestTarget(r), rr.statusCode, time.Since(start), clientIP(r.RemoteAddr))
 	})
 }
 
@@ -149,7 +150,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 
 		if token == "" {
-			log.Debugf("[auth] Missing token for %s %s", r.Method, r.URL.Path)
+			log.Debugf("[auth] Token missing method=%s path=%q", r.Method, r.URL.Path)
 			writeAuth401(w, "missing")
 			return
 		}
@@ -162,7 +163,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			log.Debugf("[auth] Invalid token on management path %s", r.URL.Path)
+			log.Debugf("[auth] Management token invalid path=%q", r.URL.Path)
 			writeAuth401(w, "invalid")
 			return
 		}
@@ -195,7 +196,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		} else {
 			w.Header().Set("X-Token-Type", "invalid")
 		}
-		log.Debugf("[auth] Authentication failed for %s %s: X-Token-Type=%s", r.Method, r.URL.Path, w.Header().Get("X-Token-Type"))
+		log.Debugf("[auth] Authentication failed method=%s path=%q token_type=%s", r.Method, r.URL.Path, w.Header().Get("X-Token-Type"))
 		writeAuth401(w, "invalid")
 	})
 }
@@ -207,15 +208,11 @@ func isAuthManagementPath(path string) bool {
 
 // writeAuth401 writes a standard 401 Unauthorized response.
 func writeAuth401(w http.ResponseWriter, tokenType string) {
-	errMsg := "unauthorized"
-	switch tokenType {
-	case "missing":
-		errMsg = "missing authorization token"
-	case "invalid":
-		errMsg = "invalid or expired authorization token"
+	if tokenType != "" && w.Header().Get("X-Token-Type") == "" {
+		w.Header().Set("X-Token-Type", tokenType)
 	}
 	w.Header().Set("WWW-Authenticate", `Bearer realm="TMD API"`)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
-	json.NewEncoder(w).Encode(NewErrorResponse(errMsg))
+	json.NewEncoder(w).Encode(NewErrorResponse("unauthorized"))
 }

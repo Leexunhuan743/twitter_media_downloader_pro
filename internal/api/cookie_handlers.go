@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/unkmonster/tmd/internal/config"
+	"github.com/unkmonster/tmd/internal/logging"
 )
 
 func (s *Server) handleGetCookiesRaw(w http.ResponseWriter, _ *http.Request) {
@@ -26,7 +27,7 @@ func (s *Server) handleGetCookiesRaw(w http.ResponseWriter, _ *http.Request) {
 			}))
 			return
 		}
-		log.Errorf("[cookies] Failed to read cookies: %v", err)
+		log.Errorf("[cookies] Read failed path=%q error=%q", logging.Path(cookiesPath), err.Error())
 		s.writeErrorDetail(w, http.StatusInternalServerError, "Failed to read cookies", err.Error())
 		return
 	}
@@ -41,7 +42,7 @@ func (s *Server) handleGetCookiesRaw(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleUpdateCookiesRaw(w http.ResponseWriter, r *http.Request) {
 	var req ConfigUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Errorf("[cookies] Invalid request body: %v", err)
+		log.Debugf("[cookies] Invalid request body operation=update_raw error=%q", err.Error())
 		s.writeErrorDetail(w, http.StatusBadRequest, "Invalid request body", err.Error())
 		return
 	}
@@ -53,7 +54,7 @@ func (s *Server) handleUpdateCookiesRaw(w http.ResponseWriter, r *http.Request) 
 
 	var testCookies []*config.Cookie
 	if err := yaml.Unmarshal([]byte(req.Content), &testCookies); err != nil {
-		log.Errorf("[cookies] Invalid YAML format: %v", err)
+		log.Debugf("[cookies] Invalid YAML operation=update_raw error=%q", err.Error())
 		s.writeErrorDetail(w, http.StatusBadRequest, "Invalid YAML format", err.Error())
 		return
 	}
@@ -72,16 +73,16 @@ func (s *Server) handleUpdateCookiesRaw(w http.ResponseWriter, r *http.Request) 
 
 	backupName, err := config.CreateBackup(cookiesPath)
 	if err != nil {
-		log.Warnf("[cookies] Failed to create cookies backup: %v", err)
+		log.Warnf("[cookies] Backup create failed path=%q error=%q", logging.Path(cookiesPath), err.Error())
 	}
 
 	if err := config.WriteAdditionalCookies(cookiesPath, testCookies); err != nil {
-		log.Errorf("[cookies] Failed to write cookies: %v", err)
+		log.Errorf("[cookies] Write failed operation=update_raw path=%q error=%q", logging.Path(cookiesPath), err.Error())
 		s.writeErrorDetail(w, http.StatusInternalServerError, "Failed to write cookies", err.Error())
 		return
 	}
 
-	log.Infoln("[WebUI] additional cookies saved via raw editor")
+	log.Infof("[cookies] Saved operation=update_raw path=%q backup=%q accounts=%d", logging.Path(cookiesPath), logging.Path(backupName), len(testCookies))
 
 	s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]interface{}{
 		"message": "Additional cookies saved successfully. Please restart TMD manually for changes to take effect.",
@@ -99,7 +100,7 @@ func (s *Server) handleGetCookies(w http.ResponseWriter, _ *http.Request) {
 
 	cookies, err := config.ReadAdditionalCookies(cookiesPath)
 	if err != nil {
-		log.Errorf("[cookies] Failed to read cookies: %v", err)
+		log.Errorf("[cookies] Read failed path=%q error=%q", logging.Path(cookiesPath), err.Error())
 		s.writeErrorDetail(w, http.StatusInternalServerError, "Failed to read cookies", err.Error())
 		return
 	}
@@ -122,7 +123,7 @@ func (s *Server) handleGetCookies(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleSaveCookies(w http.ResponseWriter, r *http.Request) {
 	var req CookiesSaveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Errorf("[cookies] Invalid request body: %v", err)
+		log.Debugf("[cookies] Invalid request body operation=save_fields error=%q", err.Error())
 		s.writeErrorDetail(w, http.StatusBadRequest, "Invalid request body", err.Error())
 		return
 	}
@@ -131,7 +132,7 @@ func (s *Server) handleSaveCookies(w http.ResponseWriter, r *http.Request) {
 
 	existingCookies, err := config.ReadAdditionalCookies(cookiesPath)
 	if err != nil {
-		log.Errorf("[cookies] Failed to read existing cookies: %v", err)
+		log.Errorf("[cookies] Existing read failed path=%q error=%q", logging.Path(cookiesPath), err.Error())
 		s.writeErrorDetail(w, http.StatusInternalServerError, "Failed to read existing cookies", err.Error())
 		return
 	}
@@ -147,7 +148,7 @@ func (s *Server) handleSaveCookies(w http.ResponseWriter, r *http.Request) {
 			return cookie.AuthToken
 		})
 		if err != nil {
-			log.Debugf("[cookies] Account #%d Auth Token: %v", i+1, err)
+			log.Debugf("[cookies] Invalid account field operation=save_fields account_index=%d field=auth_token error=%q", i+1, err.Error())
 			s.writeErrorDetail(w, http.StatusBadRequest, fmt.Sprintf("Account #%d: Invalid Auth Token", i+1), err.Error())
 			return
 		}
@@ -155,7 +156,7 @@ func (s *Server) handleSaveCookies(w http.ResponseWriter, r *http.Request) {
 			return cookie.Ct0
 		})
 		if err != nil {
-			log.Debugf("[cookies] Account #%d CT0: %v", i+1, err)
+			log.Debugf("[cookies] Invalid account field operation=save_fields account_index=%d field=ct0 error=%q", i+1, err.Error())
 			s.writeErrorDetail(w, http.StatusBadRequest, fmt.Sprintf("Account #%d: Invalid CT0", i+1), err.Error())
 			return
 		}
@@ -172,16 +173,16 @@ func (s *Server) handleSaveCookies(w http.ResponseWriter, r *http.Request) {
 	}
 	backupName, err := config.CreateBackup(cookiesPath)
 	if err != nil {
-		log.Warnf("[cookies] Failed to create cookies backup: %v", err)
+		log.Warnf("[cookies] Backup create failed path=%q error=%q", logging.Path(cookiesPath), err.Error())
 	}
 
 	if err := config.WriteAdditionalCookies(cookiesPath, cookies); err != nil {
-		log.Errorf("[cookies] Failed to save cookies: %v", err)
+		log.Errorf("[cookies] Write failed operation=save_fields path=%q error=%q", logging.Path(cookiesPath), err.Error())
 		s.writeErrorDetail(w, http.StatusInternalServerError, "Failed to save cookies", err.Error())
 		return
 	}
 
-	log.Infoln("[WebUI] additional cookies saved via structured form")
+	log.Infof("[cookies] Saved operation=save_fields path=%q backup=%q accounts=%d", logging.Path(cookiesPath), logging.Path(backupName), len(cookies))
 
 	s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]interface{}{
 		"message": "Additional cookies saved successfully. Please restart TMD manually for changes to take effect.",

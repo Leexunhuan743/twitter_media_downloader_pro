@@ -8,6 +8,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/database"
+	"github.com/unkmonster/tmd/internal/logging"
 )
 
 func updateUserLink(lnk *database.UserLink, db *sqlx.DB, path string) error {
@@ -15,18 +16,18 @@ func updateUserLink(lnk *database.UserLink, db *sqlx.DB, path string) error {
 
 	linkpath, err := lnk.Path(db)
 	if err != nil {
-		log.Errorf("[download] Failed to get link path: %v", err)
+		log.Errorf("[download] Link path resolve failed link_id=%d error=%q", lnk.Id, err.Error())
 		return err
 	}
 	path, err = filepath.Abs(path)
 	if err != nil {
-		log.Errorf("[download] Failed to get absolute path: %v", err)
+		log.Errorf("[download] Target path resolve failed path=%q error=%q", logging.Path(path), err.Error())
 		return err
 	}
 
 	linkDir := filepath.Dir(linkpath)
 	if err := os.MkdirAll(linkDir, 0755); err != nil {
-		log.Errorf("[download] Failed to create link directory %s: %v", linkDir, err)
+		log.Errorf("[download] Link directory create failed path=%q error=%q", logging.Path(linkDir), err.Error())
 		return err
 	}
 
@@ -37,7 +38,7 @@ func updateUserLink(lnk *database.UserLink, db *sqlx.DB, path string) error {
 	newlinkpath := filepath.Join(linkDir, name)
 
 	if err = os.RemoveAll(linkpath); err != nil {
-		log.Errorf("[download] Failed to remove old link %s: %v", linkpath, err)
+		log.Errorf("[download] Old link remove failed path=%q error=%q", logging.Path(linkpath), err.Error())
 		return err
 	}
 	if err = ensureUserSymlink(path, newlinkpath); err != nil {
@@ -45,7 +46,7 @@ func updateUserLink(lnk *database.UserLink, db *sqlx.DB, path string) error {
 	}
 
 	if err = database.UpdateUserLink(db, lnk.Id, name); err != nil {
-		log.Errorf("[download] Failed to update user link in database: %v", err)
+		log.Errorf("[download] User link update failed link_id=%d name=%q error=%q", lnk.Id, name, err.Error())
 		return err
 	}
 	lnk.Name = name

@@ -11,6 +11,7 @@ type DownloadRequest struct {
 	URL         string
 	Destination string
 	Options     DownloadOptions
+	LogFields   map[string]interface{}
 }
 
 type DownloadOptions struct {

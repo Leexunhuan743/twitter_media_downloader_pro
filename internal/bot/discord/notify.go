@@ -37,7 +37,7 @@ func (b *Bot) notifyTaskChanges(data interface{}) {
 	for _, n := range notifications {
 		_, err := b.session.ChannelMessageSend(n.channelID, n.text)
 		if err != nil {
-			log.Warnf("[bot-discord] Failed to send notification: %v", err)
+			log.Warnf("[bot-discord] Send notification failed channel_id=%s error=%q", n.channelID, err.Error())
 		}
 	}
 }
@@ -46,12 +46,12 @@ func (b *Bot) sendLogAlert(line string) {
 	for _, userID := range b.config.AllowedUsers {
 		channel, err := b.session.UserChannelCreate(userID)
 		if err != nil {
-			log.Warnf("[bot-discord] Failed to create DM channel: %v", err)
+			log.Warnf("[bot-discord] Create DM failed user_id=%s error=%q", userID, err.Error())
 			continue
 		}
 		_, err = b.session.ChannelMessageSend(channel.ID, "🔴 `"+escapeDiscord(line)+"`")
 		if err != nil {
-			log.Warnf("[bot-discord] Failed to send log notification: %v", err)
+			log.Warnf("[bot-discord] Send log alert failed channel_id=%s error=%q", channel.ID, err.Error())
 		}
 	}
 }

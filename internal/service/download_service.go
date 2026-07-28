@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
@@ -17,6 +18,7 @@ import (
 	"github.com/unkmonster/tmd/internal/downloader"
 	"github.com/unkmonster/tmd/internal/downloading"
 	"github.com/unkmonster/tmd/internal/downloading/profile"
+	"github.com/unkmonster/tmd/internal/logging"
 	"github.com/unkmonster/tmd/internal/path"
 	"github.com/unkmonster/tmd/internal/twitter"
 	"github.com/unkmonster/tmd/internal/utils"
@@ -90,6 +92,18 @@ func (s *downloadServiceImpl) completeProfileTask(taskID string, reporter Progre
 		Profile: &profile,
 		Message: formatProfileCompletionMessage(profile),
 	})
+}
+
+func downloadOptionsSummary(opts DownloadOptions) string {
+	return fmt.Sprintf("auto_follow=%t follow_members=%t skip_profile=%t no_retry=%t",
+		opts.AutoFollow, opts.FollowMembers, opts.SkipProfile, opts.NoRetry)
+}
+
+func safeDownloadError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return logging.RedactSensitiveText(err.Error())
 }
 
 func (s *downloadServiceImpl) newBatchProgressCallback(taskID string, reporter ProgressReporter) downloading.BatchProgressFunc {
@@ -176,7 +190,7 @@ func (s *downloadServiceImpl) resolveUsers(ctx context.Context, screenNames []st
 		if err != nil {
 			database.MarkUserInaccessible(s.deps.DB, uid, name)
 			failures = append(failures, resolveFailure{Identifier: name, Kind: "user", Err: err})
-			log.Warnf("[download] Failed to get user %s: %v", name, err)
+			log.Warnf("[download] Resolve failed kind=user identifier=%q error=%q", name, safeDownloadError(err))
 			continue
 		}
 		users = append(users, user)
@@ -188,11 +202,11 @@ func (s *downloadServiceImpl) resolveLists(ctx context.Context, listIDs []uint64
 	var lists []twitter.ListBase
 	var failures []resolveFailure
 	for _, id := range listIDs {
-	// 列表是用户私有资源，只能使用主账号访问，不走 MFQ 多账号轮询
+		// 列表是用户私有资源，只能使用主账号访问，不走 MFQ 多账号轮询
 		list, err := twitter.GetLst(ctx, s.deps.Client, id)
 		if err != nil {
 			failures = append(failures, resolveFailure{Identifier: fmt.Sprintf("%d", id), Kind: "list", Err: err})
-			log.Warnf("[download] Failed to get list %d: %v", id, err)
+			log.Warnf("[download] Resolve failed kind=list identifier=%d error=%q", id, safeDownloadError(err))
 			continue
 		}
 		lists = append(lists, list)
@@ -208,7 +222,7 @@ func (s *downloadServiceImpl) resolveFollowings(ctx context.Context, screenNames
 		if err != nil {
 			database.MarkUserInaccessible(s.deps.DB, uid, name)
 			failures = append(failures, resolveFailure{Identifier: name, Kind: "following", Err: err})
-			log.Warnf("[download] Failed to get user %s for following list: %v", name, err)
+			log.Warnf("[download] Resolve failed kind=following identifier=%q error=%q", name, safeDownloadError(err))
 			continue
 		}
 		lists = append(lists, user.Following())
@@ -248,7 +262,7 @@ func (s *downloadServiceImpl) followMembersIfNeeded(ctx context.Context, users [
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return err
 			}
-			log.Warnf("[download] Follow member failed for @%s (%d): %v", user.ScreenName, user.Id, err)
+			log.Warnf("[download] Follow member failed user=@%s uid=%d error=%q", user.ScreenName, user.Id, safeDownloadError(err))
 			continue
 		}
 	}
@@ -328,14 +342,17 @@ type downloadTemplateConfig struct {
 
 func (s *downloadServiceImpl) executeDownloadTemplate(ctx context.Context, config downloadTemplateConfig) error {
 	reporter := s.getReporterOrDefault(config.Reporter)
+	start := time.Now()
+	log.Infof("[download] Start task_id=%s options=%s", config.TaskID, downloadOptionsSummary(config.Opts))
 
 	config.ReportBeforeDownload(config.TaskID, reporter)
 
 	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
 	if err != nil {
-		log.Errorf("[download] Failed to make store dir: %v", err)
+		log.Errorf("[download] Store path failed task_id=%s error=%q", config.TaskID, safeDownloadError(err))
 		return fmt.Errorf("failed to make store dir [task=%s]: %w", config.TaskID, err)
 	}
+	log.Debugf("[download] Store path ready root=%q", logging.Path(pathHelper.Root))
 
 	dumper := downloading.NewDumper()
 	s.loadDumperSafely(dumper, pathHelper.ErrorsPath)
@@ -343,15 +360,17 @@ func (s *downloadServiceImpl) executeDownloadTemplate(ctx context.Context, confi
 
 	users, lists, err := config.Prepare(ctx, pathHelper)
 	if err != nil {
-		log.Errorf("[download] Prepare failed [task=%s]: %v", config.TaskID, err)
+		log.Errorf("[download] Prepare failed task_id=%s error=%q", config.TaskID, safeDownloadError(err))
 		return err
 	}
+	log.Infof("[download] Prepared users=%d lists=%d", len(users), len(lists))
 
 	versionManager, fileWriter, dwn := s.initDownloader()
 	progress := s.newBatchProgressCallback(config.TaskID, reporter)
 	retryProgress := s.newRetryProgressCallback(config.TaskID, reporter)
 	runtimeOptions := s.runtimeOptions()
 
+	log.Infof("[download] Media batch start task_id=%s users=%d lists=%d workers=%d", config.TaskID, len(users), len(lists), runtimeOptions.MaxDownloadRoutine)
 	failedTweets, listMembers, summary, err := downloading.BatchDownloadAny(
 		ctx, s.deps.Client, s.deps.DB, lists, users,
 		pathHelper.Root, pathHelper.Users, effectiveAutoFollow(config.Opts),
@@ -359,28 +378,37 @@ func (s *downloadServiceImpl) executeDownloadTemplate(ctx context.Context, confi
 		s.deps.ListSyncManager,
 	)
 	if err != nil {
-		log.Errorf("[download] Batch download failed [task=%s]: %v", config.TaskID, err)
+		log.Errorf("[download] Media batch failed task_id=%s error=%q", config.TaskID, safeDownloadError(err))
 		return err
 	}
+	log.Infof("[download] Media batch complete entities=%d failed_tweets=%d list_members=%d duration=%s", summary.TotalEntities, len(failedTweets), len(listMembers), time.Since(start))
 
 	if config.Opts.FollowMembers {
 		followTargets := make([]*twitter.User, 0, len(users)+len(listMembers))
 		followTargets = append(followTargets, users...)
 		followTargets = append(followTargets, listMembers...)
+		log.Infof("[download] Follow members start task_id=%s targets=%d", config.TaskID, len(followTargets))
 		if err := s.followMembersIfNeeded(ctx, followTargets); err != nil {
-			log.Errorf("[download] Follow members failed [task=%s]: %v", config.TaskID, err)
+			log.Errorf("[download] Follow members failed task_id=%s targets=%d error=%q", config.TaskID, len(followTargets), safeDownloadError(err))
 			return err
 		}
+		log.Infof("[download] Follow members complete targets=%d", len(followTargets))
 	}
 	mainFailures := collectFailedTweetSet(failedTweets)
 
 	s.collectFailedTweets(dumper, failedTweets)
 	if !config.Opts.NoRetry {
-		if _, err := downloading.RetryFailedTweets(
+		log.Infof("[download] Retry start task_id=%s pending_tweets=%d", config.TaskID, dumper.Count())
+		retrySummary, err := downloading.RetryFailedTweets(
 			ctx, dumper, s.deps.DB, s.deps.Client, dwn, fileWriter, runtimeOptions, retryProgress,
-		); err != nil {
-			log.Warnf("[download] Retry failed tweets error: %v", err)
+		)
+		if err != nil {
+			log.Warnf("[download] Retry failed task_id=%s error=%q", config.TaskID, safeDownloadError(err))
+		} else {
+			log.Infof("[download] Retry complete entities=%d remaining_entities=%d remaining_tweets=%d", retrySummary.TotalEntities, retrySummary.RemainingEntities, dumper.Count())
 		}
+	} else {
+		log.Infof("[download] Retry skipped reason=no_retry pending_tweets=%d", dumper.Count())
 	}
 
 	var profileResult *ProfileResult
@@ -389,24 +417,30 @@ func (s *downloadServiceImpl) executeDownloadTemplate(ctx context.Context, confi
 	profileTargetUsers := dedupeProfileUsers(append(append([]*twitter.User(nil), users...), listMembers...))
 
 	if config.ShouldDownloadProfile(profileTargetUsers) && len(profileTargetUsers) > 0 {
+		log.Infof("[download] Profile start task_id=%s target=%q users=%d", config.TaskID, config.ProfileIdentifier, len(profileTargetUsers))
 		profileResult, err = s.downloadProfile(
 			ctx, config.TaskID, profileTargetUsers,
 			pathHelper, versionManager, fileWriter, dwn, reporter,
 		)
 		if err != nil {
-			log.Warnf("[download] Profile download failed for %s: %v", config.ProfileIdentifier, err)
+			log.Warnf("[download] Profile failed task_id=%s target=%q error=%q", config.TaskID, config.ProfileIdentifier, safeDownloadError(err))
 			reporter.OnProgress(config.TaskID, Progress{
 				Stage:   "profile_warning",
 				Current: fmt.Sprintf("profile failed for %s: %v", config.ProfileIdentifier, err),
 			})
 			profileWarning = "with profile warnings"
+		} else if profileResult != nil {
+			log.Infof("[download] Profile complete users=%d downloaded=%d failed=%d versioned=%d", len(profileTargetUsers), profileResult.Downloaded, profileResult.Failed, profileResult.Versioned)
 		}
+	} else {
+		log.Infof("[download] Profile skipped users=%d", len(profileTargetUsers))
 	}
 
 	s.completeTask(config.TaskID, reporter, config.CompletionMessage, &Result{
 		Main:    s.buildMainDownloadResult(summary, countRemainingFailedEntities(dumper, mainFailures)),
 		Profile: cloneProfileResult(profileResult),
 	}, profileWarning)
+	log.Infof("[download] Complete duration=%s", time.Since(start))
 
 	return nil
 }
@@ -518,15 +552,16 @@ func (s *downloadServiceImpl) ProfileDownload(ctx context.Context, taskID string
 	if len(failures) > 0 {
 		parts := make([]string, 0, len(failures))
 		for _, f := range failures {
-			parts = append(parts, fmt.Sprintf("%s[%s]: %v", f.Kind, f.Identifier, f.Err))
+			parts = append(parts, fmt.Sprintf("%s[%s]: %s", f.Kind, f.Identifier, safeDownloadError(f.Err)))
 		}
-		log.Warnf("[download] Resolve failures (%d): %s", len(failures), strings.Join(parts, "; "))
+		log.Warnf("[download] Resolve failures count=%d details=%q", len(failures), strings.Join(parts, "; "))
 	}
 	if len(unique) > 0 && len(users) == 0 {
-		log.Warnf("[download] All profile users failed to resolve")
+		log.Warnf("[download] Resolve failed target=profile_users reason=all_failed")
 		return fmt.Errorf("all profile users failed to resolve [task=%s]", taskID)
 	}
 
+	log.Infof("[download] Profile start task_id=%s users=%d", taskID, len(users))
 	profileResult, err := s.downloadProfile(ctx, taskID, users, pathHelper, versionManager, fileWriter, dwn, reporter)
 	if err != nil {
 		return err
@@ -556,13 +591,14 @@ func (s *downloadServiceImpl) ListProfileDownload(ctx context.Context, taskID st
 
 	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
 	if err != nil {
-		log.Errorf("[download] Failed to create store path: %v", err)
+		log.Errorf("[download] Store path failed task_id=%s error=%q", taskID, safeDownloadError(err))
 		return err
 	}
 	versionManager, fileWriter, dwn := s.initDownloader()
 
 	users := dedupeProfileUsers(membersResult.Users)
 
+	log.Infof("[download] Profile start task_id=%s target=list:%d users=%d", taskID, listID, len(users))
 	profileResult, err := s.downloadProfile(ctx, taskID, users, pathHelper, versionManager, fileWriter, dwn, reporter)
 	if err != nil {
 		return err
@@ -577,6 +613,7 @@ func (s *downloadServiceImpl) ListProfileDownload(ctx context.Context, taskID st
 func (s *downloadServiceImpl) MarkDownloaded(ctx context.Context, taskID string, screenNames []string, listIDs []uint64, followingNames []string, markTime *string, reporter ProgressReporter) error {
 	reporter = s.getReporterOrDefault(reporter)
 
+	log.Infof("[download] Mark start task_id=%s users=%d lists=%d following=%d", taskID, len(screenNames), len(listIDs), len(followingNames))
 	reporter.OnProgress(taskID, Progress{Stage: "resolving"})
 
 	users, userFailures := s.resolveUsers(ctx, screenNames)
@@ -589,13 +626,13 @@ func (s *downloadServiceImpl) MarkDownloaded(ctx context.Context, taskID string,
 	if len(allFailures) > 0 {
 		parts := make([]string, 0, len(allFailures))
 		for _, f := range allFailures {
-			parts = append(parts, fmt.Sprintf("%s[%s]: %v", f.Kind, f.Identifier, f.Err))
+			parts = append(parts, fmt.Sprintf("%s[%s]: %s", f.Kind, f.Identifier, safeDownloadError(f.Err)))
 		}
-		log.Warnf("[download] Resolve failures (%d): %s", len(allFailures), strings.Join(parts, "; "))
+		log.Warnf("[download] Resolve failures count=%d details=%q", len(allFailures), strings.Join(parts, "; "))
 	}
 
 	if len(users) == 0 && len(lists) == 0 {
-		log.Warnf("[download] No users or lists to mark (all failed to resolve)")
+		log.Warn("[download] Mark skipped reason=no_resolved_targets")
 		return fmt.Errorf("no users or lists to mark (all failed to resolve) [task=%s]", taskID)
 	}
 
@@ -611,7 +648,7 @@ func (s *downloadServiceImpl) MarkDownloaded(ctx context.Context, taskID string,
 	// 注意：MarkUsersAsDownloaded 内部会自动获取列表成员并标记
 	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
 	if err != nil {
-		log.Errorf("[download] Failed to create store path: %v", err)
+		log.Errorf("[download] Store path failed task_id=%s error=%q", taskID, safeDownloadError(err))
 		return err
 	}
 
@@ -630,16 +667,17 @@ func (s *downloadServiceImpl) MarkDownloaded(ctx context.Context, taskID string,
 func (s *downloadServiceImpl) JsonFileDownload(ctx context.Context, taskID string, paths []string, noRetry bool, reporter ProgressReporter) error {
 	reporter = s.getReporterOrDefault(reporter)
 
+	log.Infof("[download] JSON file start task_id=%s files=%d no_retry=%t", taskID, len(paths), noRetry)
 	reporter.OnProgress(taskID, Progress{Stage: "downloading", Total: len(paths), Current: fmt.Sprintf("%d JSON files", len(paths))})
 
 	if err := s.validateJsonPaths(paths); err != nil {
-		log.Errorf("[download] JsonFileDownload path validation failed: %v", err)
+		log.Errorf("[download] JSON path validation failed task_id=%s kind=file error=%q", taskID, safeDownloadError(err))
 		return err
 	}
 
 	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
 	if err != nil {
-		log.Errorf("[download] Failed to create store path: %v", err)
+		log.Errorf("[download] Store path failed task_id=%s error=%q", taskID, safeDownloadError(err))
 		return err
 	}
 	_, fileWriter, dwn := s.initDownloader()
@@ -657,7 +695,7 @@ func (s *downloadServiceImpl) JsonFileDownload(ctx context.Context, taskID strin
 
 	if !noRetry {
 		if _, err := downloading.RetryFailedJsonTweets(ctx, jsonDumper, s.deps.Client, dwn, fileWriter, runtimeOptions, retryProgress); err != nil {
-			log.Warnf("[download] Retry failed JSON tweets error: %v", err)
+			log.Warnf("[download] Retry failed task_id=%s kind=json error=%q", taskID, safeDownloadError(err))
 		}
 	}
 
@@ -686,16 +724,17 @@ func (s *downloadServiceImpl) JsonFileDownload(ctx context.Context, taskID strin
 func (s *downloadServiceImpl) JsonFolderDownload(ctx context.Context, taskID string, paths []string, noRetry bool, reporter ProgressReporter) error {
 	reporter = s.getReporterOrDefault(reporter)
 
+	log.Infof("[download] JSON folder start task_id=%s folders=%d no_retry=%t", taskID, len(paths), noRetry)
 	reporter.OnProgress(taskID, Progress{Stage: "downloading", Total: len(paths), Current: fmt.Sprintf("%d loongtweet folders", len(paths))})
 
 	if err := s.validateJsonPaths(paths); err != nil {
-		log.Errorf("[download] JsonFolderDownload path validation failed: %v", err)
+		log.Errorf("[download] JSON path validation failed task_id=%s kind=folder error=%q", taskID, safeDownloadError(err))
 		return err
 	}
 
 	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
 	if err != nil {
-		log.Errorf("[download] Failed to create store path: %v", err)
+		log.Errorf("[download] Store path failed task_id=%s error=%q", taskID, safeDownloadError(err))
 		return err
 	}
 	_, fileWriter, dwn := s.initDownloader()
@@ -713,7 +752,7 @@ func (s *downloadServiceImpl) JsonFolderDownload(ctx context.Context, taskID str
 
 	if !noRetry {
 		if _, err := downloading.RetryFailedJsonTweets(ctx, jsonDumper, s.deps.Client, dwn, fileWriter, runtimeOptions, retryProgress); err != nil {
-			log.Warnf("[download] Retry failed JSON tweets error: %v", err)
+			log.Warnf("[download] Retry failed task_id=%s kind=json error=%q", taskID, safeDownloadError(err))
 		}
 	}
 
@@ -760,13 +799,13 @@ func (s *downloadServiceImpl) BatchDownload(ctx context.Context, taskID string, 
 			if len(allFailures) > 0 {
 				parts := make([]string, 0, len(allFailures))
 				for _, f := range allFailures {
-					parts = append(parts, fmt.Sprintf("%s[%s]: %v", f.Kind, f.Identifier, f.Err))
+					parts = append(parts, fmt.Sprintf("%s[%s]: %s", f.Kind, f.Identifier, safeDownloadError(f.Err)))
 				}
-				log.Warnf("[download] Resolve failures (%d): %s", len(allFailures), strings.Join(parts, "; "))
+				log.Warnf("[download] Resolve failures count=%d details=%q", len(allFailures), strings.Join(parts, "; "))
 			}
 
 			if len(users) == 0 && len(lists) == 0 {
-				log.Warnf("[download] All users and lists failed to resolve")
+				log.Warn("[download] Resolve failed target=batch reason=all_failed")
 				return nil, nil, fmt.Errorf("all users and lists failed to resolve [task=%s]", taskID)
 			}
 			return users, lists, nil
@@ -786,9 +825,9 @@ func (s *downloadServiceImpl) saveDumper(dumper *downloading.TweetDumper, path s
 
 	if dumper.Count() > 0 {
 		if err := dumper.Dump(path); err != nil {
-			log.Warnf("[download] Failed to save dumper: %v", err)
+			log.Warnf("[download] Dumper save failed kind=regular path=%q tweets=%d error=%q", logging.Path(path), dumper.Count(), safeDownloadError(err))
 		} else {
-			log.Infof("[download] %d tweets have been dumped", dumper.Count())
+			log.Infof("[download] Dumper saved kind=regular path=%q tweets=%d", logging.Path(path), dumper.Count())
 		}
 		return
 	}
@@ -797,9 +836,11 @@ func (s *downloadServiceImpl) saveDumper(dumper *downloading.TweetDumper, path s
 
 // RetryAllFailed 重试所有历史失败推文
 func (s *downloadServiceImpl) RetryAllFailed(ctx context.Context, taskID string, reporter ProgressReporter) error {
+	log.Infof("[download] Retry all start task_id=%s", taskID)
+
 	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
 	if err != nil {
-		log.Errorf("[download] Failed to create store path: %v", err)
+		log.Errorf("[download] Store path failed task_id=%s error=%q", taskID, safeDownloadError(err))
 		return fmt.Errorf("failed to create store path [task=%s]: %w", taskID, err)
 	}
 
@@ -814,7 +855,7 @@ func (s *downloadServiceImpl) RetryAllFailed(ctx context.Context, taskID string,
 	s.loadDumperSafely(regDumper, pathHelper.ErrorsPath)
 	if regDumper.Count() > 0 {
 		if _, err := downloading.RetryFailedTweets(ctx, regDumper, s.deps.DB, s.deps.Client, dwn, fileWriter, runtimeOptions, nil); err != nil {
-			log.Errorf("[download] Failed to retry regular tweets: %v", err)
+			log.Errorf("[download] Retry failed task_id=%s kind=regular error=%q", taskID, safeDownloadError(err))
 			errs = append(errs, fmt.Errorf("regular: %w", err))
 		} else {
 			s.saveDumper(regDumper, pathHelper.ErrorsPath)
@@ -826,7 +867,7 @@ func (s *downloadServiceImpl) RetryAllFailed(ctx context.Context, taskID string,
 	s.loadJsonDumperSafely(jsonDumper, pathHelper.JSONErrorsPath)
 	if jsonDumper.Count() > 0 {
 		if _, err := downloading.RetryFailedJsonTweets(ctx, jsonDumper, s.deps.Client, dwn, fileWriter, runtimeOptions, nil); err != nil {
-			log.Errorf("[download] Failed to retry JSON tweets: %v", err)
+			log.Errorf("[download] Retry failed task_id=%s kind=json error=%q", taskID, safeDownloadError(err))
 			errs = append(errs, fmt.Errorf("json: %w", err))
 		} else {
 			s.saveJsonDumper(jsonDumper, pathHelper.JSONErrorsPath)
@@ -844,7 +885,7 @@ func (s *downloadServiceImpl) RetryAllFailed(ctx context.Context, taskID string,
 func (s *downloadServiceImpl) ClearErrors() error {
 	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
 	if err != nil {
-		log.Errorf("[download] Failed to create store path: %v", err)
+		log.Errorf("[download] Store path failed operation=clear_errors error=%q", safeDownloadError(err))
 		return fmt.Errorf("failed to create store path: %w", err)
 	}
 
@@ -883,9 +924,9 @@ func (s *downloadServiceImpl) saveJsonDumper(dumper *downloading.JsonTweetDumper
 
 	if dumper.Count() > 0 {
 		if err := dumper.Dump(path); err != nil {
-			log.Warnf("[download] Failed to save JSON dumper: %v", err)
+			log.Warnf("[download] Dumper save failed kind=json path=%q tweets=%d error=%q", logging.Path(path), dumper.Count(), safeDownloadError(err))
 		} else {
-			log.Infof("[download] %d JSON tweets have been dumped", dumper.Count())
+			log.Infof("[download] Dumper saved kind=json path=%q tweets=%d", logging.Path(path), dumper.Count())
 		}
 		return
 	}
@@ -900,7 +941,7 @@ func (s *downloadServiceImpl) loadDumperSafely(dumper *downloading.TweetDumper, 
 	s.dumperMu.Lock()
 	defer s.dumperMu.Unlock()
 	if err := dumper.Load(path); err != nil {
-		log.Warnf("[download] Dumper file load failed (will recreate with in-memory state): %s: %v", path, err)
+		log.Warnf("[download] Dumper load failed kind=regular path=%q action=recreate_from_memory error=%q", logging.Path(path), safeDownloadError(err))
 	}
 }
 
@@ -909,7 +950,7 @@ func (s *downloadServiceImpl) loadJsonDumperSafely(dumper *downloading.JsonTweet
 	s.dumperMu.Lock()
 	defer s.dumperMu.Unlock()
 	if err := dumper.Load(path); err != nil {
-		log.Warnf("[download] JSON dumper file load failed (will recreate with in-memory state): %s: %v", path, err)
+		log.Warnf("[download] Dumper load failed kind=json path=%q action=recreate_from_memory error=%q", logging.Path(path), safeDownloadError(err))
 	}
 }
 
@@ -925,7 +966,7 @@ func (s *downloadServiceImpl) downloadProfile(ctx context.Context, taskID string
 	// 创建 storage manager
 	storage, err := profile.NewFileStorageManager(pathHelper.Users)
 	if err != nil {
-		log.Errorf("[download] Failed to create file storage manager: %v", err)
+		log.Errorf("[profile] Storage manager create failed task_id=%s path=%q error=%q", taskID, logging.Path(pathHelper.Users), safeDownloadError(err))
 		return nil, fmt.Errorf("failed to create profile storage: %w", err)
 	}
 	storage.SetVersionManager(versionManager)
@@ -1032,7 +1073,7 @@ func (s *downloadServiceImpl) downloadProfile(ctx context.Context, taskID string
 
 	// 输出完整失败明细日志（即使部分失败也仍返回 nil，但日志记录所有失败用户和原因）
 	if len(failedDetails) > 0 {
-		log.Warnf("[profile] Failed users (%d/%d): %s",
+		log.Warnf("[profile] Failed users count=%d total=%d details=%q",
 			len(failedDetails), len(results), strings.Join(failedDetails, "; "))
 	}
 
@@ -1044,9 +1085,9 @@ func (s *downloadServiceImpl) downloadProfile(ctx context.Context, taskID string
 		if bannerFailed > 0 {
 			fileParts = append(fileParts, fmt.Sprintf("%d banners", bannerFailed))
 		}
-		log.Infof("[profile] Download complete: %d/%d users (%s failed)", successCount, len(results), strings.Join(fileParts, ", "))
+		log.Infof("[profile] Download complete users=%d total=%d failed_files=%q", successCount, len(results), strings.Join(fileParts, ", "))
 	} else if len(results) > 0 {
-		log.Infof("[profile] Download complete: %d/%d users", successCount, len(results))
+		log.Infof("[profile] Download complete users=%d total=%d", successCount, len(results))
 	}
 
 	if successCount == 0 && failCount > 0 {

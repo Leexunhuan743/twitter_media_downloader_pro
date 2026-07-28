@@ -29,6 +29,7 @@ func (h *LumberjackHook) Fire(entry *logrus.Entry) error {
 	if err != nil {
 		return err
 	}
+	line = StripANSI(line)
 	_, err = h.writer.Write([]byte(line))
 	return err
 }

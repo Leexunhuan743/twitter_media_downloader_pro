@@ -18,7 +18,8 @@ Optional bearer-token authentication layer. When the API key is empty, auth is d
 - Empty key → auth disabled (backward compatible)
 - `Authorization: Bearer <token>` header (primary), `?token=` query param fallback for SSE
 - Public whitelist: health check, theme config, Web UI pages, static files
-- 401 response: `{"success":false,"error":"unauthorized"}` + `WWW-Authenticate: Bearer`
+- 401 response body is always `{"success":false,"error":"unauthorized"}` + `WWW-Authenticate: Bearer`
+- Failure details for clients are exposed via `X-Token-Type` (`missing`, `invalid`, or `expired`) rather than the JSON error field
 
 ### Auth Endpoints
 

@@ -53,10 +53,10 @@ func (b *Bot) Start() error {
 	if err := session.Open(); err != nil {
 		return fmt.Errorf("discord: failed to open gateway: %w", err)
 	}
-	log.Infof("[bot-discord] Connected as %s", session.State.User.Username)
+	log.Infof("[bot-discord] Started account=%s", session.State.User.Username)
 
 	if err := b.registerCommands(); err != nil {
-		log.Warnf("[bot-discord] Failed to register slash commands: %v", err)
+		log.Warnf("[bot-discord] Register commands failed error=%q", err.Error())
 	}
 
 	api.RunBotEventLoop(b.eventBus, b.stopCh, &b.wg, func(evt api.SSEEvent) {
@@ -74,9 +74,10 @@ func (b *Bot) Stop() {
 	b.wg.Wait()
 	if b.session != nil {
 		if err := b.session.Close(); err != nil {
-			log.Warnf("[bot-discord] Session close error: %v", err)
+			log.Warnf("[bot-discord] Stop failed error=%q", err.Error())
 		}
 	}
 }
+
 // Name 返回 bot 名称
 func (b *Bot) Name() string { return "discord" }

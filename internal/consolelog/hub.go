@@ -27,7 +27,7 @@ var (
 // an installed capture. In the current application flow capture stays active
 // until process exit, but tests may stop it explicitly to restore stdio.
 type captureSession struct {
-	hub             *Hub
+	hub            *Hub
 	originalStdout *os.File
 	originalStderr *os.File
 	stdoutReader   *os.File
@@ -151,7 +151,7 @@ func (h *Hub) Add(line string) {
 	if len(overflowed) > 0 {
 		h.removeSubscribers(overflowed)
 		for range overflowed {
-			log.Warn("[consolelog] Closing slow log subscriber after queue overflow")
+			log.Warn("[consolelog] Slow subscriber closed reason=queue_overflow")
 		}
 	}
 }
@@ -246,13 +246,13 @@ func startCaptureSession(h *Hub) (*captureSession, error) {
 
 	stdoutReader, stdoutWriter, err := os.Pipe()
 	if err != nil {
-		log.Errorf("[consolelog] Failed to create stdout pipe: %v", err)
+		log.Errorf("[consolelog] Pipe create failed stream=stdout error=%q", err.Error())
 		return nil, err
 	}
 	stderrReader, stderrWriter, err := os.Pipe()
 	if err != nil {
 		stdoutReader.Close()
-		log.Errorf("[consolelog] Failed to create stderr pipe: %v", err)
+		log.Errorf("[consolelog] Pipe create failed stream=stderr error=%q", err.Error())
 		stdoutWriter.Close()
 		return nil, err
 	}
@@ -265,7 +265,7 @@ func startCaptureSession(h *Hub) (*captureSession, error) {
 	go capturePipe(stderrReader, originalStderr, h)
 
 	return &captureSession{
-		hub:             h,
+		hub:            h,
 		originalStdout: originalStdout,
 		originalStderr: originalStderr,
 		stdoutReader:   stdoutReader,
@@ -340,4 +340,3 @@ func capturePipe(reader io.Reader, output *os.File, h *Hub) {
 func stripANSI(s string) string {
 	return ansiRegex.ReplaceAllString(s, "")
 }
-

@@ -41,7 +41,7 @@ func (b *Bot) notifyTaskChanges(data interface{}) {
 		msg := tgbotapi.NewMessage(n.chatID, n.text)
 		msg.ParseMode = "markdown"
 		if _, err := b.api.Send(msg); err != nil {
-			log.Warnf("[bot-telegram] Failed to send notification: %v", err)
+			log.Warnf("[bot-telegram] Send notification failed chat_id=%d error=%q", n.chatID, err.Error())
 		}
 	}
 }
@@ -51,7 +51,7 @@ func (b *Bot) sendLogAlert(line string) {
 		msg := tgbotapi.NewMessage(chatID, "🔴 `"+escapeMD(line)+"`")
 		msg.ParseMode = "markdown"
 		if _, err := b.api.Send(msg); err != nil {
-			log.Warnf("[bot-telegram] Failed to send log notification: %v", err)
+			log.Warnf("[bot-telegram] Send log alert failed chat_id=%d error=%q", chatID, err.Error())
 		}
 	}
 }

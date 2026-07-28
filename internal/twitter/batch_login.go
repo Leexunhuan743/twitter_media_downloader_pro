@@ -3,6 +3,7 @@ package twitter
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/go-resty/resty/v2"
@@ -58,9 +59,13 @@ func BatchLogin(ctx context.Context, opts BatchLoginOptions, cookies []AccountCo
 	}
 
 	wg.Wait()
-	log.Infoln("[twitter] Loaded additional accounts:", len(clients))
-	for _, msg := range msgs {
-		fmt.Print(msg)
+	log.Infof("[twitter] Additional accounts loaded count=%d configured=%d", len(clients), len(cookies))
+	for i, msg := range msgs {
+		msg = strings.TrimSpace(strings.TrimPrefix(msg, "-"))
+		if msg == "" {
+			continue
+		}
+		log.Debugf("[twitter] Additional account result index=%d detail=%q", i+1, msg)
 	}
 	return clients
 }

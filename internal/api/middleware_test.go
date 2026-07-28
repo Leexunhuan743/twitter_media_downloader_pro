@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -92,9 +94,9 @@ func (m *mockPusher) Push(target string, opts *http.PushOptions) error {
 
 func TestResponseRecorder_WriteHeader(t *testing.T) {
 	tests := []struct {
-		name       string
-		code       int
-		wantCode   int
+		name     string
+		code     int
+		wantCode int
 	}{
 		{
 			name:     "设置 200",
@@ -262,6 +264,32 @@ func TestLoggingMiddleware_MultipleRequests(t *testing.T) {
 	}
 
 	assert.Equal(t, 5, callCount)
+}
+
+func TestLoggingMiddleware_RedactsSensitiveQueryParams(t *testing.T) {
+	var buf bytes.Buffer
+	originalOutput := log.StandardLogger().Out
+	log.SetOutput(&buf)
+	defer log.SetOutput(originalOutput)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	middleware := loggingMiddleware(handler)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/logs/stream?token=secret-token&q=download", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	rr := httptest.NewRecorder()
+
+	middleware.ServeHTTP(rr, req)
+
+	line := buf.String()
+	assert.Contains(t, line, "[api] GET")
+	assert.Contains(t, line, "/api/v1/logs/stream")
+	assert.Contains(t, line, "q=download")
+	assert.Contains(t, line, "status=200")
+	assert.Contains(t, line, "ip=127.0.0.1")
+	assert.NotContains(t, line, "secret-token")
 }
 
 func TestLoggingMiddleware_ResponseWriterWrapping(t *testing.T) {

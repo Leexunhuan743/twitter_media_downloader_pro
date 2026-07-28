@@ -2,15 +2,16 @@ package wechat
 
 import (
 	"context"
+	"github.com/SpellingDragon/wechat-robot-go/wechat"
+	log "github.com/sirupsen/logrus"
 	"strings"
 	"sync"
 	"time"
-	log "github.com/sirupsen/logrus"
-	"github.com/SpellingDragon/wechat-robot-go/wechat"
 
 	"github.com/unkmonster/tmd/internal/api"
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/consolelog"
+	"github.com/unkmonster/tmd/internal/logging"
 )
 
 // Bot 是微信 iLink bot 实现
@@ -25,9 +26,9 @@ type Bot struct {
 	userTokens map[string]string
 	userTasks  map[string]map[string]struct{}
 	mu         sync.Mutex
-	stopCh chan struct{}
-	wg     sync.WaitGroup
-	cancel context.CancelFunc
+	stopCh     chan struct{}
+	wg         sync.WaitGroup
+	cancel     context.CancelFunc
 }
 
 // NewBot 创建微信 bot 实例
@@ -77,7 +78,7 @@ func (b *Bot) Start() error {
 		b.runWithReconnect(ctx)
 	}()
 
-	log.Infof("[bot-wechat] Starting (credential: %s)", b.config.CredentialPath)
+	log.Infof("[bot-wechat] Starting credential_path=%q", logging.Path(b.config.CredentialPath))
 	return nil
 }
 
@@ -91,11 +92,11 @@ func (b *Bot) runWithReconnect(ctx context.Context) {
 
 		loginCtx, loginCancel := context.WithTimeout(ctx, 2*time.Minute)
 		err := b.wechatBot.Login(loginCtx, func(qrCode string) {
-			log.Infof("[bot-wechat] QR code URL: %s", qrCode)
+			log.Infof("[bot-wechat] Login QR url=%s", qrCode)
 		})
 		loginCancel()
 		if err != nil {
-			log.Warnf("[bot-wechat] Login failed: %v, retrying in 30s...", err)
+			log.Warnf("[bot-wechat] Login failed retry_after=30s error=%q", err.Error())
 			select {
 			case <-b.stopCh:
 				return
@@ -103,7 +104,7 @@ func (b *Bot) runWithReconnect(ctx context.Context) {
 			}
 			continue
 		}
-		log.Infof("[bot-wechat] Logged in")
+		log.Info("[bot-wechat] Logged in")
 
 		b.wechatBot.Run(ctx)
 
@@ -111,7 +112,7 @@ func (b *Bot) runWithReconnect(ctx context.Context) {
 		case <-b.stopCh:
 			return
 		case <-time.After(5 * time.Second):
-			log.Warnf("[bot-wechat] Connection lost, reconnecting...")
+			log.Warn("[bot-wechat] Connection lost reconnecting=true")
 		}
 	}
 }
@@ -169,6 +170,6 @@ func (b *Bot) handleMessage(ctx context.Context, msg *wechat.Message) {
 
 func (b *Bot) sendText(ctx context.Context, userID, text string) {
 	if err := b.wechatBot.SendTextToUser(ctx, userID, text); err != nil {
-		log.Warnf("[bot-wechat] Failed to send message to %s: %v", userID, err)
+		log.Warnf("[bot-wechat] Send message failed user_id=%s error=%q", userID, err.Error())
 	}
 }

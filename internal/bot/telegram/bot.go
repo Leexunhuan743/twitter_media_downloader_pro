@@ -48,7 +48,7 @@ func (b *Bot) Start() error {
 		return fmt.Errorf("telegram: failed to create bot: %w", err)
 	}
 	b.api = botAPI
-	log.Infof("[bot-telegram] Authorized as %s", b.api.Self.UserName)
+	log.Infof("[bot-telegram] Started account=%s", b.api.Self.UserName)
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
@@ -83,6 +83,6 @@ func (b *Bot) sendText(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = "markdown"
 	if _, err := b.api.Send(msg); err != nil {
-		log.Warnf("[bot-telegram] Failed to send message: %v", err)
+		log.Warnf("[bot-telegram] Send message failed chat_id=%d error=%q", chatID, err.Error())
 	}
 }

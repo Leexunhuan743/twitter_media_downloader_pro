@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
+	"github.com/unkmonster/tmd/internal/logging"
 	"github.com/unkmonster/tmd/internal/utils"
 )
 
@@ -52,6 +53,28 @@ func isNonRetriableStatusError(err error) bool {
 	return utils.IsStatusCode(err, 403) || utils.IsStatusCode(err, 404)
 }
 
+func logURL(raw string) string {
+	return logging.SanitizeURL(raw)
+}
+
+func logError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return logging.RedactSensitiveText(err.Error())
+}
+
+func logFields(req DownloadRequest, fields log.Fields) log.Fields {
+	merged := log.Fields{}
+	for k, v := range req.LogFields {
+		merged[k] = v
+	}
+	for k, v := range fields {
+		merged[k] = v
+	}
+	return merged
+}
+
 // NewDownloader 创建下载器
 func NewDownloader(fileWriter FileWriter) *DefaultDownloader {
 	return &DefaultDownloader{
@@ -86,27 +109,27 @@ func (d *DefaultDownloader) Download(req DownloadRequest) (*DownloadResult, erro
 	contentLength, err := d.getContentLength(req)
 	if err != nil {
 		// HEAD 失败，回退到 Buffer 模式
-		d.logger.WithFields(log.Fields{
-			"url":   req.URL,
-			"error": err,
-		}).Debug("[downloader] HEAD request failed, fallback to buffer mode")
+		d.logger.WithFields(logFields(req, log.Fields{
+			"url":   logURL(req.URL),
+			"error": logError(err),
+		})).Debug("[downloader] HEAD request failed, fallback to buffer mode")
 		return d.downloadBuffer(req)
 	}
 
 	// 2. 根据大小选择策略
 	if contentLength > streamThreshold {
 		// 大文件：流式下载（带重试）
-		d.logger.WithFields(log.Fields{
-			"url":  req.URL,
+		d.logger.WithFields(logFields(req, log.Fields{
+			"url":  logURL(req.URL),
 			"size": contentLength,
-		}).Debug("[downloader] Using stream mode for large file")
+		})).Debug("[downloader] Using stream mode for large file")
 		return d.downloadStream(req, contentLength)
 	} else {
 		// 小文件：Buffer 下载（支持 SkipUnchanged）
-		d.logger.WithFields(log.Fields{
-			"url":  req.URL,
+		d.logger.WithFields(logFields(req, log.Fields{
+			"url":  logURL(req.URL),
 			"size": contentLength,
-		}).Debug("[downloader] Using buffer mode for small file")
+		})).Debug("[downloader] Using buffer mode for small file")
 		return d.downloadBuffer(req)
 	}
 }
@@ -162,10 +185,10 @@ func (d *DefaultDownloader) downloadBuffer(req DownloadRequest) (*DownloadResult
 	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
 		err := newHTTPStatusError(resp.StatusCode(), req.URL)
 		result.Error = err
-		d.logger.WithFields(log.Fields{
-			"url":         req.URL,
+		d.logger.WithFields(logFields(req, log.Fields{
+			"url":         logURL(req.URL),
 			"status_code": resp.StatusCode(),
-		}).Warn("[downloader] Download failed with non-2xx status")
+		})).Warn("[downloader] Download failed with non-2xx status")
 		return result, err
 	}
 
@@ -203,10 +226,10 @@ func (d *DefaultDownloader) downloadStream(req DownloadRequest, contentLength in
 		if err == nil {
 			// 下载成功
 			if attempt > 1 {
-				d.logger.WithFields(log.Fields{
-					"url":     req.URL,
+				d.logger.WithFields(logFields(req, log.Fields{
+					"url":     logURL(req.URL),
 					"attempt": attempt,
-				}).Info("[downloader] Download succeeded after retry")
+				})).Info("[downloader] Download succeeded after retry")
 			}
 			return result, nil
 		}
@@ -221,21 +244,21 @@ func (d *DefaultDownloader) downloadStream(req DownloadRequest, contentLength in
 		if result != nil && result.Error != nil {
 			// 如果是最后一次尝试，回退到 Buffer 模式
 			if attempt == maxDownloadRetries {
-				d.logger.WithFields(log.Fields{
-					"url":        req.URL,
+				d.logger.WithFields(logFields(req, log.Fields{
+					"url":        logURL(req.URL),
 					"attempts":   maxDownloadRetries,
-					"last_error": err,
-				}).Warn("[downloader] Stream download failed after max retries, fallback to buffer mode")
+					"last_error": logError(err),
+				})).Warn("[downloader] Stream download failed after max retries, fallback to buffer mode")
 				return d.downloadBuffer(req)
 			}
 
 			// 记录重试日志
-			d.logger.WithFields(log.Fields{
-				"url":         req.URL,
+			d.logger.WithFields(logFields(req, log.Fields{
+				"url":         logURL(req.URL),
 				"attempt":     attempt,
 				"max_retries": maxDownloadRetries,
-				"error":       err,
-			}).Warn("[downloader] Download failed, retrying...")
+				"error":       logError(err),
+			})).Warn("[downloader] Download failed, retrying...")
 
 			// 等待一段时间后重试
 			if err := waitRetryDelay(req.Context, retryDelay*time.Duration(attempt)); err != nil {
@@ -279,10 +302,10 @@ func (d *DefaultDownloader) doDownloadStream(req DownloadRequest, contentLength 
 	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
 		err := newHTTPStatusError(resp.StatusCode(), req.URL)
 		result.Error = err
-		d.logger.WithFields(log.Fields{
-			"url":         req.URL,
+		d.logger.WithFields(logFields(req, log.Fields{
+			"url":         logURL(req.URL),
 			"status_code": resp.StatusCode(),
-		}).Warn("[downloader] Stream download failed with non-2xx status")
+		})).Warn("[downloader] Stream download failed with non-2xx status")
 		return result, err
 	}
 
@@ -308,18 +331,18 @@ func (d *DefaultDownloader) doDownloadStream(req DownloadRequest, contentLength 
 		err := fmt.Errorf("file size mismatch: expected %d bytes, got %d bytes", contentLength, writeResult.NewSize)
 		result.Error = err
 		result.Success = false
-		d.logger.WithFields(log.Fields{
-			"url":           req.URL,
+		d.logger.WithFields(logFields(req, log.Fields{
+			"url":           logURL(req.URL),
 			"expected_size": contentLength,
 			"actual_size":   writeResult.NewSize,
-		}).Warn("[downloader] Download file size mismatch")
+		})).Warn("[downloader] Download file size mismatch")
 
 		// 删除不完整的文件
 		if removeErr := os.Remove(req.Destination); removeErr != nil {
-			d.logger.WithFields(log.Fields{
-				"url":   req.URL,
-				"error": removeErr,
-			}).Warn("[downloader] Failed to remove incomplete file")
+			d.logger.WithFields(logFields(req, log.Fields{
+				"url":   logURL(req.URL),
+				"error": logError(removeErr),
+			})).Warn("[downloader] Incomplete file remove failed")
 		}
 
 		return result, err

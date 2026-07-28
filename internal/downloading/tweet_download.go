@@ -16,6 +16,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"github.com/unkmonster/tmd/internal/downloader"
+	"github.com/unkmonster/tmd/internal/logging"
 	"github.com/unkmonster/tmd/internal/naming"
 	"github.com/unkmonster/tmd/internal/twitter"
 	"github.com/unkmonster/tmd/internal/utils"
@@ -26,15 +27,15 @@ func writeAuxiliaryTweetFile(fileWriter downloader.FileWriter, writeReq download
 	// the media download result.
 	result, err := fileWriter.Write(writeReq)
 	if err != nil {
-		log.Warnf("[download] Failed to write %s: %v", fileType, err)
+		log.Warnf("[download] Auxiliary file write failed type=%s path=%q error=%q", fileType, logging.Path(writeReq.Path), logging.RedactSensitiveText(err.Error()))
 		return
 	}
 	if !result.Success {
-		log.Warnf("[download] %s write reported unsuccessful result: %s", fileType, writeReq.Path)
+		log.Warnf("[download] Auxiliary file write unsuccessful type=%s path=%q", fileType, logging.Path(writeReq.Path))
 		return
 	}
 	if result.Versioned {
-		log.Debugf("[download] %s write created version backup: %s", fileType, writeReq.Path)
+		log.Debugf("[download] Auxiliary file versioned type=%s path=%q", fileType, logging.Path(writeReq.Path))
 	}
 }
 
@@ -244,6 +245,10 @@ func isNonRetriableMediaError(err error) bool {
 	return utils.IsStatusCode(err, 403) || utils.IsStatusCode(err, 404)
 }
 
+func mediaURLForLog(raw string) string {
+	return logging.SanitizeURL(raw)
+}
+
 func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, skipLoongTweet bool) error {
 	var creatorTitle string
 	if tweet.Creator != nil {
@@ -251,7 +256,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 	} else {
 		creatorTitle = "unknown"
 	}
-		tweetNaming := naming.NewTweetNaming(tweet.Text, tweet.Id, creatorTitle, cfg.maxFileNameLen)
+	tweetNaming := naming.NewTweetNaming(tweet.Text, tweet.Id, creatorTitle, cfg.maxFileNameLen)
 
 	if !skipLoongTweet {
 		saveTweetJson(cfg, dir, tweet, tweetNaming)
@@ -275,7 +280,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 
 		path, err := tweetNaming.FilePathWithResolver(dir, ext, cfg.pathResolver)
 		if err != nil {
-			log.Warnf("[download] Failed to build media path (tweet %d): %s - %v", tweet.Id, u, err)
+			log.Warnf("[download] Media path build failed tweet_id=%d url=%s error=%q", tweet.Id, mediaURLForLog(u), logging.RedactSensitiveText(err.Error()))
 			tweet.Urls = append(tweet.Urls, u)
 			if firstRetryableErr == nil {
 				firstRetryableErr = err
@@ -290,16 +295,19 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 			Options: downloader.DownloadOptions{
 				SetModTime: &tweet.CreatedAt,
 			},
+			LogFields: map[string]interface{}{
+				"tweet_id": tweet.Id,
+			},
 		}
 
 		result, err := cfg.downloader.Download(req)
 		if err != nil {
 			if isNonRetriableMediaError(err) {
-				log.Infof("[download] Skip non-retriable media: %s - %v", u, err)
+				log.Infof("[download] Skip non-retriable media tweet_id=%d url=%s error=%q", tweet.Id, mediaURLForLog(u), logging.RedactSensitiveText(err.Error()))
 				skippedUrls = append(skippedUrls, u)
 				continue
 			}
-			log.Warnf("[download] Failed to download media (tweet %d): %s - %v", tweet.Id, u, err)
+			log.Warnf("[download] Failed media tweet_id=%d url=%s error=%q", tweet.Id, mediaURLForLog(u), logging.RedactSensitiveText(err.Error()))
 			tweet.Urls = append(tweet.Urls, u)
 			if firstRetryableErr == nil {
 				firstRetryableErr = err
@@ -308,7 +316,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 		}
 		if result == nil {
 			err = fmt.Errorf("download returned nil result")
-			log.Warnf("[download] Media download returned nil result (tweet %d): %s", tweet.Id, u)
+			log.Warnf("[download] Media returned nil result tweet_id=%d url=%s", tweet.Id, mediaURLForLog(u))
 			tweet.Urls = append(tweet.Urls, u)
 			if firstRetryableErr == nil {
 				firstRetryableErr = err
@@ -317,11 +325,15 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 		}
 		if !result.Success {
 			if result.Error != nil && isNonRetriableMediaError(result.Error) {
-				log.Infof("[download] Skip non-retriable media: %s - %v", u, result.Error)
+				log.Infof("[download] Skip non-retriable media tweet_id=%d url=%s error=%q", tweet.Id, mediaURLForLog(u), logging.RedactSensitiveText(result.Error.Error()))
 				skippedUrls = append(skippedUrls, u)
 				continue
 			}
-			log.Warnf("[download] Media download reported failure (tweet %d): %s - %v", tweet.Id, u, result.Error)
+			errorText := ""
+			if result.Error != nil {
+				errorText = logging.RedactSensitiveText(result.Error.Error())
+			}
+			log.Warnf("[download] Media reported failure tweet_id=%d url=%s error=%q", tweet.Id, mediaURLForLog(u), errorText)
 			tweet.Urls = append(tweet.Urls, u)
 			if firstRetryableErr == nil {
 				if result.Error != nil {
@@ -335,18 +347,11 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 		successUrls = append(successUrls, u)
 	}
 
-	// 只在至少一个媒体下载成功时才打印推文标题
+	// Log one compact per-tweet completion line only when at least one media item succeeded.
 	if len(successUrls) > 0 {
-		fmt.Printf("%s", color.FgLightMagenta.Render(tweetNaming.LogFormat()))
 		totalAttempted := len(successUrls) + len(tweet.Urls) + len(skippedUrls)
-		if totalAttempted > len(successUrls) {
-			fmt.Printf(" [%d/%d succeeded", len(successUrls), totalAttempted)
-			if len(skippedUrls) > 0 {
-				fmt.Printf(", %d skipped", len(skippedUrls))
-			}
-			fmt.Printf("]")
-		}
-		fmt.Println()
+		titleField := color.FgLightMagenta.Render(fmt.Sprintf("title=%q", tweetNaming.LogFormat()))
+		log.Infof("[download] Tweet media complete %s succeeded=%d failed=%d skipped=%d total=%d", titleField, len(successUrls), len(tweet.Urls), len(skippedUrls), totalAttempted)
 	}
 
 	// 只有可重试的失败才进入后续失败链路。
@@ -368,7 +373,7 @@ func tweetDownloader(config *workerConfig, errch chan<- PackagedTweet, twech <-c
 	defer func() {
 		if p := recover(); p != nil {
 			config.cancel(fmt.Errorf("%v", p))
-			log.Errorln("[download] Panic:", p)
+			log.Errorf("[download] Tweet worker panic error=%q", fmt.Sprint(p))
 
 			safeSend := func(pt PackagedTweet) {
 				// Recover path only: if the consumer already stopped after cancellation,
@@ -410,10 +415,10 @@ func tweetDownloader(config *workerConfig, errch chan<- PackagedTweet, twech <-c
 					if tie, ok := pt.(TweetInEntity); ok && tie.Entity != nil {
 						parentDir := tie.Entity.ParentDir()
 						if parentDir != "" {
-								userNaming := naming.NewUserNaming(tweet.Creator.Name, tweet.Creator.ScreenName, config.maxFileNameLen)
-								userDirName := userNaming.SanitizedTitle()
-								userDir := filepath.Join(parentDir, userDirName)
-								tweetNaming := naming.NewTweetNaming(tweet.Text, tweet.Id, tweet.Creator.Title(), config.maxFileNameLen)
+							userNaming := naming.NewUserNaming(tweet.Creator.Name, tweet.Creator.ScreenName, config.maxFileNameLen)
+							userDirName := userNaming.SanitizedTitle()
+							userDir := filepath.Join(parentDir, userDirName)
+							tweetNaming := naming.NewTweetNaming(tweet.Text, tweet.Id, tweet.Creator.Title(), config.maxFileNameLen)
 							saveTweetJson(config, userDir, tweet, tweetNaming)
 							saveLoongTweet(config, userDir, tweet, tweetNaming)
 						}
@@ -447,8 +452,9 @@ func BatchDownloadTweet(ctx context.Context, client *resty.Client, skipLoongTwee
 	if len(pts) == 0 {
 		return nil
 	}
-	log.Infof("[download] Starting batch download for %d tweets", len(pts))
+	start := time.Now()
 	maxDownloadRoutine := opts.normalizedMaxDownloadRoutine()
+	log.Infof("[download] Tweet batch start tweets=%d media=%d workers=%d skip_metadata=%t", len(pts), countTotalUrls(pts), min(len(pts), maxDownloadRoutine), skipLoongTweet)
 
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
@@ -463,17 +469,17 @@ func BatchDownloadTweet(ctx context.Context, client *resty.Client, skipLoongTwee
 	}
 	close(tweetChan)
 
-		config := workerConfig{
-			ctx:            ctx,
-			cancel:         cancel,
-			wg:             &wg,
-			skipLoongTweet: skipLoongTweet,
-			downloader:     dwn,
-			fileWriter:     fileWriter,
-			onTweetDone:    onTweetDone,
-			pathResolver:   utils.NewUniquePathResolver(),
-			maxFileNameLen: opts.normalizedMaxFileNameLen(),
-		}
+	config := workerConfig{
+		ctx:            ctx,
+		cancel:         cancel,
+		wg:             &wg,
+		skipLoongTweet: skipLoongTweet,
+		downloader:     dwn,
+		fileWriter:     fileWriter,
+		onTweetDone:    onTweetDone,
+		pathResolver:   utils.NewUniquePathResolver(),
+		maxFileNameLen: opts.normalizedMaxFileNameLen(),
+	}
 	for i := 0; i < numRoutine; i++ {
 		wg.Add(1)
 		go tweetDownloader(&config, errChan, tweetChan)
@@ -488,6 +494,6 @@ func BatchDownloadTweet(ctx context.Context, client *resty.Client, skipLoongTwee
 	for pt := range errChan {
 		failedTweets = append(failedTweets, pt)
 	}
-	log.Infof("[download] Batch download complete: %d tweet(s) failed out of %d", len(failedTweets), len(pts))
+	log.Infof("[download] Tweet batch complete tweets=%d failed_tweets=%d duration=%s", len(pts), len(failedTweets), time.Since(start))
 	return failedTweets
 }

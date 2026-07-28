@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/unkmonster/tmd/internal/logging"
 	"github.com/unkmonster/tmd/internal/utils"
 )
 
@@ -210,7 +211,7 @@ func collectParentDirUpdates(
 				row.OwnerID,
 				existingID,
 				row.ID,
-				targetParent,
+				logging.Path(targetParent),
 			)
 		}
 		desiredKeys[key] = row.ID

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html"
+	"strings"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -56,7 +57,7 @@ func GetUserByScreenName(ctx context.Context, master *resty.Client, additional [
 	if cli == nil {
 		return nil, 0, fmt.Errorf("failed to get user [%s]: no available client", screenName)
 	}
-	log.Debugf("[twitter] GetUserByScreenName(%s) → client: %s", screenName, GetClientScreenName(cli))
+	log.Debugf("[twitter] User lookup screen_name=@%s account=%s", strings.TrimPrefix(screenName, "@"), clientNameForLog(cli))
 	u := makeUrl(&userByScreenName{screenName: screenName})
 	r, uid, err := getUser(ctx, cli, u)
 	if err != nil {
@@ -90,11 +91,11 @@ func parseUserResults(user_results *gjson.Result) (*User, uint64, error) {
 	if result.Get("__typename").String() == "UserUnavailable" {
 		// 返回不可访问用户的 ID，用于标记状态
 		if restId := result.Get("rest_id"); restId.Exists() {
-			log.Debugf("[twitter] UserUnavailable detected, rest_id: %s", restId.String())
+			log.Debugf("[twitter] User unavailable rest_id=%s", restId.String())
 			return nil, restId.Uint(), fmt.Errorf("user unavaiable")
 		}
 		// 尝试从其他字段获取ID
-		log.Debugf("[twitter] UserUnavailable result: %s", result.String())
+		log.Debugf("[twitter] User unavailable rest_id=unknown")
 		return nil, 0, fmt.Errorf("user unavaiable")
 	}
 	legacy := result.Get("legacy")
@@ -172,12 +173,12 @@ func itemContentsToTweets(itemContents []gjson.Result) []*Tweet {
 	for _, itemContent := range itemContents {
 		tweetResults, err := getResults(itemContent, timelineTweet)
 		if err != nil {
-			log.Debugln("[twitter] GetResults failed:", err)
+			log.Debugf("[twitter] Timeline tweet result parse failed error=%q", errorForLog(err))
 			continue
 		}
 		tw, err := parseTweetResults(&tweetResults)
 		if err != nil {
-			log.Debugln("[twitter] ParseTweetResults failed:", err)
+			log.Debugf("[twitter] Tweet parse failed error=%q", errorForLog(err))
 			continue
 		}
 		if tw != nil {

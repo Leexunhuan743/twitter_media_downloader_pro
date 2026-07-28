@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,8 +16,28 @@ import (
 	"testing"
 	"time"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/utils"
 )
+
+func captureDownloadLog(t *testing.T, fn func()) string {
+	t.Helper()
+	var buf bytes.Buffer
+	logger := log.StandardLogger()
+	originalOutput := logger.Out
+	originalFormatter := logger.Formatter
+	originalLevel := logger.Level
+	log.SetOutput(&buf)
+	log.SetFormatter(&log.TextFormatter{DisableTimestamp: true})
+	log.SetLevel(log.WarnLevel)
+	t.Cleanup(func() {
+		log.SetOutput(originalOutput)
+		log.SetFormatter(originalFormatter)
+		log.SetLevel(originalLevel)
+	})
+	fn()
+	return buf.String()
+}
 
 // =============================================================================
 // FileWriter.Write() 测试
@@ -449,6 +470,89 @@ func TestDownloader_Download_Error(t *testing.T) {
 	_, err = dl.Download(req)
 	if err == nil {
 		t.Error("期望无效 URL 返回错误")
+	}
+}
+
+func TestDownloader_Download_LogSanitizesURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "HEAD" {
+			w.Header().Set("Content-Length", "1024")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	dl := NewDownloader(NewFileWriter(nil))
+	req := DownloadRequest{
+		Context:     context.Background(),
+		URL:         server.URL + "/missing.jpg?token=secret-token&name=orig",
+		Destination: filepath.Join(t.TempDir(), "missing.jpg"),
+	}
+
+	output := captureDownloadLog(t, func() {
+		_, _ = dl.Download(req)
+	})
+
+	if strings.Contains(output, "secret-token") {
+		t.Fatalf("download log leaked sensitive URL query: %s", output)
+	}
+	if !strings.Contains(output, "[downloader] Download failed with non-2xx status") {
+		t.Fatalf("download log should include failure message, got: %s", output)
+	}
+	if !strings.Contains(output, "name=orig") {
+		t.Fatalf("download log should preserve non-sensitive query context, got: %s", output)
+	}
+}
+
+func TestDownloader_LogErrorSanitizesSensitiveText(t *testing.T) {
+	got := logError(errors.New("HTTP Error: 500 https://example.com/file.jpg?token=secret-token&name=orig"))
+
+	if strings.Contains(got, "secret-token") {
+		t.Fatalf("logError leaked sensitive text: %s", got)
+	}
+	if !strings.Contains(got, "token=[redacted:") {
+		t.Fatalf("logError should redact token fields, got: %s", got)
+	}
+	if !strings.Contains(got, "name=orig") {
+		t.Fatalf("logError should keep non-sensitive context, got: %s", got)
+	}
+}
+
+func TestDownloader_Download_RetryLogIncludesCallerContext(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "HEAD" {
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", streamThreshold+1))
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	dl := NewDownloader(NewFileWriter(nil))
+	req := DownloadRequest{
+		Context:     ctx,
+		URL:         server.URL + "/retry.mp4",
+		Destination: filepath.Join(t.TempDir(), "retry.mp4"),
+		LogFields: map[string]interface{}{
+			"tweet_id": uint64(2082145690277327224),
+		},
+	}
+
+	output := captureDownloadLog(t, func() {
+		_, _ = dl.Download(req)
+	})
+
+	if !strings.Contains(output, "[downloader] Download failed, retrying...") {
+		t.Fatalf("download log should include retry message, got: %s", output)
+	}
+	if !strings.Contains(output, "tweet_id=2082145690277327224") {
+		t.Fatalf("download retry log should include caller context, got: %s", output)
 	}
 }
 

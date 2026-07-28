@@ -43,11 +43,11 @@ func setupSSE(w http.ResponseWriter) (http.Flusher, error) {
 func writeSSEFrame(w http.ResponseWriter, flusher http.Flusher, write func() error) error {
 	controller := http.NewResponseController(w)
 	if err := controller.SetWriteDeadline(time.Now().Add(sseWriteTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		log.Warnf("[SSE] Failed to set write deadline: %v", err)
+		log.Warnf("[sse] Write deadline set failed error=%q", err.Error())
 	}
 	defer func() {
 		if err := controller.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
-			log.Warnf("[SSE] Failed to clear write deadline: %v", err)
+			log.Warnf("[sse] Write deadline clear failed error=%q", err.Error())
 		}
 	}()
 
@@ -61,7 +61,7 @@ func writeSSEFrame(w http.ResponseWriter, flusher http.Flusher, write func() err
 func (s *Server) handleSSETasks(w http.ResponseWriter, r *http.Request) {
 	flusher, err := setupSSE(w)
 	if err != nil {
-		log.Errorf("[SSE] setup failed: %v", err)
+		log.Errorf("[sse] Task stream setup failed error=%q", err.Error())
 		s.writeError(w, http.StatusInternalServerError, "Streaming unsupported")
 		return
 	}
@@ -129,7 +129,7 @@ func (s *Server) writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, evt 
 		var err error
 		jsonData, err = json.Marshal(evt.Data)
 		if err != nil {
-			log.Warnf("[SSE] Failed to marshal event %s: %v", evt.Event, err)
+			log.Warnf("[sse] Event marshal failed event=%s error=%q", evt.Event, err.Error())
 			return err
 		}
 	}

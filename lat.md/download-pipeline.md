@@ -20,6 +20,8 @@ The core download flow orchestrates batch user/media retrieval, single-file down
 11. completeTask (report result)
 ```
 
+The template also emits task-level [[logging#Download Logs]] for start, prepare completion, media batch completion, retry outcome, profile outcome, and final duration.
+
 ## Batch User Download
 
 `BatchUserDownload()` orchestrates the full batch flow:
@@ -39,6 +41,8 @@ The download pipeline uses a producer-consumer pattern to parallelize fetching a
 - Producer concurrency: ants.Pool (max 35)
 - Consumer concurrency: MaxDownloadRoutine (default CPU*10, max 100)
 - Per-round limit: 1500 tweets worth of API requests (userTweetRateLimit)
+
+Batch logs summarize collect/preprocess/complete counts. They avoid per-media success logs; single tweet completion is one compact event with succeeded/failed/skipped counts.
 
 ## Tweet Download
 
@@ -64,6 +68,8 @@ The download pipeline uses a producer-consumer pattern to parallelize fetching a
 - Uses separate `downloadClient` (no Twitter auth)
 - 403/404 = permanent failure, no retry
 - Stream mode size mismatch → delete incomplete file + retry
+- URL fields in downloader logs are sanitized before emission.
+- Tweet media downloads pass `tweet_id` into downloader log fields so low-level retry warnings can be traced back to the source tweet.
 
 ## FileWriter (Atomic Write)
 
@@ -79,3 +85,5 @@ Thread safety: 256-slot hash-based mutex (same path serialized, different paths 
 ## Retry
 
 `RetryFailedTweets()` loads failures from [[database|TweetDumper]] (persisted to `errors.json`) and re-downloads. Successes are removed from dumper; permanent failures remain for next retry cycle.
+
+Retry logs keep start/complete summaries at info level, report remaining retryable tweets as warnings, and push per-tweet recovered messages to debug level.

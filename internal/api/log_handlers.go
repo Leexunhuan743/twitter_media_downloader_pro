@@ -11,6 +11,7 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/unkmonster/tmd/internal/logging"
 )
 
 const (
@@ -116,7 +117,7 @@ func (s *Server) handleLogExport(w http.ResponseWriter, r *http.Request) {
 	logPath := filepath.Join(s.appRootPath, "tmd2.log")
 	f, err := os.Open(logPath)
 	if err != nil {
-		log.Errorf("[logs] Failed to open log file: %v", err)
+		log.Errorf("[logs] Open failed path=%q error=%q", logging.Path(logPath), err.Error())
 		s.writeError(w, http.StatusInternalServerError, "Failed to open log file")
 		return
 	}
@@ -204,5 +205,3 @@ func isValidLogLevel(level string) bool {
 	}
 	return false
 }
-
-

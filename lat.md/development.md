@@ -5,9 +5,10 @@ Conventions and gotchas for working on the TMD codebase.
 ## Logging Conventions
 Every log line must follow the project's domain-prefix and capitalization standards.
 
-- **Domain prefix**: every log line MUST start with `[domain]` where domain matches the package: `[auth]`, `[api]`, `[config]`, `[cookies]`, `[db]`, `[logs]`, `[schedules]`, `[theme]`, `[upload]`, `[web]`, `[WebUI]`, `[tasks]`, `[SSE]`, `[download-queue]`, `[download]`, `[batch]`, `[jsonfile]`, `[profile]`, `[twitter]`, `[RateLimiter]`, `[MFQ]`, `[server]`, `[downloader]`, `[scheduler]`, `[consolelog]`, `[listener]`.
+- **Domain prefix**: every log line MUST start with `[domain]` where domain matches the package: `[auth]`, `[api]`, `[cli]`, `[config]`, `[cookies]`, `[db]`, `[logs]`, `[schedules]`, `[theme]`, `[upload]`, `[web]`, `[tasks]`, `[sse]`, `[download-queue]`, `[download]`, `[batch]`, `[jsonfile]`, `[jsonfolder]`, `[profile]`, `[twitter]`, `[rate-limit]`, `[server]`, `[downloader]`, `[scheduler]`, `[consolelog]`, `[listener]`, `[recovery]`, or `[bot-*]`.
 - **Capitalization**: first character after `[domain]` MUST be uppercase.
 - **Levels**: `Errorf` = user-visible internal failures, `Warnf` = non-fatal operational issues, `Infof` = state changes, `Debugf` = internal details.
+- **Field style**: prefer `Event key=value key=%q` over sentence variants such as "Failed to ...".
 - **Structured logs**: `log.WithFields{}.Levelf("msg")` also needs `[domain]` prefix and capital letter.
 - **No err.Error() in user messages**: always `log.Errorf` the full error server-side, return a user-safe message.
 
@@ -20,12 +21,14 @@ s.writeErrorDetail(w, status, "user-safe", err.Error())
 ```
 
 - Raw `err.Error()` is NEVER in the `error` JSON field
-- Every `writeError`/`writeErrorDetail` MUST be preceded by `log.Errorf`
-- Exception: pure input validation errors with no err object
+- Internal server failures should be preceded by `log.Errorf` or `log.Warnf`
+- Input validation failures should use `log.Debugf` and avoid polluting normal error logs
 
 ## HTTP Client Log
 
 Both `tmd2.log` and `client.log` are rotated via lumberjack (2 MB max, 2 backups, 14 days retention). Server and CLI modes share the same rotation config.
+
+Detailed logging sinks, redaction, and access-log rules are documented in [[logging]].
 
 ## Concurrency Model
 TMD uses diverse concurrency patterns across its components, each suited to its workload.

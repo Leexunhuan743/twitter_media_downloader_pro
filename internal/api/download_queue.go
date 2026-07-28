@@ -74,7 +74,9 @@ func (q *DownloadQueue) Enqueue(task *Task, run func(ctx context.Context, taskID
 		return
 	}
 	q.pending = append(q.pending, job)
+	depth := len(q.pending)
 	q.mu.Unlock()
+	logQueueEnqueued(task, depth)
 	q.cond.Signal()
 }
 
@@ -102,7 +104,7 @@ func (q *DownloadQueue) CloseAndWait(timeout time.Duration) {
 	select {
 	case <-q.workerDone:
 	case <-time.After(timeout):
-		log.Warnf("[download-queue] Worker exit timed out after %s", timeout)
+		log.Warnf("[download-queue] Worker exit timeout timeout=%s", timeout)
 	}
 
 	detachedDone := make(chan struct{})
@@ -113,7 +115,7 @@ func (q *DownloadQueue) CloseAndWait(timeout time.Duration) {
 	select {
 	case <-detachedDone:
 	case <-time.After(timeout):
-		log.Warnf("[download-queue] Detached runs still active after %s", timeout)
+		log.Warnf("[download-queue] Detached runs active timeout=%s", timeout)
 	}
 }
 
@@ -202,7 +204,7 @@ func (q *DownloadQueue) executeJob(job *downloadJob) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Errorf("[download-queue] Task %s panicked: %v", job.taskID, r)
+				log.Errorf("[download-queue] Task panic task_id=%s error=%q", job.taskID, fmt.Sprint(r))
 				done <- fmt.Errorf("download task panic: %v", r)
 			}
 		}()
@@ -237,6 +239,7 @@ func (q *DownloadQueue) detachJob(job *downloadJob, done <-chan error) {
 		keys:      append([]targetKey(nil), job.keys...),
 	}
 	q.mu.Unlock()
+	logQueueDetached(job.taskID, q.cancelGrace)
 
 	q.detachedWG.Add(1)
 	go func() {

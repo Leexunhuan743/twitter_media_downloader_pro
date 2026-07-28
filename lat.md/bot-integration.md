@@ -75,6 +75,8 @@ All command-capable bots support `/dl` (download) and `/cancel` (cancel task):
 
 ## Lifecycle (main.go)
 
+Bot lifecycle logs identify startup and delivery failures for each provider without logging secrets.
+
 ```
 config → init bots → server.Start() → for each bot: go bot.Start()
                                         ↓
@@ -84,6 +86,8 @@ config → init bots → server.Start() → for each bot: go bot.Start()
 ```
 
 Bots are initialized in `main.go` after the server starts. Each bot runs in its own goroutine. On shutdown, bots stop before the server drains its task queue.
+
+Provider logs use `[bot-telegram]`, `[bot-discord]`, `[bot-wechat]`, `[bot-feishu]`, `[bot-gotify]`, or `[bot-pushover]`. Startup messages may include account or endpoint summaries, while token, secret, and webhook credentials are never logged.
 
 ### Bot HTTP Callback Routes
 

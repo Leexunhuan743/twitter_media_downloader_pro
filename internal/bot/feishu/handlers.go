@@ -14,7 +14,7 @@ func (b *Bot) handleMessage(ctx context.Context, event *lark.EventV2IMMessageRec
 	}
 	content, err := lark.UnwrapMessageContent(event.Message.MessageType, event.Message.Content)
 	if err != nil {
-		log.Warnf("[bot-feishu] Failed to unwrap message: %v", err)
+		log.Warnf("[bot-feishu] Unwrap message failed message_type=%s error=%q", event.Message.MessageType, err.Error())
 		return
 	}
 	text := strings.TrimSpace(content.Text.Text)
@@ -53,7 +53,7 @@ func (b *Bot) handleMessage(ctx context.Context, event *lark.EventV2IMMessageRec
 		b.cmdTasks(event.Message.MessageID)
 	case "start", "help":
 		b.cmdHelp(event.Message.MessageID)
-		
+
 	default:
 		b.sendReply(event.Message.MessageID, "Unknown command. Send /help for available commands.")
 	}

@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
-	"github.com/gookit/color"
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/downloader"
+	"github.com/unkmonster/tmd/internal/logging"
 	"github.com/unkmonster/tmd/internal/naming"
 	"github.com/unkmonster/tmd/internal/twitter"
 )
@@ -147,7 +147,7 @@ func getIntFromMap(m map[string]any, key string) int {
 func parseUint64(s string) uint64 {
 	v, err := strconv.ParseUint(s, 10, 64)
 	if err != nil {
-		log.Debugf("[jsonfile] Failed to parse uint64 from %q: %v", s, err)
+		log.Debugf("[jsonfolder] Parse uint64 failed value=%q error=%q", s, err.Error())
 	}
 	return v
 }
@@ -204,13 +204,13 @@ func parseLoongTweetFiles(folderPath string) ([]*twitter.Tweet, []string, error)
 	for _, path := range jsonFiles {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			log.Warnf("[jsonfile] Failed to read file %s: %v", path, err)
+			log.Warnf("[jsonfolder] File read failed file=%q error=%q", path, err.Error())
 			continue
 		}
 
 		var entry FormattedTweetEntry
 		if err := json.Unmarshal(data, &entry); err != nil {
-			log.Warnf("[jsonfile] Failed to parse FormattedTweetEntry from %s: %v", path, err)
+			log.Warnf("[jsonfolder] File parse failed file=%q error=%q", path, err.Error())
 			continue
 		}
 
@@ -299,10 +299,10 @@ func DownloadFromLoongTweetFolder(ctx context.Context, client *resty.Client, use
 				userDir := usersDir
 				if tw.Creator != nil {
 					// 构建用户目录：usersDir/{ sanitizedUserName }/
-						userNaming := naming.NewUserNaming(tw.Creator.Name, tw.Creator.ScreenName, opts.normalizedMaxFileNameLen())
+					userNaming := naming.NewUserNaming(tw.Creator.Name, tw.Creator.ScreenName, opts.normalizedMaxFileNameLen())
 					userDir = filepath.Join(usersDir, userNaming.SanitizedTitle())
 					if err := os.MkdirAll(userDir, 0755); err != nil {
-						log.Warnf("[jsonfile] Failed to create user dir %s: %v", userDir, err)
+						log.Warnf("[jsonfolder] User directory failed path=%q error=%q", logging.Path(userDir), err.Error())
 					}
 				}
 				pts = append(pts, JsonPackagedTweet{Tweet: tw, Dir: userDir})
@@ -335,10 +335,10 @@ func DownloadFromLoongTweetFolder(ctx context.Context, client *resty.Client, use
 
 			// 输出文件夹级别的成功/失败统计
 			if result.Success {
-				fmt.Printf("%s ✓ %s: %d tweets processed\n", color.FgCyan.Render("[jsonfolder]"), filepath.Base(fp), result.TweetCount)
+				log.Infof("[jsonfolder] Folder complete folder=%q tweets=%d duration=%s", filepath.Base(fp), result.TweetCount, result.Duration)
 			} else {
 				result.Error = fmt.Sprintf("%d/%d tweets failed", len(failedTweets), len(pts))
-				fmt.Printf("%s ✗ %s: %v\n", color.FgCyan.Render("[jsonfolder]"), filepath.Base(fp), result.Error)
+				log.Warnf("[jsonfolder] Folder failed folder=%q tweets=%d failed_tweets=%d duration=%s error=%q", filepath.Base(fp), len(pts), len(failedTweets), result.Duration, result.Error)
 			}
 
 			mu.Lock()

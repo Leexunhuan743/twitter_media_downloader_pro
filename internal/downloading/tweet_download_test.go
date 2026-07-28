@@ -1,17 +1,38 @@
 package downloading
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/downloader"
 	"github.com/unkmonster/tmd/internal/twitter"
 	"github.com/unkmonster/tmd/internal/utils"
 )
+
+func captureTweetDownloadLog(t *testing.T, fn func()) string {
+	t.Helper()
+	var buf bytes.Buffer
+	originalOutput := log.StandardLogger().Out
+	originalFormatter := log.StandardLogger().Formatter
+	originalLevel := log.StandardLogger().Level
+	log.SetOutput(&buf)
+	log.SetFormatter(&log.TextFormatter{DisableTimestamp: true, ForceColors: true})
+	log.SetLevel(log.InfoLevel)
+	t.Cleanup(func() {
+		log.SetOutput(originalOutput)
+		log.SetFormatter(originalFormatter)
+		log.SetLevel(originalLevel)
+	})
+	fn()
+	return buf.String()
+}
 
 type mockTweetFileWriter struct {
 	result downloader.WriteResult
@@ -23,7 +44,8 @@ func (m *mockTweetFileWriter) Write(req downloader.WriteRequest) (downloader.Wri
 }
 
 type mockTweetDownloader struct {
-	results map[string]mockTweetDownloadResult
+	results  map[string]mockTweetDownloadResult
+	requests []downloader.DownloadRequest
 }
 
 type mockTweetDownloadResult struct {
@@ -32,6 +54,7 @@ type mockTweetDownloadResult struct {
 }
 
 func (m *mockTweetDownloader) Download(req downloader.DownloadRequest) (*downloader.DownloadResult, error) {
+	m.requests = append(m.requests, req)
 	if m.results == nil {
 		return &downloader.DownloadResult{Success: true}, nil
 	}
@@ -39,6 +62,37 @@ func (m *mockTweetDownloader) Download(req downloader.DownloadRequest) (*downloa
 		return result.result, result.err
 	}
 	return &downloader.DownloadResult{Success: true}, nil
+}
+
+func TestDownloadTweetMedia_PassesTweetIDLogField(t *testing.T) {
+	tempDir := t.TempDir()
+	rawURL := "https://example.com/media.jpg"
+	tweet := &twitter.Tweet{
+		Id:        2082145690277327224,
+		Text:      "tweet",
+		Urls:      []string{rawURL},
+		CreatedAt: time.Now(),
+		Creator: &twitter.User{
+			Name:       "alice",
+			ScreenName: "alice",
+		},
+	}
+	mock := &mockTweetDownloader{}
+	cfg := &workerConfig{
+		ctx:        context.Background(),
+		downloader: mock,
+	}
+
+	err := downloadTweetMedia(cfg, tempDir, tweet, true)
+	if err != nil {
+		t.Fatalf("downloadTweetMedia() unexpected error: %v", err)
+	}
+	if len(mock.requests) != 1 {
+		t.Fatalf("Download called %d times, want 1", len(mock.requests))
+	}
+	if got := mock.requests[0].LogFields["tweet_id"]; got != tweet.Id {
+		t.Fatalf("tweet_id log field = %#v, want %d", got, tweet.Id)
+	}
 }
 
 type panicTweetDownloader struct{}
@@ -463,6 +517,45 @@ func TestDownloadTweetMedia_RetainsRetryableUrlsOnly(t *testing.T) {
 	}
 	if len(tweet.Urls) != 1 || tweet.Urls[0] != retryableURL {
 		t.Fatalf("tweet.Urls 只应保留可重试 URL，got %v", tweet.Urls)
+	}
+}
+
+func TestDownloadTweetMedia_LogSanitizesURL(t *testing.T) {
+	tempDir := t.TempDir()
+	rawURL := "https://example.com/500.jpg?token=secret-token&name=orig"
+	tweet := &twitter.Tweet{
+		Id:        5,
+		Text:      "tweet",
+		Urls:      []string{rawURL},
+		CreatedAt: time.Now(),
+		Creator: &twitter.User{
+			Name:       "erin",
+			ScreenName: "erin",
+		},
+	}
+
+	cfg := &workerConfig{
+		ctx: context.Background(),
+		downloader: &mockTweetDownloader{results: map[string]mockTweetDownloadResult{
+			rawURL: {
+				result: &downloader.DownloadResult{},
+				err:    &utils.HttpStatusError{Code: 500, Msg: "token=secret-token"},
+			},
+		}},
+	}
+
+	output := captureTweetDownloadLog(t, func() {
+		_ = downloadTweetMedia(cfg, tempDir, tweet, true)
+	})
+
+	if strings.Contains(output, "secret-token") {
+		t.Fatalf("media log leaked sensitive URL query or error text: %s", output)
+	}
+	if !strings.Contains(output, "[download] Failed media") {
+		t.Fatalf("media log should include failure message, got: %s", output)
+	}
+	if !strings.Contains(output, "name=orig") {
+		t.Fatalf("media log should preserve non-sensitive query context, got: %s", output)
 	}
 }
 

@@ -9,6 +9,7 @@ Resty HTTP client with Twitter auth headers and rate limiting.
 - **Bearer Token** fetched at login
 - **Rate limiting** via `EnableRateLimit(client)` — blocks or errors on trigger
 - **Account-level errors** → `SetClientError()` marks account unavailable
+- **Logs**: account and rate-limit logs follow [[logging#Twitter API Logs]]
 
 ## GraphQL Endpoints
 Six GraphQL endpoints are used for user resolution, timeline fetching, and list operations.
@@ -33,6 +34,8 @@ TMD supports one master account plus multiple additional accounts for rate limit
   - Non-protected → prefer additional accounts (spread rate limit)
 - **List operations** (`GetLst`, `GetMembers`): master account only — lists are user-private
 - **User lookup**: `GetUserByScreenName` uses SelectClientMFQ with nil user (user isn't known yet)
+
+Client selection logs use endpoint and account summaries only. They never log `auth_token`, `ct0`, Authorization headers, or raw response bodies.
 
 ## Error Types
 Typed errors and error codes returned by the Twitter API layer, each with distinct handling semantics.

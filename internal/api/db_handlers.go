@@ -71,6 +71,14 @@ func optionalUint64Query(r *http.Request, name string) (uint64, bool, error) {
 	return value, true, nil
 }
 
+func logDBInvalidInput(field, value string, err error) {
+	if err == nil {
+		log.Debugf("[db] Invalid input field=%s value=%q", field, value)
+		return
+	}
+	log.Debugf("[db] Invalid input field=%s value=%q error=%q", field, value, err.Error())
+}
+
 // ============ Users 管理 ============
 
 func (s *Server) handleDBUsers(w http.ResponseWriter, r *http.Request) {
@@ -161,7 +169,7 @@ func (s *Server) handleDBUserUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ScreenName != nil {
 		if err := validateScreenName(*req.ScreenName); err != nil {
-			log.Debugf("[db] Invalid screen_name: %v", err)
+			logDBInvalidInput("screen_name", *req.ScreenName, err)
 			s.writeErrorDetail(w, http.StatusBadRequest, "Invalid screen name", err.Error())
 			return
 		}
@@ -169,7 +177,7 @@ func (s *Server) handleDBUserUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name != nil {
 		if err := validateFieldName(*req.Name); err != nil {
-			log.Debugf("[db] Invalid name: %v", err)
+			logDBInvalidInput("name", *req.Name, err)
 			s.writeErrorDetail(w, http.StatusBadRequest, "Invalid name", err.Error())
 			return
 		}
@@ -235,7 +243,7 @@ func (s *Server) handleDBLists(w http.ResponseWriter, r *http.Request) {
 	if ownerID := r.URL.Query().Get("ownerId"); ownerID != "" {
 		ownerUID, err := strconv.ParseUint(ownerID, 10, 64)
 		if err != nil {
-			log.Debugf("[db] Invalid owner ID: %v", err)
+			logDBInvalidInput("ownerId", ownerID, err)
 			s.writeError(w, http.StatusBadRequest, "Invalid owner ID")
 			return
 		}
@@ -301,7 +309,7 @@ func (s *Server) handleDBListUpdate(w http.ResponseWriter, r *http.Request) {
 
 	if req.Name != nil {
 		if err := validateFieldName(*req.Name); err != nil {
-			log.Debugf("[db] Invalid name: %v", err)
+			logDBInvalidInput("name", *req.Name, err)
 			s.writeErrorDetail(w, http.StatusBadRequest, "Invalid name", err.Error())
 			return
 		}
@@ -310,7 +318,7 @@ func (s *Server) handleDBListUpdate(w http.ResponseWriter, r *http.Request) {
 	if req.OwnerID != nil {
 		ownerID, err := strconv.ParseUint(*req.OwnerID, 10, 64)
 		if err != nil {
-			log.Debugf("[db] Invalid owner ID: %v", err)
+			logDBInvalidInput("owner_user_id", *req.OwnerID, err)
 			s.writeError(w, http.StatusBadRequest, "Invalid owner ID")
 			return
 		}
@@ -359,7 +367,7 @@ func (s *Server) handleDBUserEntities(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if userID, ok, err := optionalUint64Query(r, "userId"); err != nil {
-		log.Debugf("[db] Invalid user ID: %v", err)
+		logDBInvalidInput("userId", r.URL.Query().Get("userId"), err)
 		s.writeError(w, http.StatusBadRequest, "Invalid user ID")
 		return
 	} else if ok {
@@ -432,7 +440,7 @@ func (s *Server) handleDBUserEntityUpdate(w http.ResponseWriter, r *http.Request
 
 	if req.Name != nil {
 		if err := validateFieldName(*req.Name); err != nil {
-			log.Debugf("[db] Invalid name: %v", err)
+			logDBInvalidInput("name", *req.Name, err)
 			s.writeErrorDetail(w, http.StatusBadRequest, "Invalid name", err.Error())
 			return
 		}
@@ -450,7 +458,7 @@ func (s *Server) handleDBUserEntityUpdate(w http.ResponseWriter, r *http.Request
 		} else {
 			t, err := time.Parse(time.RFC3339, *req.LatestReleaseTime)
 			if err != nil {
-				log.Debugf("[db] Invalid latest_release_time: %v", err)
+				logDBInvalidInput("latest_release_time", *req.LatestReleaseTime, err)
 				s.writeError(w, http.StatusBadRequest, "Invalid latest_release_time format, use RFC 3339 (e.g. 2024-12-18T15:30:00Z)")
 				return
 			}
@@ -511,7 +519,7 @@ func (s *Server) batchLoadNames(table, idCol, nameCol string, ids []interface{})
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Warnf("[db] batchLoadNames iteration failed: %v", err)
+		log.Warnf("[db] Batch name load failed table=%s error=%q", table, err.Error())
 	}
 	return names
 }
@@ -531,7 +539,7 @@ func (s *Server) handleDBListEntities(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if listID, ok, err := optionalUint64Query(r, "listId"); err != nil {
-		log.Debugf("[db] Invalid list ID: %v", err)
+		logDBInvalidInput("listId", r.URL.Query().Get("listId"), err)
 		s.writeError(w, http.StatusBadRequest, "Invalid list ID")
 		return
 	} else if ok {
@@ -609,7 +617,7 @@ func (s *Server) handleDBListEntityUpdate(w http.ResponseWriter, r *http.Request
 
 	if req.Name != nil {
 		if err := validateFieldName(*req.Name); err != nil {
-			log.Debugf("[db] Invalid name: %v", err)
+			logDBInvalidInput("name", *req.Name, err)
 			s.writeErrorDetail(w, http.StatusBadRequest, "Invalid name", err.Error())
 			return
 		}
@@ -654,7 +662,7 @@ func (s *Server) handleDBUserLinks(w http.ResponseWriter, r *http.Request) {
 	var args []interface{}
 
 	if userID, ok, err := optionalUint64Query(r, "userId"); err != nil {
-		log.Debugf("[db] Invalid user ID: %v", err)
+		logDBInvalidInput("userId", r.URL.Query().Get("userId"), err)
 		s.writeError(w, http.StatusBadRequest, "Invalid user ID")
 		return
 	} else if ok {
@@ -663,7 +671,7 @@ func (s *Server) handleDBUserLinks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if listEntityID, ok, err := optionalUint64Query(r, "listEntityId"); err != nil {
-		log.Debugf("[db] Invalid list entity ID: %v", err)
+		logDBInvalidInput("listEntityId", r.URL.Query().Get("listEntityId"), err)
 		s.writeError(w, http.StatusBadRequest, "Invalid list entity ID")
 		return
 	} else if ok {
@@ -745,7 +753,7 @@ func (s *Server) handleDBUserLinkUpdate(w http.ResponseWriter, r *http.Request) 
 
 	if req.Name != nil {
 		if err := validateFieldName(*req.Name); err != nil {
-			log.Errorf("[db] Invalid name: %v", err)
+			logDBInvalidInput("name", *req.Name, err)
 			s.writeErrorDetail(w, http.StatusBadRequest, "Invalid name", err.Error())
 			return
 		}
@@ -938,7 +946,7 @@ func (s *Server) handleDBStats(w http.ResponseWriter, _ *http.Request) {
 	for _, t := range tables {
 		count, err := database.Count(s.db, t.Name, nil)
 		if err != nil {
-			log.Errorf("[db] Failed to count %s: %v", t.Name, err)
+			log.Errorf("[db] Count failed table=%s error=%q", t.Name, err.Error())
 			s.writeError(w, http.StatusInternalServerError, "Database query failed")
 			return
 		}
@@ -958,7 +966,7 @@ func (s *Server) handleDBPreviousNames(w http.ResponseWriter, r *http.Request) {
 
 	// 可选：按 user_id 筛选
 	if userID, ok, err := optionalUint64Query(r, "userId"); err != nil {
-		log.Debugf("[db] Invalid user ID: %v", err)
+		logDBInvalidInput("userId", r.URL.Query().Get("userId"), err)
 		s.writeError(w, http.StatusBadRequest, "Invalid user ID")
 		return
 	} else if ok {

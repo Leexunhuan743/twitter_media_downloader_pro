@@ -69,6 +69,7 @@ func (tm *TaskManager) CreateTask(taskType TaskType, data interface{}) *Task {
 	tm.mu.Unlock()
 
 	tm.publishTasks()
+	logTaskCreated(task)
 	return task
 }
 
@@ -364,9 +365,20 @@ func (tm *TaskManager) UpdateTaskStatus(id string, status TaskStatus) bool {
 		}
 	}
 	tm.rebuildSnapshotLocked()
+	taskSnapshot := cloneTask(task)
 	tm.mu.Unlock()
 
 	tm.publishTasks()
+	switch status {
+	case TaskStatusRunning:
+		logTaskStarted(taskSnapshot)
+	case TaskStatusCompleted:
+		logTaskCompleted(taskSnapshot)
+	case TaskStatusFailed:
+		logTaskFailed(taskSnapshot, nil)
+	case TaskStatusCancelled:
+		logTaskCancelled(taskSnapshot)
+	}
 
 	if tm.eventBus != nil && !isTerminalStatus(previousStatus) {
 		switch status {
@@ -403,9 +415,11 @@ func (tm *TaskManager) SetTaskError(id string, err error) bool {
 		task.Cancel()
 	}
 	tm.rebuildSnapshotLocked()
+	taskSnapshot := cloneTask(task)
 	tm.mu.Unlock()
 
 	tm.publishTasks()
+	logTaskFailed(taskSnapshot, err)
 	if tm.eventBus != nil {
 		tm.eventBus.PublishNotification("task_failed", taskTypeName(task.Type)+" failed: "+err.Error(), map[string]string{"task_id": id})
 	}
@@ -457,9 +471,11 @@ func (tm *TaskManager) CompleteTask(id string, result *TaskResult) bool {
 		task.Cancel()
 	}
 	tm.rebuildSnapshotLocked()
+	taskSnapshot := cloneTask(task)
 	tm.mu.Unlock()
 
 	tm.publishTasks()
+	logTaskCompleted(taskSnapshot)
 	if tm.eventBus != nil {
 		tm.eventBus.PublishNotification("task_completed", taskTypeName(task.Type)+" completed", map[string]string{"task_id": id})
 	}
@@ -487,9 +503,11 @@ func (tm *TaskManager) CancelTask(id string) CancelTaskResult {
 	now := time.Now()
 	task.EndedAt = &now
 	tm.rebuildSnapshotLocked()
+	taskSnapshot := cloneTask(task)
 	tm.mu.Unlock()
 
 	tm.publishTasks()
+	logTaskCancelled(taskSnapshot)
 	if tm.eventBus != nil {
 		tm.eventBus.PublishNotification("task_cancelled", taskTypeName(task.Type)+" cancelled", map[string]string{"task_id": id})
 	}

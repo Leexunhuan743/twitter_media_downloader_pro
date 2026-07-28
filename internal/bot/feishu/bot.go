@@ -75,7 +75,7 @@ func (b *Bot) Start() error {
 		api.RunBotLogLoop(b.logHub, b.stopCh, &b.wg, b.sendLogAlert)
 	}
 
-	log.Infof("[bot-feishu] Started (app_id: %s)", b.config.AppID)
+	log.Infof("[bot-feishu] Started app_id=%s callback_path=%s", b.config.AppID, b.CallbackPath())
 	return nil
 }
 func (b *Bot) Stop() {
@@ -115,7 +115,7 @@ func (b *Bot) sendText(chatID, text string) {
 	ctx := context.Background()
 	_, _, err := b.cli.Message.Send().ToChatID(chatID).SendText(ctx, text)
 	if err != nil {
-		log.Warnf("[bot-feishu] Failed to send message: %v", err)
+		log.Warnf("[bot-feishu] Send message failed chat_id=%s error=%q", chatID, err.Error())
 	}
 }
 
@@ -123,6 +123,6 @@ func (b *Bot) sendReply(msgID, text string) {
 	ctx := context.Background()
 	_, _, err := b.cli.Message.Reply(msgID).SendText(ctx, text)
 	if err != nil {
-		log.Warnf("[bot-feishu] Failed to reply: %v", err)
+		log.Warnf("[bot-feishu] Reply failed message_id=%s error=%q", msgID, err.Error())
 	}
 }

@@ -334,6 +334,15 @@ func TestDownloadServiceImpl_CompleteTaskWithProfileWarning(t *testing.T) {
 	assert.Equal(t, 3, reporter.CompleteCalls[0].Result.Profile.Versioned)
 }
 
+func TestDownloadLogHelpers(t *testing.T) {
+	assert.Equal(t,
+		"auto_follow=true follow_members=false skip_profile=true no_retry=false",
+		downloadOptionsSummary(DownloadOptions{AutoFollow: true, SkipProfile: true}),
+	)
+	assert.NotContains(t, safeDownloadError(errors.New("request failed token=secret-token")), "secret-token")
+	assert.Contains(t, safeDownloadError(errors.New("request failed token=secret-token")), "token=[redacted:")
+}
+
 func TestDownloadServiceImpl_UserDownloadErrorDoesNotCallReporterOnError(t *testing.T) {
 	impl := &downloadServiceImpl{
 		deps: &Dependencies{
