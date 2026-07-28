@@ -92,7 +92,7 @@ tmdp-windows-amd64.exe
 
 配置完成后即可正常使用。
 
-如需重新配置或修改参数，运行 `tmdp -conf` 可再次进入配置向导，各配置项说明如下：
+如需重新配置或修改参数，Windows 当前目录下运行 `.\tmdp-windows-amd64.exe -conf`（或重命名后运行 `.\tmdp.exe -conf`）可再次进入配置向导。若已加入 `PATH`，也可以直接运行 `tmdp -conf`。各配置项说明如下：
 
 | 配置项 | 说明 | 默认值 | 示例 |
 | --- | --- | --- | --- |
@@ -426,13 +426,19 @@ server {
 
 ## 使用场景与示例
 
+> 下方示例中的 `tmdp` 表示已将程序重命名为 `tmdp.exe` 或已加入 `PATH` 后的命令名。Windows 用户在当前目录直接运行 Release 文件时，请使用 `.\tmdp-windows-amd64.exe`；若已重命名，则使用 `.\tmdp.exe`。
+
 ### 场景1：首次使用
 
-```bash
-# 1. 配置
-tmdp -conf
+```powershell
+# Windows 当前目录直接运行 Release 文件
+.\tmdp-windows-amd64.exe -conf
+.\tmdp-windows-amd64.exe -user elonmusk -dbg
+```
 
-# 2. 测试下载
+```bash
+# 已加入 PATH，或 Linux/macOS 使用同名可执行文件时
+tmdp -conf
 tmdp -user elonmusk -dbg
 ```
 

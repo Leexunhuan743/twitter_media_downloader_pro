@@ -44,7 +44,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 		return nil, BatchDownloadSummary{}, nil
 	}
 	maxDownloadRoutine := opts.normalizedMaxDownloadRoutine()
-	log.Infof("[batch] Preprocess start users=%d workers=%d auto_follow=%t", len(users), maxDownloadRoutine, autoFollow)
+	log.Debugf("[batch] Preprocess start users=%d workers=%d auto_follow=%t", len(users), maxDownloadRoutine, autoFollow)
 
 	uidToUser := make(map[uint64]*twitter.User)
 	for _, u := range users {
@@ -120,7 +120,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 			}
 			log.Infof("[batch] Downloading %d user(s): %s", len(userNames), summary)
 		}
-		log.Info("[batch] Preprocessing users")
+		log.Debug("[batch] Preprocessing users")
 
 		for _, userInLST := range users {
 			var pathEntity *entity.UserEntity
@@ -151,7 +151,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 						symlinkWarnMu.Lock()
 						symlinkWarnCount++
 						if symlinkWarnCount == 1 {
-							log.Warnf("[batch] Symlink update failed user=%q reason=permission_denied suppressing=true", user.Title())
+							log.Debugf("[batch] Symlink update failed user=%q reason=permission_denied suppressing=true", user.Title())
 						}
 						symlinkWarnMu.Unlock()
 					}
@@ -211,7 +211,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 				symlinkWarnMu.Lock()
 				symlinkWarnCount++
 				if symlinkWarnCount == 1 {
-					log.Warnf("[batch] Symlink create failed user=%q reason=permission_denied suppressing=true", user.Title())
+					log.Debugf("[batch] Symlink create failed user=%q reason=permission_denied suppressing=true", user.Title())
 				}
 				symlinkWarnMu.Unlock()
 			}
@@ -222,7 +222,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 		log.Infof("[batch] No visible entities to download users=%d duration=%s", len(users), time.Since(start))
 		return nil, BatchDownloadSummary{}, nil
 	}
-	log.Infof("[batch] Preprocess complete entities=%d missing_tweets=%d duration=%s", userEntityHeap.Size(), missingTweets, time.Since(start))
+	log.Debugf("[batch] Preprocess complete entities=%d missing_tweets=%d duration=%s", userEntityHeap.Size(), missingTweets, time.Since(start))
 	log.Debugf("[batch] Real members count=%d", userEntityHeap.Size())
 	log.Debugf("[batch] Missing tweets count=%d", missingTweets)
 	if symlinkWarnCount > 0 {
@@ -454,7 +454,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 		fails = append(fails, pt.(*TweetInEntity))
 	}
 	log.Debugf("[batch] Unable to start users=%d", userEntityHeap.Size())
-	log.Infof("[batch] Complete entities=%d failed_tweets=%d unable_to_start=%d duration=%s", totalUsers, len(fails), userEntityHeap.Size(), time.Since(start))
+	log.Debugf("[batch] Complete entities=%d failed_tweets=%d unable_to_start=%d duration=%s", totalUsers, len(fails), userEntityHeap.Size(), time.Since(start))
 	return fails, summary, context.Cause(ctx)
 }
 

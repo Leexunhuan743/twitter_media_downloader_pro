@@ -27,10 +27,10 @@ type BatchDownloadSummary struct {
 
 func BatchDownloadAny(ctx context.Context, client *resty.Client, db *sqlx.DB, lists []twitter.ListBase, users []*twitter.User, dir string, realDir string, autoFollow bool, additional []*resty.Client, dwn downloader.Downloader, fileWriter downloader.FileWriter, opts RuntimeOptions, progress BatchProgressFunc, lsm *ListSyncManager) (failedTweets []*TweetInEntity, listMembers []*twitter.User, summary BatchDownloadSummary, err error) {
 	start := time.Now()
-	log.Infof("[batch] Collect start users=%d lists=%d auto_follow=%t", len(users), len(lists), autoFollow)
+	log.Debugf("[batch] Collect start users=%d lists=%d auto_follow=%t", len(users), len(lists), autoFollow)
 
 	for _, lst := range lists {
-		log.Infof("[batch] Collect list queued list=%q", lst.Title())
+		log.Debugf("[batch] Collect list queued list=%q", lst.Title())
 	}
 
 	log.Debug("[batch] Collect users start")
@@ -69,7 +69,7 @@ func BatchDownloadAny(ctx context.Context, client *resty.Client, db *sqlx.DB, li
 	}
 
 	log.Debugf("[batch] Collect users complete users=%d", len(packgedUsers))
-	log.Infof("[batch] Collect complete users=%d list_members=%d duration=%s", len(packgedUsers), len(listMembers), time.Since(start))
+	log.Debugf("[batch] Collect complete users=%d list_members=%d duration=%s", len(packgedUsers), len(listMembers), time.Since(start))
 	failedTweets, summary, err = BatchUserDownload(ctx, client, db, packgedUsers, realDir, autoFollow, additional, dwn, fileWriter, opts, progress)
 	return failedTweets, listMembers, summary, err
 }

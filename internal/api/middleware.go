@@ -58,8 +58,20 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		start := time.Now()
 		rr := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(rr, r)
-		log.Infof("[api] %s %s status=%d dur=%s ip=%s", r.Method, logging.RequestTarget(r), rr.statusCode, time.Since(start), clientIP(r.RemoteAddr))
+		log.StandardLogger().Logf(apiAccessLogLevel(r.Method, rr.statusCode), "[api] %s %s status=%d dur=%s ip=%s", r.Method, logging.RequestTarget(r), rr.statusCode, time.Since(start), clientIP(r.RemoteAddr))
 	})
+}
+
+func apiAccessLogLevel(method string, statusCode int) log.Level {
+	if statusCode >= http.StatusBadRequest {
+		return log.WarnLevel
+	}
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return log.DebugLevel
+	default:
+		return log.InfoLevel
+	}
 }
 
 // securityHeadersMiddleware 安全响应头中间件

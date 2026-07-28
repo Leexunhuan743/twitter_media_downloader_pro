@@ -312,7 +312,7 @@ func (pd *ProfileDownloader) DownloadMultiple(ctx context.Context, requests []Do
 	if len(requests) == 0 {
 		return nil
 	}
-	log.Infof("[profile] Batch download start users=%d", len(requests))
+	log.Debugf("[profile] Batch download start users=%d", len(requests))
 
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil) // 确保 cancel 在所有情况下都被调用
@@ -338,7 +338,7 @@ func (pd *ProfileDownloader) DownloadMultiple(ctx context.Context, requests []Do
 	}
 
 	wg.Wait()
-	log.Infof("[profile] Batch download complete succeeded=%d failed=%d total=%d", completedCount-failedCount, failedCount, len(requests))
+	log.Debugf("[profile] Batch download complete succeeded=%d failed=%d total=%d", completedCount-failedCount, failedCount, len(requests))
 	return results
 }
 

@@ -398,14 +398,19 @@ func (s *downloadServiceImpl) executeDownloadTemplate(ctx context.Context, confi
 
 	s.collectFailedTweets(dumper, failedTweets)
 	if !config.Opts.NoRetry {
-		log.Infof("[download] Retry start task_id=%s pending_tweets=%d", config.TaskID, dumper.Count())
-		retrySummary, err := downloading.RetryFailedTweets(
-			ctx, dumper, s.deps.DB, s.deps.Client, dwn, fileWriter, runtimeOptions, retryProgress,
-		)
-		if err != nil {
-			log.Warnf("[download] Retry failed task_id=%s error=%q", config.TaskID, safeDownloadError(err))
+		pendingTweets := dumper.Count()
+		if pendingTweets == 0 {
+			log.Infof("[download] Retry skipped reason=no_pending_tweets")
 		} else {
-			log.Infof("[download] Retry complete entities=%d remaining_entities=%d remaining_tweets=%d", retrySummary.TotalEntities, retrySummary.RemainingEntities, dumper.Count())
+			log.Infof("[download] Retry start task_id=%s pending_tweets=%d", config.TaskID, pendingTweets)
+			retrySummary, retryErr := downloading.RetryFailedTweets(
+				ctx, dumper, s.deps.DB, s.deps.Client, dwn, fileWriter, runtimeOptions, retryProgress,
+			)
+			if retryErr != nil {
+				log.Warnf("[download] Retry failed task_id=%s error=%q", config.TaskID, safeDownloadError(retryErr))
+			} else {
+				log.Infof("[download] Retry complete entities=%d remaining_entities=%d remaining_tweets=%d", retrySummary.TotalEntities, retrySummary.RemainingEntities, dumper.Count())
+			}
 		}
 	} else {
 		log.Infof("[download] Retry skipped reason=no_retry pending_tweets=%d", dumper.Count())
@@ -1085,9 +1090,9 @@ func (s *downloadServiceImpl) downloadProfile(ctx context.Context, taskID string
 		if bannerFailed > 0 {
 			fileParts = append(fileParts, fmt.Sprintf("%d banners", bannerFailed))
 		}
-		log.Infof("[profile] Download complete users=%d total=%d failed_files=%q", successCount, len(results), strings.Join(fileParts, ", "))
+		log.Warnf("[profile] Download complete users=%d total=%d failed_files=%q", successCount, len(results), strings.Join(fileParts, ", "))
 	} else if len(results) > 0 {
-		log.Infof("[profile] Download complete users=%d total=%d", successCount, len(results))
+		log.Debugf("[profile] Download complete users=%d total=%d", successCount, len(results))
 	}
 
 	if successCount == 0 && failCount > 0 {

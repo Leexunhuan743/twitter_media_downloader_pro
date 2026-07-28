@@ -12,6 +12,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/downloader"
+	"github.com/unkmonster/tmd/internal/logging"
 	"github.com/unkmonster/tmd/internal/twitter"
 	"github.com/unkmonster/tmd/internal/utils"
 )
@@ -92,6 +93,65 @@ func TestDownloadTweetMedia_PassesTweetIDLogField(t *testing.T) {
 	}
 	if got := mock.requests[0].LogFields["tweet_id"]; got != tweet.Id {
 		t.Fatalf("tweet_id log field = %#v, want %d", got, tweet.Id)
+	}
+}
+
+func TestTweetMediaSummaryFields_OmitsCleanSuccessCounts(t *testing.T) {
+	got := tweetMediaSummaryFields(1, 0, 0, 1)
+	if strings.Contains(got, "\x1b[") {
+		t.Fatalf("clean success summary should not color count fields, got: %q", got)
+	}
+	if got != "" {
+		t.Fatalf("summary = %q", got)
+	}
+}
+
+func TestTweetMediaSummaryFields_HighlightsIncompleteDownload(t *testing.T) {
+	got := tweetMediaSummaryFields(1, 1, 1, 3)
+	if !strings.Contains(got, "\x1b[") {
+		t.Fatalf("incomplete summary should color result fields, got: %q", got)
+	}
+	stripped := logging.StripANSI(got)
+	if stripped != "succeeded=1 failed=1 skipped=1 total=3" {
+		t.Fatalf("stripped summary = %q", stripped)
+	}
+}
+
+func TestDownloadTweetMedia_CompleteLogOmitsRedundantEventPhrase(t *testing.T) {
+	tempDir := t.TempDir()
+	tweet := &twitter.Tweet{
+		Id:        2082192002397925511,
+		Text:      "golden hour",
+		Urls:      []string{"https://example.com/success.jpg"},
+		CreatedAt: time.Now(),
+		Creator: &twitter.User{
+			Name:       "Jade Vow",
+			ScreenName: "JadeVow",
+		},
+	}
+
+	cfg := &workerConfig{
+		ctx:            context.Background(),
+		downloader:     &mockTweetDownloader{},
+		maxFileNameLen: 200,
+	}
+
+	output := captureTweetDownloadLog(t, func() {
+		_ = downloadTweetMedia(cfg, tempDir, tweet, true)
+	})
+
+	stripped := logging.StripANSI(output)
+	if strings.Contains(stripped, "Tweet media complete") {
+		t.Fatalf("summary log should omit redundant event phrase, got: %s", stripped)
+	}
+	if strings.Contains(stripped, "title=") {
+		t.Fatalf("summary log should omit title field label, got: %s", stripped)
+	}
+	if strings.Contains(stripped, "succeeded=") || strings.Contains(stripped, "failed=") || strings.Contains(stripped, "skipped=") || strings.Contains(stripped, "total=") {
+		t.Fatalf("clean success summary should omit all count fields, got: %s", stripped)
+	}
+	if !strings.Contains(stripped, `"[Jade Vow(JadeVow)] golden hour _2082192002397925511"`) {
+		t.Fatalf("summary log should preserve readable title, got: %s", stripped)
 	}
 }
 

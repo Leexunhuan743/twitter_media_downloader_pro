@@ -28,6 +28,8 @@ HTTP request logs record the request outcome without leaking credentials from qu
 
 `loggingMiddleware` logs `METHOD /path status=... dur=... ip=...` using a sanitized request target without a `target=` label. It uses `[[internal/logging/sanitize.go#RequestTarget]]` so SSE URLs such as `/api/v1/logs/stream?token=...` remain useful without exposing the token.
 
+Successful `GET`, `HEAD`, and `OPTIONS` access logs are debug-only to keep Web UI polling, static files, health checks, and SSE connections out of normal output. Mutating requests stay info; any status >=400 is warning.
+
 ## Task Logs
 
 Task logs should describe lifecycle milestones, not every inner loop iteration.
@@ -44,11 +46,13 @@ Download logs should make each run diagnosable from summaries without printing e
 
 `[[internal/service/download_service.go#downloadOptionsSummary]]` records task-level options at task start. Download phase starts such as media batch, follow members, retry, profile, mark, and JSON import include `task_id`; phase completion summaries omit repeated ids and focus on counts, leftovers, and duration.
 
+Batch collect/preprocess internals and profile worker success summaries are debug-only. User-facing info logs keep target summaries and phase boundaries; warnings remain for protected users, permission issues, partial profile file failures, and retry failures. Empty retry rounds log one skipped line instead of start/complete pairs.
+
 Protected unfollowed users skipped during batch preprocessing are warnings because they explain why expected content will be absent.
 
-Downloader and media failure logs must sanitize URLs with `[[internal/logging/sanitize.go#SanitizeURL]]`. Per-tweet success lines may be emitted as one compact summary with counts, and the title field may be colored for terminal readability, but per-media successes stay out of logrus.
+Downloader and media failure logs must sanitize URLs with `[[internal/logging/sanitize.go#SanitizeURL]]`. Per-tweet summary lines start with the quoted tweet title, without a redundant event phrase or `title=` label. Clean successes print only the title; when failures or skips exist, summaries expand to `succeeded/failed/skipped/total` and affected count fields may be colored for terminal readability. Per-media successes stay out of logrus.
 
-Tweet title logs use `[[internal/naming/tweet_naming.go#TweetNaming#LogFormat]]` so the displayed title stays consistent with the saved file name base. Completion summaries rely on that title for the tweet id instead of adding a separate `tweet_id` field.
+Tweet title logs use `[[internal/naming/tweet_naming.go#TweetNaming#LogFormat]]` so the displayed title stays close to the saved file name base while inserting a readable space before `_tweet_id` and trimming trailing title whitespace. Completion summaries rely on that title for the tweet id instead of adding a separate `tweet_id` field.
 
 Caller context that explains a file download, such as `tweet_id`, should be passed through `[[internal/downloader/types.go#DownloadRequest]]` log fields so downloader retry logs remain traceable.
 
@@ -72,7 +76,7 @@ Rate-limit sleeps and no-client states are warnings because they explain stalled
 
 Peripheral logs should keep integrations and imports observable without competing with the core task and download timeline.
 
-Scheduler logs use `[scheduler]` for lifecycle, reload, manual trigger, scheduled trigger, stale-generation exits, and empty-task failures. Bot logs use provider prefixes such as `[bot-telegram]` and log startup plus delivery failures with action/status/error fields, never credentials.
+Scheduler logs use `[scheduler]` for lifecycle, reload, manual trigger, scheduled trigger, stale-generation exits, and empty-task failures. Bot logs use provider prefixes such as `[bot-telegram]` and log startup plus delivery failures with action/status/error fields, never credentials. An empty bot config is an info-level skipped state, not a warning.
 
 JSON import logs use `[jsonfile]` for third-party files and `[jsonfolder]` for `.loongtweet` folders. File and folder summaries report tweet/media counts, failed tweet counts, and duration through logrus rather than direct console printing.
 

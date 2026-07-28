@@ -269,8 +269,11 @@ func TestLoggingMiddleware_MultipleRequests(t *testing.T) {
 func TestLoggingMiddleware_RedactsSensitiveQueryParams(t *testing.T) {
 	var buf bytes.Buffer
 	originalOutput := log.StandardLogger().Out
+	originalLevel := log.StandardLogger().Level
 	log.SetOutput(&buf)
+	log.SetLevel(log.DebugLevel)
 	defer log.SetOutput(originalOutput)
+	defer log.SetLevel(originalLevel)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -290,6 +293,52 @@ func TestLoggingMiddleware_RedactsSensitiveQueryParams(t *testing.T) {
 	assert.Contains(t, line, "status=200")
 	assert.Contains(t, line, "ip=127.0.0.1")
 	assert.NotContains(t, line, "secret-token")
+}
+
+func TestAPIAccessLogLevel(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		statusCode int
+		want       log.Level
+	}{
+		{
+			name:       "successful get is debug",
+			method:     http.MethodGet,
+			statusCode: http.StatusOK,
+			want:       log.DebugLevel,
+		},
+		{
+			name:       "not modified get is debug",
+			method:     http.MethodGet,
+			statusCode: http.StatusNotModified,
+			want:       log.DebugLevel,
+		},
+		{
+			name:       "successful post is info",
+			method:     http.MethodPost,
+			statusCode: http.StatusAccepted,
+			want:       log.InfoLevel,
+		},
+		{
+			name:       "client error is warning",
+			method:     http.MethodGet,
+			statusCode: http.StatusUnauthorized,
+			want:       log.WarnLevel,
+		},
+		{
+			name:       "server error is warning",
+			method:     http.MethodPost,
+			statusCode: http.StatusInternalServerError,
+			want:       log.WarnLevel,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, apiAccessLogLevel(tt.method, tt.statusCode))
+		})
+	}
 }
 
 func TestLoggingMiddleware_ResponseWriterWrapping(t *testing.T) {

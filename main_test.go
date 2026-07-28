@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -73,4 +74,10 @@ func TestValidateConfigRequiresRootPath(t *testing.T) {
 	assert.EqualError(t, err, "root_path is required; set it in conf.yaml or TMD_ROOT_PATH")
 
 	assert.NoError(t, config.Validate(&config.Config{RootPath: t.TempDir()}))
+}
+
+func TestIsEmptyBotConfigError(t *testing.T) {
+	assert.True(t, isEmptyBotConfigError(io.EOF))
+	assert.False(t, isEmptyBotConfigError(assert.AnError))
+	assert.False(t, isEmptyBotConfigError(nil))
 }

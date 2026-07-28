@@ -379,6 +379,8 @@ func runServer(conf *config.Config, appRootPath string, port int, loginOpts twit
 			if writeErr := writeDefaultBotConfig(botConfPath); writeErr != nil {
 				log.Warnf("[startup] Default bot config create failed path=%q error=%q", logging.Path(botConfPath), writeErr.Error())
 			}
+		} else if isEmptyBotConfigError(err) {
+			log.Infof("[startup] Bot config skipped reason=empty path=%q", logging.Path(botConfPath))
 		} else {
 			log.Warnf("[startup] Bot config load failed path=%q error=%q", logging.Path(botConfPath), err.Error())
 		}
@@ -401,6 +403,10 @@ func startServerSignalHandler(sigChan <-chan os.Signal, shutdown func(string)) {
 		// SIGKILL 无法捕获；这里只处理可拦截的退出信号，确保数据库等资源优雅关闭。
 		shutdown("signal:" + sig.String())
 	}()
+}
+
+func isEmptyBotConfigError(err error) bool {
+	return err == io.EOF
 }
 
 func initBot(botConf *config.BotConfig, server *api.Server) []bot.Bot {

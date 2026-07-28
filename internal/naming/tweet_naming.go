@@ -3,6 +3,8 @@ package naming
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/unkmonster/tmd/internal/utils"
@@ -50,8 +52,16 @@ func (tn *TweetNaming) baseName() string {
 	return tn.textPart() + fmt.Sprintf("_%d", tn.tweetID)
 }
 
+func (tn *TweetNaming) logBaseName() string {
+	text := strings.TrimRightFunc(tn.textPart(), unicode.IsSpace)
+	if text == "" {
+		text = "tweet"
+	}
+	return text + fmt.Sprintf(" _%d", tn.tweetID)
+}
+
 func (tn *TweetNaming) LogFormat() string {
-	return fmt.Sprintf("[%s] %s", tn.creator, tn.baseName())
+	return fmt.Sprintf("[%s] %s", tn.creator, tn.logBaseName())
 }
 
 func (tn *TweetNaming) FileName(ext string) string {

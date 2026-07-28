@@ -249,6 +249,26 @@ func mediaURLForLog(raw string) string {
 	return logging.SanitizeURL(raw)
 }
 
+func tweetMediaSummaryFields(succeeded, failed, skipped, total int) string {
+	if failed == 0 && skipped == 0 {
+		return ""
+	}
+
+	successField := fmt.Sprintf("succeeded=%d", succeeded)
+	failedField := fmt.Sprintf("failed=%d", failed)
+	skippedField := fmt.Sprintf("skipped=%d", skipped)
+
+	successField = color.FgGreen.Render(successField)
+	if failed > 0 {
+		failedField = color.FgRed.Render(failedField)
+	}
+	if skipped > 0 {
+		skippedField = color.FgYellow.Render(skippedField)
+	}
+
+	return fmt.Sprintf("%s %s %s total=%d", successField, failedField, skippedField, total)
+}
+
 func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, skipLoongTweet bool) error {
 	var creatorTitle string
 	if tweet.Creator != nil {
@@ -350,8 +370,13 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 	// Log one compact per-tweet completion line only when at least one media item succeeded.
 	if len(successUrls) > 0 {
 		totalAttempted := len(successUrls) + len(tweet.Urls) + len(skippedUrls)
-		titleField := color.FgLightMagenta.Render(fmt.Sprintf("title=%q", tweetNaming.LogFormat()))
-		log.Infof("[download] Tweet media complete %s succeeded=%d failed=%d skipped=%d total=%d", titleField, len(successUrls), len(tweet.Urls), len(skippedUrls), totalAttempted)
+		titleField := color.FgLightMagenta.Render(fmt.Sprintf("%q", tweetNaming.LogFormat()))
+		summaryFields := tweetMediaSummaryFields(len(successUrls), len(tweet.Urls), len(skippedUrls), totalAttempted)
+		if summaryFields == "" {
+			log.Infof("[download] %s", titleField)
+		} else {
+			log.Infof("[download] %s %s", titleField, summaryFields)
+		}
 	}
 
 	// 只有可重试的失败才进入后续失败链路。
