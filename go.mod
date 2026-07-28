@@ -6,7 +6,7 @@ require (
 	github.com/SpellingDragon/wechat-robot-go v1.3.0
 	github.com/bwmarrin/discordgo v0.28.1
 	github.com/chyroc/lark v0.0.113
-	github.com/go-resty/resty/v2 v2.14.0
+	github.com/go-resty/resty/v2 v2.17.2
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
