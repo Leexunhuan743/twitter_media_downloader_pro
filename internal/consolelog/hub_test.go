@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -156,7 +157,7 @@ func TestStartCaptureRetriesAfterFailure(t *testing.T) {
 			return nil, errors.New("temporary start failure")
 		}
 		return &captureSession{
-			hub:             h,
+			hub:            h,
 			originalStdout: os.Stdout,
 			originalStderr: os.Stderr,
 		}, nil
@@ -187,7 +188,7 @@ func TestStartCaptureIsIdempotentAfterSuccess(t *testing.T) {
 	startCaptureFn = func(h *Hub) (*captureSession, error) {
 		calls++
 		return &captureSession{
-			hub:             h,
+			hub:            h,
 			originalStdout: os.Stdout,
 			originalStderr: os.Stderr,
 		}, nil
@@ -196,4 +197,25 @@ func TestStartCaptureIsIdempotentAfterSuccess(t *testing.T) {
 	require.NoError(t, StartCapture(hub))
 	require.NoError(t, StartCapture(hub))
 	assert.Equal(t, 1, calls)
+}
+
+func TestStopCaptureRestoresStandardLogOutput(t *testing.T) {
+	StopCapture()
+
+	originalLogOut := log.StandardLogger().Out
+	originalStderr := os.Stderr
+	t.Cleanup(func() {
+		log.SetOutput(originalLogOut)
+		StopCapture()
+	})
+
+	hub := NewHub(10)
+	require.NoError(t, StartCapture(hub))
+	log.SetOutput(os.Stderr)
+	require.NotEqual(t, originalStderr, log.StandardLogger().Out)
+
+	StopCapture()
+
+	assert.Equal(t, originalStderr, os.Stderr)
+	assert.Equal(t, originalStderr, log.StandardLogger().Out)
 }

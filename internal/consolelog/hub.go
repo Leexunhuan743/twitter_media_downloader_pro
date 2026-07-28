@@ -282,6 +282,7 @@ func stopCaptureLocked() {
 
 	os.Stdout = activeCapture.originalStdout
 	os.Stderr = activeCapture.originalStderr
+	restoreStandardLogOutputLocked(activeCapture)
 
 	if activeCapture.stdoutWriter != nil {
 		_ = activeCapture.stdoutWriter.Close()
@@ -300,6 +301,20 @@ func stopCaptureLocked() {
 	activeCapture.hub.captureWg.Wait()
 
 	activeCapture = nil
+}
+
+func restoreStandardLogOutputLocked(session *captureSession) {
+	if session == nil {
+		return
+	}
+
+	currentOut := log.StandardLogger().Out
+	if currentOut == session.stdoutWriter {
+		log.SetOutput(session.originalStdout)
+	}
+	if currentOut == session.stderrWriter {
+		log.SetOutput(session.originalStderr)
+	}
 }
 
 func capturePipe(reader io.Reader, output *os.File, h *Hub) {

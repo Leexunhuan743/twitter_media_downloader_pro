@@ -8,6 +8,8 @@ The logging stack fans one application log stream out to local files, console ca
 
 `main.go` initializes logrus with a text formatter, starts `consolelog.Hub` capture, and installs `[[internal/logging/lumberjack_hook.go#LumberjackHook]]` for rotated file writes. REST and SSE log consumers read from the in-memory hub; `client.log` remains a separate Resty client log.
 
+`[[internal/consolelog/hub.go#StopCapture]]` restores logrus output before closing capture pipes, so start-server shutdown logs do not write to a closed stderr pipe. `main.go` owns final rotated-log writer cleanup after shutdown completes.
+
 Terminal-only ANSI color may be used for compact human scan points such as tweet title fields. File and Web UI log paths strip ANSI through `[[internal/logging/sanitize.go#StripANSI]]` or console capture.
 
 ## Public Log Contract

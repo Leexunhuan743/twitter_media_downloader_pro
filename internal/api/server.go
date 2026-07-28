@@ -462,14 +462,6 @@ func (s *Server) GracefulShutdown(reason string) {
 			}
 		}
 
-		if s.logWriter != nil {
-			if err := s.logWriter.Close(); err != nil {
-				log.Warnf("[server] Log writer close failed error=%q", err.Error())
-			} else {
-				log.Info("[server] Log writer closed")
-			}
-		}
-
 		if s.db != nil {
 			if err := s.db.Close(); err != nil {
 				log.Warnf("[server] Database close failed error=%q", err.Error())
