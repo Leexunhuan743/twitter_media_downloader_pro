@@ -56,6 +56,11 @@ go vet ./...
 
 CI (`.github/workflows/go.yml`): only triggers on tag push (`v*`), builds release binaries for linux/windows/darwin on amd64/arm64. Release builds use `CGO_ENABLED=0`, `-trimpath`, and `-ldflags "-w -s ..."` to keep binaries compact and path-free. **No PR/push test job** — add a `test.yml` if CI tests are needed.
 
+### Network Timeout Tests
+Network tests should synchronize on observable server events rather than depending on tiny timeout windows.
+
+Downloader and profile tests that verify retry or cancellation behavior should wait for the test server to receive the intended request before cancelling or asserting. Avoid 20-50 ms timing assumptions because full-package runs can delay local HTTP scheduling.
+
 ## What NOT to Do
 Rules to avoid when making changes to the codebase.
 

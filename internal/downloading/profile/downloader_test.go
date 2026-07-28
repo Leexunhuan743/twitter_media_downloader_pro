@@ -380,7 +380,7 @@ func TestProfileDownloader_DownloadFileTimeoutCancelsHTTPBodyRead(t *testing.T) 
 	}
 	select {
 	case <-blockCh:
-	default:
+	case <-time.After(time.Second):
 		t.Fatal("test server was not reached by avatar GET")
 	}
 }

@@ -521,6 +521,8 @@ func TestDownloader_LogErrorSanitizesSensitiveText(t *testing.T) {
 }
 
 func TestDownloader_Download_RetryLogIncludesCallerContext(t *testing.T) {
+	var getOnce sync.Once
+	firstGetServed := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "HEAD" {
 			w.Header().Set("Content-Length", fmt.Sprintf("%d", streamThreshold+1))
@@ -528,11 +530,18 @@ func TestDownloader_Download_RetryLogIncludesCallerContext(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
+		getOnce.Do(func() {
+			close(firstGetServed)
+		})
 	}))
 	defer server.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	go func() {
+		<-firstGetServed
+		cancel()
+	}()
 
 	dl := NewDownloader(NewFileWriter(nil))
 	req := DownloadRequest{
