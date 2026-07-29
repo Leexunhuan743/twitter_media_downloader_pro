@@ -213,6 +213,28 @@ store.subscribe((state) => {
 const API_REQUEST_TIMEOUT_MS = 60000;
 const API_UPLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 
+function clearStoredAuth() {
+  localStorage.removeItem('tmd_jwt_token');
+  localStorage.removeItem('tmd_jwt_expiry');
+}
+
+function isUnauthorizedError(err) {
+  return !!err && (err.status === 401 || err._isUnauthorized);
+}
+
+function makeUnauthorizedError(tokenType = '') {
+  const err = new Error(tokenType === 'expired' ? '登录已过期，请重新认证' : '需要重新认证');
+  err.status = 401;
+  err._isUnauthorized = true;
+  err.tokenType = tokenType || 'unknown';
+  return err;
+}
+
+function requireAuthentication(err = null) {
+  clearStoredAuth();
+  showAuthDialog(err?.message || '需要重新认证');
+}
+
 const api = {
   base: '',
   _abortControllers: new Set(),
@@ -288,8 +310,9 @@ const api = {
 
       // 401 → 尝试 JWT 刷新，否则触发认证对话框
       if (res.status === 401) {
+        const tokenType = res.headers.get('X-Token-Type') || '';
         const haveJWT = !!localStorage.getItem('tmd_jwt_token');
-        if (haveJWT) {
+        if (haveJWT && tokenType !== 'invalid' && tokenType !== 'missing') {
           // 有 JWT 但 401，说明 JWT 过期/失效 → 尝试 refresh
           const refreshed = await this._tryRefreshJWT();
           if (refreshed) {
@@ -297,9 +320,8 @@ const api = {
             return this.request(method, path, body, extra);
           }
         }
-        const authErr = new Error('unauthorized');
-        authErr.status = 401;
-        authErr._isUnauthorized = true;
+        const authErr = makeUnauthorizedError(tokenType);
+        requireAuthentication(authErr);
         throw authErr;
       }
 
@@ -337,6 +359,8 @@ const api = {
       localStorage.setItem('tmd_jwt_token', json.data.token);
       if (json.data.expires_at) {
         localStorage.setItem('tmd_jwt_expiry', json.data.expires_at);
+      } else {
+        localStorage.removeItem('tmd_jwt_expiry');
       }
       return true;
     } catch(e) {
@@ -4421,8 +4445,7 @@ async function saveConfigForm() {
     // 若 api_key 字段有实际值且发生变更，清除过期 JWT
     if (fields['api_key'] && fields['api_key'] !== '__KEEP_OLD__') {
       // API Key 变更 → 旧的 JWT 已失效 → 清除
-      localStorage.removeItem('tmd_jwt_token');
-      localStorage.removeItem('tmd_jwt_expiry');
+      clearStoredAuth();
     }
     // API 已返回 data.fields（含脱敏值）和 data.yaml_preview，无需额外请求重载
   } catch (e) {
@@ -4448,8 +4471,7 @@ async function saveConfig() {
     showManualRestartNotice('配置');
     // 比较新旧 api_key 值，仅在实际变更时清除 JWT（避免每次 raw 保存都重新登录）
     if (newKey !== oldKey) {
-      localStorage.removeItem('tmd_jwt_token');
-      localStorage.removeItem('tmd_jwt_expiry');
+      clearStoredAuth();
     }
   } catch (e) {
     toast.show('❌ 保存失败: ' + e.message, 'error');
@@ -4975,15 +4997,8 @@ window.onerror = function (msg, url, line, col, error) {
 
 window.addEventListener('unhandledrejection', function (e) {
   console.error('[Global] 未处理的 Promise 拒绝:', e.reason);
-  if (e.reason && (e.reason.status === 401 || e.reason._isUnauthorized)) {
-    // 有 JWT 时先尝试 refresh
-    if (localStorage.getItem('tmd_jwt_token')) {
-      api._tryRefreshJWT().then(refreshed => {
-        if (!refreshed) showAuthDialog();
-      });
-    } else {
-      showAuthDialog();
-    }
+  if (isUnauthorizedError(e.reason)) {
+    requireAuthentication(e.reason);
   }
   e.preventDefault();
 });
@@ -5047,8 +5062,8 @@ async function bootstrapApp() {
     });
 
     // 401 → 显示认证对话框
-    if (err.status === 401 || err._isUnauthorized) {
-      showAuthDialog();
+    if (isUnauthorizedError(err)) {
+      requireAuthentication(err);
     } else {
       toast.show('加载数据失败: ' + err.message, 'error');
     }
@@ -5060,9 +5075,14 @@ async function bootstrapApp() {
 // ============================================
 // Auth Dialog
 // ============================================
-function showAuthDialog() {
+function showAuthDialog(message = '') {
   const overlay = document.getElementById('authOverlay');
   if (!overlay) return;
+  const status = document.getElementById('authDialogStatus');
+  if (status && message) {
+    status.textContent = message;
+    status.style.color = 'var(--warning)';
+  }
   if (overlay.classList.contains('open')) return; // 已在显示中，防重复触发
   requestAnimationFrame(() => overlay.classList.add('open'));
   const input = document.getElementById('authDialogKey');
@@ -5075,6 +5095,8 @@ function hideAuthDialog() {
   const overlay = document.getElementById('authOverlay');
   if (!overlay) return;
   overlay.classList.remove('open');
+  const status = document.getElementById('authDialogStatus');
+  if (status) status.textContent = '';
 }
 
 async function submitAuthKey() {
@@ -5107,6 +5129,8 @@ async function submitAuthKey() {
     localStorage.setItem('tmd_jwt_token', json.data.token);
     if (json.data.expires_at) {
       localStorage.setItem('tmd_jwt_expiry', json.data.expires_at);
+    } else {
+      localStorage.removeItem('tmd_jwt_expiry');
     }
     setTimeout(() => { window.location.reload(); }, 300);
   } catch (e) {

@@ -31,6 +31,8 @@ POST /api/v1/auth/refresh  # Refresh JWT token before expiry
 GET  /api/v1/auth/check    # Check current JWT validity
 ```
 
+Web1 treats `401` as an auth boundary instead of a page-local load error. `X-Token-Type=expired` allows one JWT refresh attempt; invalid or missing tokens go straight to the auth dialog. Final auth failure clears cached JWT state and opens the dialog with a readable status message.
+
 ## API Routes
 
 All download endpoints return `202 Accepted` with `task_id`. Task progress is pushed via [[task-management|SSE]].
