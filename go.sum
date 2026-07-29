@@ -4,8 +4,8 @@ github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/SpellingDragon/wechat-robot-go v1.4.1 h1:HzI2pggCczCDcnSVs9vhzx7rrfARwnqRj/fCkcmchws=
 github.com/SpellingDragon/wechat-robot-go v1.4.1/go.mod h1:WNBZrpjPBoY91TNCUHQ7PNAiEtCGkvWr6a3wTuk67RE=
-github.com/bwmarrin/discordgo v0.28.1 h1:gXsuo2GBO7NbR6uqmrrBDplPUx2T3nzu775q/Rd1aG4=
-github.com/bwmarrin/discordgo v0.28.1/go.mod h1:NJZpH+1AfhIcyQsPeuBKsUtYrRnjkyu0kIVMCHkZtRY=
+github.com/bwmarrin/discordgo v0.29.0 h1:FmWeXFaKUwrcL3Cx65c20bTRW+vOb6k8AnaP+EgjDno=
+github.com/bwmarrin/discordgo v0.29.0/go.mod h1:NJZpH+1AfhIcyQsPeuBKsUtYrRnjkyu0kIVMCHkZtRY=
 github.com/chyroc/lark v0.0.113 h1:sIW5lTCzx8DUietWfX0XTuh6BgosVT34n5HUED9pk38=
 github.com/chyroc/lark v0.0.113/go.mod h1:YnIIdBcxsAI1jbpAg+A+jF8qfo+yENPdr3I6+XpeGao=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

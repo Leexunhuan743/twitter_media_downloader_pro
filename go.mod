@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/SpellingDragon/wechat-robot-go v1.4.1
-	github.com/bwmarrin/discordgo v0.28.1
+	github.com/bwmarrin/discordgo v0.29.0
 	github.com/chyroc/lark v0.0.113
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
