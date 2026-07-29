@@ -99,6 +99,7 @@ const store = {
     sseConnected: false,
     dataSubPage: 'users',
     taskFilter: 'all',
+    taskStageFilter: 'all',
     taskSearch: '',
     // Database pagination state
     dbData: {
@@ -133,23 +134,28 @@ const store = {
       userLinks: '',
       previousNames: ''
     },
+    dbLoading: {},
+    dbError: {},
     _prevNameUserIdFilter: '',
     configRaw: null,
     configExists: false,
     configSaving: false,
     configFieldsLoading: false,
     logLevel: 'all',
+    logDomain: 'all',
+    logPaused: false,
+    logPausedCount: 0,
     logSearch: '',
     logStats: { debug: 0, info: 0, warn: 0, error: 0, total: 0 },
     logPage: 1,
     logTotalPages: 1,
     _systemTab: 'config',
     configMode: 'form',
-    configFields: [],
+    configFields: null,
     cookiesRaw: null,
     cookiesExists: false,
     cookiesSaving: false,
-    cookieItems: [],
+    cookieItems: null,
     _cookiesLoading: false,
     cookiesMode: 'form',
     _scheduleTab: 'form',
@@ -160,6 +166,7 @@ const store = {
     _scheduleSaving: false,
     _scheduleFormItems: [],
     _scheduleFormDirty: false,
+    _scheduleUndoDelete: null,
     _schedulerRunning: false,
   },
 
@@ -201,6 +208,9 @@ store.subscribe((state) => {
 // ============================================
 // API Client
 // ============================================
+const API_REQUEST_TIMEOUT_MS = 60000;
+const API_UPLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+
 const api = {
   base: '',
   _abortControllers: new Set(),
@@ -224,6 +234,18 @@ const api = {
 
   async request(method, path, body = null, extra = {}) {
     const { signal, controller } = this._getAbortSignal();
+    let externalAbortHandler = null;
+    if (extra.signal) {
+      if (extra.signal.aborted) controller.abort();
+      externalAbortHandler = () => controller.abort();
+      extra.signal.addEventListener('abort', externalAbortHandler, { once: true });
+    }
+    const timeoutMs = extra.timeoutMs === 0 ? 0 : (extra.timeoutMs || API_REQUEST_TIMEOUT_MS);
+    let timedOut = false;
+    const timer = timeoutMs > 0 ? setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs) : null;
     const options = {
       method,
       signal
@@ -243,43 +265,49 @@ const api = {
       if (body !== null && body !== undefined) options.body = JSON.stringify(body);
     }
     
-    let res;
     try {
-      res = await fetch(this.base + path, options);
-    } catch (e) {
-      this._cleanupAbortController(controller);
-      // 导航离页导致的主动中止，抛出原始 AbortError 供外层区分
-      if (e.name === 'AbortError') throw e;
-      throw new Error('网络请求失败，请检查服务器是否运行: ' + e.message);
-    }
-    let json;
-    try {
-      json = await res.json();
-    } catch (e) {
-      this._cleanupAbortController(controller);
-      throw new Error('服务器返回无效响应 (HTTP ' + res.status + ')');
-    }
-    this._cleanupAbortController(controller);
-    
-    // 401 → 尝试 JWT 刷新，否则触发认证对话框
-    if (res.status === 401) {
-      const haveJWT = !!localStorage.getItem('tmd_jwt_token');
-      if (haveJWT) {
-        // 有 JWT 但 401，说明 JWT 过期/失效 → 尝试 refresh
-        const refreshed = await this._tryRefreshJWT();
-        if (refreshed) {
-          // refresh 成功 → 重试原请求（不跳过 auth 注入，重新从 localStorage 读取新 JWT）
-          return this.request(method, path, body, extra);
+      let res;
+      try {
+        res = await fetch(this.base + path, options);
+      } catch (e) {
+        // 导航离页导致的主动中止，抛出原始 AbortError 供外层区分
+        if (e.name === 'AbortError') {
+          if (timedOut) throw new Error(`请求超时 (${Math.round(timeoutMs / 1000)}s)，请稍后重试`);
+          throw e;
         }
+        throw new Error('网络请求失败，请检查服务器是否运行: ' + e.message);
       }
-      const authErr = new Error('unauthorized');
-      authErr.status = 401;
-      authErr._isUnauthorized = true;
-      throw authErr;
+      let json;
+      try {
+        json = await res.json();
+      } catch (e) {
+        throw new Error('服务器返回无效响应 (HTTP ' + res.status + ')');
+      }
+
+      // 401 → 尝试 JWT 刷新，否则触发认证对话框
+      if (res.status === 401) {
+        const haveJWT = !!localStorage.getItem('tmd_jwt_token');
+        if (haveJWT) {
+          // 有 JWT 但 401，说明 JWT 过期/失效 → 尝试 refresh
+          const refreshed = await this._tryRefreshJWT();
+          if (refreshed) {
+            // refresh 成功 → 重试原请求（不跳过 auth 注入，重新从 localStorage 读取新 JWT）
+            return this.request(method, path, body, extra);
+          }
+        }
+        const authErr = new Error('unauthorized');
+        authErr.status = 401;
+        authErr._isUnauthorized = true;
+        throw authErr;
+      }
+
+      if (!res.ok || !json.success) throw new Error(json.error || '服务器错误 (HTTP ' + res.status + ')');
+      return json.data;
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (extra.signal && externalAbortHandler) extra.signal.removeEventListener('abort', externalAbortHandler);
+      this._cleanupAbortController(controller);
     }
-    
-    if (!res.ok || !json.success) throw new Error(json.error || '服务器错误 (HTTP ' + res.status + ')');
-    return json.data;
   },
 
   // 尝试刷新 JWT token。成功返回 true，失败返回 false（不清除旧 token，留给 auth dialog 处理）
@@ -294,14 +322,13 @@ const api = {
     const oldJWT = localStorage.getItem('tmd_jwt_token');
     if (!oldJWT) return false;
     const { signal, controller } = this._getAbortSignal();
+    const timer = setTimeout(() => controller.abort(), 30000);
     try {
-      const timer = setTimeout(() => controller.abort(), 30000);
       const res = await fetch(this.base + '/api/v1/auth/refresh', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + oldJWT },
         signal
       });
-      clearTimeout(timer);
       if (!res.ok) return false;
       const json = await res.json();
       if (!json.success || !json.data || !json.data.token) return false;
@@ -313,6 +340,7 @@ const api = {
     } catch(e) {
       return false;
     } finally {
+      clearTimeout(timer);
       this._cleanupAbortController(controller);
     }
   },
@@ -369,7 +397,7 @@ const api = {
     return this.post('/api/v1/json/folder/download', data);
   },
   upload(path, formData) {
-    return this.request('POST', path, formData, { isFormData: true });
+    return this.request('POST', path, formData, { isFormData: true, timeoutMs: API_UPLOAD_TIMEOUT_MS });
   },
   
   // Config
@@ -397,7 +425,7 @@ const api = {
   triggerSchedule(id) { return this.request('POST', `/api/v1/schedules/${encodeURIComponent(id)}/trigger`, {}); },
   triggerAllSchedules() { return this.post('/api/v1/schedules/trigger-all', {}); },
   getScheduleStats() { return this.get('/api/v1/schedules/stats'); },
-  validateSchedule(body) { return this.post('/api/v1/schedules/validate', body); },
+  validateSchedule(body, extra = {}) { return this.request('POST', '/api/v1/schedules/validate', body, extra); },
 
   // Queue
   getQueueStatus() { return this.get('/api/v1/queue/status'); },
@@ -407,14 +435,14 @@ const api = {
   getDBUser(id) { return this.get(`/api/v1/db/users/${id}`); },
   updateDBUser(id, data) { return this.request('PATCH', `/api/v1/db/users/${id}`, data); },
   deleteDBUser(id) { return this.request('DELETE', `/api/v1/db/users/${id}`); },
-  getDBUserEntities(id, params = '') { return this.get(`/api/v1/db/users/${id}/entities${params ? '?' + params : ''}`); },
-  getDBUserLinks(id, params = '') { return this.get(`/api/v1/db/users/${id}/links${params ? '?' + params : ''}`); },
+  getDBUserRelatedEntities(id, params = '') { return this.get(`/api/v1/db/users/${id}/entities${params ? '?' + params : ''}`); },
+  getDBUserRelatedLinks(id, params = '') { return this.get(`/api/v1/db/users/${id}/links${params ? '?' + params : ''}`); },
 
   getDBLists(params = '') { return this.get(`/api/v1/db/lists${params ? '?' + params : ''}`); },
   getDBList(id) { return this.get(`/api/v1/db/lists/${id}`); },
   updateDBList(id, data) { return this.request('PATCH', `/api/v1/db/lists/${id}`, data); },
   deleteDBList(id) { return this.request('DELETE', `/api/v1/db/lists/${id}`); },
-  getDBListEntities(id, params = '') { return this.get(`/api/v1/db/lists/${id}/entities${params ? '?' + params : ''}`); },
+  getDBListRelatedEntities(id, params = '') { return this.get(`/api/v1/db/lists/${id}/entities${params ? '?' + params : ''}`); },
   
   getDBUserEntities(params = '') { return this.get(`/api/v1/db/user-entities${params ? '?' + params : ''}`); },
   getDBUserEntity(id) { return this.get(`/api/v1/db/user-entities/${id}`); },
@@ -523,6 +551,7 @@ const sseManager = {
 
     const debouncedTasksUpdate = debounce((tasks) => {
       store.setState({ tasks });
+      updateOpenTaskDrawerFromTasks(tasks);
     }, 100);
 
     this.conn.addEventListener('tasks', (e) => {
@@ -766,6 +795,7 @@ const drawer = {
     this.el.classList.remove('open');
     this.overlay.classList.remove('open');
     document.body.style.overflow = '';
+    delete this._taskId;
   }
 };
 
@@ -899,6 +929,16 @@ const pages = {
                   <option value="queued">排队中</option>
                   <option value="completed">已完成</option>
                   <option value="failed">失败</option>
+                  <option value="cancelled">已取消</option>
+                </select>
+                <select class="form-select" style="width: 112px;" id="taskStageFilter" data-binding="taskStageFilter">
+                  <option value="all">全部阶段</option>
+                  <option value="preparing">准备中</option>
+                  <option value="syncing">同步列表</option>
+                  <option value="downloading">下载中</option>
+                  <option value="retrying">重试中</option>
+                  <option value="profile">资料下载</option>
+                  <option value="marking">标记中</option>
                 </select>
                 <input type="text" class="form-input search-input" id="taskSearch" placeholder="搜索任务..." data-binding="taskSearch">
               </div>
@@ -928,7 +968,7 @@ const pages = {
   
   // Data Page
   data() {
-    const { dataSubPage, dbData, dbPagination, dbSort, dbSearch } = store.state;
+    const { dataSubPage, dbData, dbPagination, dbSort, dbSearch, dbLoading, dbError } = store.state;
     
     const dataMap = {
       users: { title: 'Users', data: dbData.users?.data || [], count: dbData.users?.total || 0 },
@@ -942,6 +982,10 @@ const pages = {
     const current = dataMap[dataSubPage];
     const pagination = dbPagination[dataSubPage] || { page: 1, pageSize: 200, totalPages: 1 };
     const sort = dbSort[dataSubPage] || { sortBy: 'id', sortOrder: 'desc' };
+    const loading = !!dbLoading[dataSubPage];
+    const error = dbError[dataSubPage] || '';
+    const filterBanner = renderDBFilterBanner(dataSubPage);
+    const dataBody = renderDBDataBody(dataSubPage, current.data, sort, loading, error);
     
     return `
       <div class="page-container">
@@ -959,16 +1003,14 @@ const pages = {
             </div>
             <div class="flex gap-2 items-center">
               <input type="text" class="form-input search-input" id="dbSearchInput"
-                placeholder="搜索..." data-binding="dbSearch">
+                placeholder="搜索..." data-binding="dbSearch" value="${escapeAttr(dbSearch[dataSubPage] || '')}">
               <button class="btn btn-ghost btn-icon" data-action="searchDB">🔍</button>
             </div>
           </div>
 
+        ${filterBanner}
         <div class="card-body card-body-scroll">
-          <div class="table-scroll-container" id="dataTableContainer">
-            ${renderDBTable(dataSubPage, current.data, sort)}
-          </div>
-          <div id="dataMobileCards">${renderDBMobileCards(dataSubPage, current.data)}</div>
+          ${dataBody}
         </div>
 
         <div class="pagination" id="dataPagination">
@@ -1063,6 +1105,8 @@ const pages = {
 // ============================================
 const _state = {
   _taskFormState: {},
+  _pendingTaskActions: new Set(),
+  _dbRequestSeq: 0,
   _configRawLoading: false,
   _configRawLoadError: false,
   _cookiesRawLoading: false,
@@ -1287,17 +1331,38 @@ function getOptionalTimestamp(inputId) {
   return date.toISOString();
 }
 
-function renderTaskItem(task) {
-  const statusMap = {
-    queued: { tag: 'tag-queued', text: '排队' },
-    running: { tag: 'tag-running', text: '运行' },
-    completed: { tag: 'tag-completed', text: '完成' },
-    failed: { tag: 'tag-failed', text: '失败' },
-    cancelled: { tag: 'tag-cancelled', text: '取消' }
+const TASK_STATUS_INFO = {
+  queued: { tag: 'tag-queued', statusClass: 'status-queued', text: '排队', detailText: '排队中' },
+  running: { tag: 'tag-running', statusClass: 'status-running', text: '运行', detailText: '运行中' },
+  completed: { tag: 'tag-completed', statusClass: 'status-completed', text: '完成', detailText: '已完成' },
+  failed: { tag: 'tag-failed', statusClass: 'status-failed', text: '失败', detailText: '失败' },
+  cancelled: { tag: 'tag-cancelled', statusClass: 'status-cancelled', text: '取消', detailText: '已取消' }
+};
+
+function getTaskStatusInfo(status) {
+  return TASK_STATUS_INFO[status] || {
+    tag: 'tag-queued',
+    statusClass: 'status-unknown',
+    text: status || '未知',
+    detailText: status || '未知'
   };
-  
-  const status = statusMap[task.status] || statusMap.queued;
+}
+
+function shortTaskID(id) {
+  const value = String(id || '');
+  const m = value.match(/^task_([0-9a-f]{8})[0-9a-f-]{28}$/i);
+  return m ? m[1] : value;
+}
+
+function getTaskStage(task) {
+  return task?.progress?.stage || '';
+}
+
+function renderTaskItem(task) {
+  const status = getTaskStatusInfo(task.status);
   const pct = getTaskProgressPercent(task);
+  const fullTaskId = String(task.task_id || '');
+  const shortId = shortTaskID(fullTaskId);
 
   const stageText = task.progress?.stage ? escapeHtml(getStageText(task.progress.stage)) : '';
   const currentText = task.progress?.current ? ` · ${escapeHtml(task.progress.current)}` : '';
@@ -1309,8 +1374,8 @@ function renderTaskItem(task) {
       <div class="task-info">
         <div class="task-title">${escapeHtml(task.type)} - ${target}</div>
         <div class="task-meta">
-          <span class="tag ${status.tag}">${status.text}</span>
-          <span>ID: ${escapeHtml(task.task_id)}</span>
+          <span class="tag ${status.tag}">${escapeHtml(status.text)}</span>
+          <span class="task-short-id" title="${escapeAttr(fullTaskId)}">ID: ${escapeHtml(shortId)}</span>
           <span>${task.created_at ? new Date(task.created_at).toLocaleString() : '-'}</span>
         </div>
       </div>
@@ -1469,6 +1534,41 @@ function renderCheckboxes(prefix) {
         </label>
       </div>`;
 }
+
+function renderDBFilterBanner(type) {
+  if (type !== 'previousNames' || !store.state._prevNameUserIdFilter) return '';
+  return `
+    <div class="db-filter-banner">
+      <span>正在查看用户 ${escapeHtml(store.state._prevNameUserIdFilter)} 的历史名称</span>
+      <button class="btn btn-ghost btn-sm" data-action="clearPreviousNamesFilter">清除筛选</button>
+    </div>`;
+}
+
+function renderDBDataBody(type, data, sort, loading, error) {
+  if (loading) {
+    return `
+      <div class="empty-state">
+        <div class="skeleton skeleton-icon"></div>
+        <div class="empty-title">加载中...</div>
+        <div class="empty-desc">正在读取数据库记录</div>
+      </div>`;
+  }
+  if (error) {
+    return `
+      <div class="empty-state">
+        <div class="empty-icon">⚠️</div>
+        <div class="empty-title">加载失败</div>
+        <div class="empty-desc">${escapeHtml(error)}</div>
+        <button class="btn btn-primary btn-sm mt-3" data-action="searchDB">重试</button>
+      </div>`;
+  }
+  return `
+    <div class="table-scroll-container" id="dataTableContainer">
+      ${renderDBTable(type, data, sort)}
+    </div>
+    <div id="dataMobileCards">${renderDBMobileCards(type, data)}</div>`;
+}
+
 function sortIcon(sort, field) {
   if (sort.sortBy !== field) return '<span class="sort-icon">↕</span>';
   return sort.sortOrder === 'asc'
@@ -1484,6 +1584,11 @@ function sortableHeader(sort, field, label) {
   `;
 }
 
+function renderDBCell(col, item) {
+  if (col.render) return col.render(item);
+  return escapeHtml(item[col.key] || '');
+}
+
 function renderActionButtons(type, item) {
   const idStr = String(item.id);
   return `
@@ -1494,12 +1599,70 @@ function renderActionButtons(type, item) {
   `;
 }
 
+function getDBColumns(type) {
+  const map = {
+    users: [
+      { key: 'id', label: 'ID', sortable: true },
+      { key: 'screen_name', label: 'Screen Name', sortable: true, render: i => `@${escapeHtml(i.screen_name)}` },
+      { key: 'name', label: 'Name', sortable: true },
+      { key: 'protected_str', label: 'Protected', sortable: false, render: i => i.protected ? '🔒' : '🔓' },
+      { key: 'is_accessible', label: 'Accessible', sortable: false, render: i => i.is_accessible ? '✅' : '❌' },
+      { key: 'friends_count', label: 'Friends', sortable: true },
+      { label: 'Actions', sortable: false, mobile: false, render: i => renderActionButtons(type, i) },
+    ],
+    lists: [
+      { key: 'id', label: 'ID', sortable: true },
+      { key: 'name', label: 'Name', sortable: true },
+      { key: 'owner_user_id', label: 'Owner ID', sortable: true, sortBy: 'owner_id' },
+      { label: 'Actions', sortable: false, mobile: false, render: i => renderActionButtons(type, i) },
+    ],
+    entities: [
+      { key: 'id', label: 'ID', sortable: true },
+      { key: 'user_id', label: 'User ID', sortable: true },
+      { key: 'name', label: 'Name', sortable: true },
+      { key: 'latest_release_time', label: 'Latest Release', sortable: true, render: i => escapeHtml(i.latest_release_time || '-') },
+      { key: 'media_count', label: 'Media Count', sortable: true, render: i => escapeHtml(i.media_count || '-') },
+      { label: 'Actions', sortable: false, mobile: false, render: i => renderActionButtons(type, i) },
+    ],
+    listEntities: [
+      { key: 'id', label: 'ID', sortable: true },
+      { key: 'lst_id', label: 'List ID', sortable: true },
+      { key: 'name', label: 'Name', sortable: true },
+      { key: 'parent_dir', label: 'Parent Dir', sortable: false },
+      { label: 'Actions', sortable: false, mobile: false, render: i => renderActionButtons(type, i) },
+    ],
+    userLinks: [
+      { key: 'id', label: 'ID', sortable: true },
+      { key: 'user_id', label: 'User ID', sortable: true },
+      { key: 'name', label: 'Name', sortable: true },
+      { key: 'parent_lst_entity_id', label: 'Parent Entity', sortable: false },
+      { label: 'Actions', sortable: false, mobile: false, render: i => renderActionButtons(type, i) },
+    ],
+    previousNames: [
+      { key: 'current_screen_name', label: 'Current User', sortable: true, render: i => {
+        const label = i.current_screen_name ? `@${escapeHtml(i.current_screen_name)}` : escapeHtml(i.user_id || '');
+        return `<a href="javascript:void(0)" data-action="filterPreviousNamesByUser" data-user-id="${escapeAttr(i.user_id || '')}">${label}</a>`;
+      }},
+      { key: 'screen_name', label: 'Previous @Handle', sortable: true, render: i => `@${escapeHtml(i.screen_name)}` },
+      { key: 'name', label: 'Previous Name', sortable: true },
+      { key: 'record_date', label: 'Date', sortable: true, render: i => escapeHtml(i.record_date || '-') },
+    ],
+  };
+  return map[type] || [
+    { key: 'id', label: 'ID', sortable: true },
+    { key: 'user_id', label: 'User ID', sortable: true },
+    { key: 'name', label: 'Name', sortable: true },
+    { key: 'parent_lst_entity_id', label: 'Parent Entity', sortable: false },
+    { label: 'Actions', sortable: false, mobile: false, render: i => renderActionButtons(type, i) },
+  ];
+}
+
 // 通用数据库表格渲染器：基于列定义数组生成 <table>
 // columns: [{ key, label, sortable, sortBy, render(item) }]
 //   key = 数据字段名，label = 表头显示文字，sortable = 是否可排序（默认 true）
 //   sortBy = 排序字段名（默认 key），render = 自定义单元格渲染（返回 innerHTML，不含 <td>）
 function renderTable(columns, data, sort) {
-  const rows = data.map(item => `<tr>${columns.map(col => `<td>${col.render ? col.render(item) : escapeHtml(item[col.key] || '')}</td>`).join('')}</tr>`).join('');
+  const rows = data.map(item => `<tr>${columns.map(col => `<td>${renderDBCell(col, item)}</td>`).join('')}</tr>`).join('');
   const thead = columns.map(col => {
     if (col.sortable === false) return `<th>${escapeHtml(col.label)}</th>`;
     return sortableHeader(sort, col.sortBy || col.key, col.label);
@@ -1508,77 +1671,31 @@ function renderTable(columns, data, sort) {
 }
 
 function renderDBUsersTable(type, data, sort) {
-  return renderTable([
-    { key: 'id', label: 'ID', sortable: true },
-    { key: 'screen_name', label: 'Screen Name', sortable: true, render: i => `@${escapeHtml(i.screen_name)}` },
-    { key: 'name', label: 'Name', sortable: true },
-    { key: 'protected_str', label: 'Protected', sortable: false, render: i => i.protected ? '🔒' : '🔓' },
-    { key: 'is_accessible', label: 'Accessible', sortable: false, render: i => i.is_accessible ? '✅' : '❌' },
-    { key: 'friends_count', label: 'Friends', sortable: true },
-    { label: 'Actions', sortable: false, render: i => renderActionButtons(type, i) },
-  ], data, sort);
+  return renderTable(getDBColumns(type), data, sort);
 }
 
 function renderDBListsTable(type, data, sort) {
-  return renderTable([
-    { key: 'id', label: 'ID', sortable: true },
-    { key: 'name', label: 'Name', sortable: true },
-    { key: 'owner_user_id', label: 'Owner ID', sortable: true, sortBy: 'owner_id' },
-    { label: 'Actions', sortable: false, render: i => renderActionButtons(type, i) },
-  ], data, sort);
+  return renderTable(getDBColumns(type), data, sort);
 }
 
 function renderDBEntitiesTable(type, data, sort) {
-  return renderTable([
-    { key: 'id', label: 'ID', sortable: true },
-    { key: 'user_id', label: 'User ID', sortable: true },
-    { key: 'name', label: 'Name', sortable: true },
-    { key: 'latest_release_time', label: 'Latest Release', sortable: true, render: i => escapeHtml(i.latest_release_time || '-') },
-    { key: 'media_count', label: 'Media Count', sortable: true, render: i => escapeHtml(i.media_count || '-') },
-    { label: 'Actions', sortable: false, render: i => renderActionButtons(type, i) },
-  ], data, sort);
+  return renderTable(getDBColumns(type), data, sort);
 }
 
 function renderDBListEntitiesTable(type, data, sort) {
-  return renderTable([
-    { key: 'id', label: 'ID', sortable: true },
-    { key: 'lst_id', label: 'List ID', sortable: true },
-    { key: 'name', label: 'Name', sortable: true },
-    { key: 'parent_dir', label: 'Parent Dir', sortable: false },
-    { label: 'Actions', sortable: false, render: i => renderActionButtons(type, i) },
-  ], data, sort);
+  return renderTable(getDBColumns(type), data, sort);
 }
 
 function renderDBPreviousNamesTable(type, data, sort) {
-  return renderTable([
-    { key: 'current_screen_name', label: 'Current User', sortable: true, render: i => {
-      const label = i.current_screen_name ? `@${escapeHtml(i.current_screen_name)}` : escapeHtml(i.user_id || '');
-      return `<a href="javascript:void(0)" data-action="filterPreviousNamesByUser" data-user-id="${escapeAttr(i.user_id || '')}">${label}</a>`;
-    }},
-    { key: 'screen_name', label: 'Previous @Handle', sortable: true, render: i => `@${escapeHtml(i.screen_name)}` },
-    { key: 'name', label: 'Previous Name', sortable: true },
-    { key: 'record_date', label: 'Date', sortable: true, render: i => escapeHtml(i.record_date || '-') },
-  ], data, sort);
+  return renderTable(getDBColumns(type), data, sort);
 }
 
 function renderDBUserLinksTable(type, data, sort) {
-  return renderTable([
-    { key: 'id', label: 'ID', sortable: true },
-    { key: 'user_id', label: 'User ID', sortable: true },
-    { key: 'name', label: 'Name', sortable: true },
-    { key: 'parent_lst_entity_id', label: 'Parent Entity', sortable: false },
-    { label: 'Actions', sortable: false, render: i => renderActionButtons(type, i) },
-  ], data, sort);
+  return renderTable(getDBColumns(type), data, sort);
 }
 
 function renderDBDefaultTable(type, data, sort) {
-  return renderTable([
-    { key: 'id', label: 'ID', sortable: true },
-    { key: 'user_id', label: 'User ID', sortable: true },
-    { key: 'name', label: 'Name', sortable: true },
-    { key: 'parent_lst_entity_id', label: 'Parent Entity', sortable: false },
-    { label: 'Actions', sortable: false, render: i => renderActionButtons(type, i) },
-  ], data, sort);
+  return renderTable(getDBColumns(type), data, sort);
 }
 
 // Database Table Renderer with sorting and actions
@@ -1607,79 +1724,23 @@ function renderDBTable(type, data, sort) {
 
 function renderDBMobileCards(type, data) {
   if (!data || data.length === 0) return '';
-  const renderers = {
-    users: item => `
+  const columns = getDBColumns(type).filter(col => col.mobile !== false && col.label !== 'Actions');
+  const config = DB_TYPE_CONFIG[type] || {};
+  const cards = data.map(item => {
+    const titleCol = columns.find(col => ['screen_name', 'name', 'current_screen_name'].includes(col.key)) || columns[0];
+    const title = titleCol ? renderDBCell(titleCol, item) : escapeHtml(item.id || '');
+    const details = columns
+      .filter(col => col !== titleCol)
+      .map(col => `<div><strong>${escapeHtml(col.label)}:</strong> ${renderDBCell(col, item)}</div>`)
+      .join('');
+    const actions = config.delete || config.update ? `<div class="mt-3">${renderActionButtons(type, item)}</div>` : '';
+    return `
       <div class="mobile-card">
-        <div class="mobile-card-title">@${escapeHtml(item.screen_name)}</div>
-        <div class="mobile-card-meta">${escapeHtml(item.name)}</div>
-        <div style="display: flex; gap: var(--space-4); font-size: var(--text-sm); margin-bottom: var(--space-2);">
-          <span>${item.protected ? '🔒 Protected' : '🔓 Public'}</span>
-          <span>${item.is_accessible ? '✅ Accessible' : '❌ Not Accessible'}</span>
-        </div>
-        <div style="font-size: var(--text-sm); margin-bottom: var(--space-2);">Friends: ${escapeHtml(item.friends_count)}</div>
-        <div>${renderActionButtons(type, item)}</div>
-      </div>`,
-    lists: item => `
-      <div class="mobile-card">
-        <div class="mobile-card-title">${escapeHtml(item.name)}</div>
-        <div class="mobile-card-meta">
-          <div>ID: ${escapeHtml(item.id)}</div>
-          <div>Owner: ${escapeHtml(item.owner_user_id)}</div>
-        </div>
-        <div>${renderActionButtons(type, item)}</div>
-      </div>`,
-    entities: item => `
-      <div class="mobile-card">
-        <div class="mobile-card-title">${escapeHtml(item.name)}</div>
-        <div class="mobile-card-meta">
-          <div>ID: ${escapeHtml(item.id)}</div>
-          <div>User ID: ${escapeHtml(item.user_id)}</div>
-          <div>Media: ${escapeHtml(item.media_count || 0)}</div>
-        </div>
-        <div>${renderActionButtons(type, item)}</div>
-      </div>`,
-    listEntities: item => `
-      <div class="mobile-card">
-        <div class="mobile-card-title">${escapeHtml(item.name)}</div>
-        <div class="mobile-card-meta">
-          <div>ID: ${escapeHtml(item.id)}</div>
-          <div>List ID: ${escapeHtml(item.lst_id)}</div>
-          <div>Dir: ${escapeHtml(item.parent_dir)}</div>
-        </div>
-        <div>${renderActionButtons(type, item)}</div>
-      </div>`,
-    userLinks: item => `
-      <div class="mobile-card">
-        <div class="mobile-card-title">${escapeHtml(item.name)}</div>
-        <div class="mobile-card-meta">
-          <div>ID: ${escapeHtml(item.id)}</div>
-          <div>User ID: ${escapeHtml(item.user_id)}</div>
-          <div>Entity: ${escapeHtml(item.parent_lst_entity_id)}</div>
-        </div>
-        <div>${renderActionButtons(type, item)}</div>
-      </div>`,
-    previousNames: item => {
-      const label = item.current_screen_name ? `@${item.current_screen_name}` : (item.user_id || '');
-      return `
-      <div class="mobile-card">
-        <div class="mobile-card-title">${escapeHtml(label)}</div>
-        <div class="mobile-card-meta">
-          <div>Previous: @${escapeHtml(item.screen_name || '')} (${escapeHtml(item.name || '')})</div>
-          <div>Date: ${escapeHtml(item.record_date || '-')}</div>
-        </div>
+        <div class="mobile-card-title">${title}</div>
+        <div class="mobile-card-meta">${details}</div>
+        ${actions}
       </div>`;
-    },
-  };
-  const render = renderers[type] || (item => `
-    <div class="mobile-card">
-      <div class="mobile-card-title">${escapeHtml(item.name)}</div>
-      <div class="mobile-card-meta">
-        <div>ID: ${escapeHtml(item.id)}</div>
-        <div>User ID: ${escapeHtml(item.user_id)}</div>
-        <div>Entity: ${escapeHtml(item.parent_lst_entity_id)}</div>
-      </div>
-    </div>`);
-  const cards = data.map(render).join('');
+  }).join('');
   return `<div class="mobile-card-list">${cards}</div>`;
 }
 
@@ -1705,7 +1766,7 @@ function renderPageNumbers(currentPage, totalPages, onClickHandler = 'goToDBPage
 
   return pages.map(p => {
     if (p === '...') return `<span class="page-btn" style="cursor: default;">...</span>`;
-    return `<button class="page-btn ${p === currentPage ? 'active' : ''}" data-action="${onClickHandler}" data-page="${p}">${p}</button>`;
+    return `<button class="page-btn ${p === currentPage ? 'active' : ''}" data-action="${escapeAttr(onClickHandler)}" data-page="${p}">${p}</button>`;
   }).join('');
 }
 
@@ -1717,6 +1778,7 @@ async function refreshDBData() {
   const pagination = dbPagination[dataSubPage];
   const sort = dbSort[dataSubPage];
   const search = dbSearch[dataSubPage];
+  const requestSeq = ++_state._dbRequestSeq;
 
   const params = new URLSearchParams();
   params.append('page', pagination.page);
@@ -1728,7 +1790,12 @@ async function refreshDBData() {
   try {
     const config = DB_TYPE_CONFIG[dataSubPage];
     if (!config?.list) return;
+    store.setState({
+      dbLoading: { ...store.state.dbLoading, [dataSubPage]: true },
+      dbError: { ...store.state.dbError, [dataSubPage]: '' }
+    });
     const response = await config.list(params);
+    if (requestSeq !== _state._dbRequestSeq || dataSubPage !== store.state.dataSubPage) return;
 
     if (response) {
       const data = response || {};
@@ -1749,12 +1816,23 @@ async function refreshDBData() {
             pageSize: data.pageSize || 200,
             totalPages: data.totalPages || 1
           }
-        }
+        },
+        dbLoading: { ...store.state.dbLoading, [dataSubPage]: false },
+        dbError: { ...store.state.dbError, [dataSubPage]: '' }
       });
     } else {
+      store.setState({
+        dbLoading: { ...store.state.dbLoading, [dataSubPage]: false },
+        dbError: { ...store.state.dbError, [dataSubPage]: '获取数据失败' }
+      });
       toast.show('获取数据失败', 'error');
     }
   } catch (err) {
+    if (requestSeq !== _state._dbRequestSeq || dataSubPage !== store.state.dataSubPage) return;
+    store.setState({
+      dbLoading: { ...store.state.dbLoading, [dataSubPage]: false },
+      dbError: { ...store.state.dbError, [dataSubPage]: err.message }
+    });
     toast.show(err.message, 'error');
   }
 }
@@ -1828,6 +1906,17 @@ function filterPreviousNamesByUser(userId) {
       previousNames: { ...store.state.dbPagination.previousNames, page: 1 }
     },
     _prevNameUserIdFilter: userId
+  });
+  refreshDBData();
+}
+
+function clearPreviousNamesFilter() {
+  store.setState({
+    _prevNameUserIdFilter: '',
+    dbPagination: {
+      ...store.state.dbPagination,
+      previousNames: { ...store.state.dbPagination.previousNames, page: 1 }
+    }
   });
   refreshDBData();
 }
@@ -1997,9 +2086,12 @@ async function saveDBItem(type, id) {
 }
 
 async function deleteDBItem(type, id) {
-  if (!confirm(`确定要删除这个${type}记录吗？此操作不可恢复。`)) return;
   const config = DB_TYPE_CONFIG[type];
   if (!config?.delete) return toast.show('This type does not support deletion', 'error');
+  const currentRows = store.state.dbData[type]?.data || [];
+  const item = currentRows.find(row => String(row.id) === String(id));
+  const label = item?.screen_name ? `@${item.screen_name}` : (item?.name || item?.id || id);
+  if (!confirm(`确定删除 ${config.title || type} #${id}${label ? ` (${label})` : ''} 吗？\n此操作不可恢复。`)) return;
   try {
     await config.delete(id);
     toast.show('删除成功');
@@ -2029,7 +2121,7 @@ async function deleteDBItem(type, id) {
 // ============================================
 // Actions
 // ============================================
-async function handleQuickDownload() {
+async function handleQuickDownload(button = null) {
   const input = document.getElementById('quickDownloadInput');
   let value = input.value.trim();
   
@@ -2060,13 +2152,15 @@ async function handleQuickDownload() {
   const firstUrl = (value.match(/https?:\/\/[^\s]+/) || [value])[0];
   const listMatch = firstUrl.match(/https?:\/\/(?:twitter\.com|x\.com)\/i\/lists\/(\d+)/);
   if (listMatch) {
-    try {
-      await api.createListDownload(listMatch[1], { auto_follow: true });
-      toast.show(`已创建列表下载任务: List ${listMatch[1]}`);
-      input.value = '';
-    } catch (err) {
-      toast.show(err.message, 'error');
-    }
+    await runTaskButtonAction(button, `create:quick:list:${listMatch[1]}`, async () => {
+      try {
+        await api.createListDownload(listMatch[1], { auto_follow: true });
+        toast.show(`已创建列表下载任务: List ${listMatch[1]}`);
+        input.value = '';
+      } catch (err) {
+        toast.show(err.message, 'error');
+      }
+    });
     return;
   }
   const userMatch = firstUrl.match(/https?:\/\/(?:twitter\.com|x\.com)\/([^/\s?]+)/);
@@ -2078,32 +2172,34 @@ async function handleQuickDownload() {
   }
   if (username.startsWith('@')) username = username.slice(1);
 
-  try {
-    await api.createUserDownload(username, { auto_follow: true });
-    toast.show(`已创建用户下载任务: @${username}`);
-    input.value = '';
-  } catch (err) {
-    toast.show(err.message, 'error');
-  }
+  await runTaskButtonAction(button, `create:quick:user:${username}`, async () => {
+    try {
+      await api.createUserDownload(username, { auto_follow: true });
+      toast.show(`已创建用户下载任务: @${username}`);
+      input.value = '';
+    } catch (err) {
+      toast.show(err.message, 'error');
+    }
+  });
 }
 
-async function createUserTask() {
+async function createUserTask(button = null) {
   const name = document.getElementById('userScreenName').value.trim();
   if (!name) return toast.show('请输入 Screen Name', 'error');
-  const ok = await apiTask(
+  const ok = await runTaskButtonAction(button, `create:user:${name}`, () => apiTask(
     () => api.createUserDownload(name, getCheckedOptions('user')),
     '用户下载任务已创建'
-  );
+  ));
   if (ok) document.getElementById('userScreenName').value = '';
 }
 
-async function createProfileTask() {
+async function createProfileTask(button = null) {
   const name = document.getElementById('userScreenName').value.trim();
   if (!name) return toast.show('请输入 Screen Name', 'error');
-  const ok = await apiTask(
+  const ok = await runTaskButtonAction(button, `create:profile:${name}`, () => apiTask(
     () => api.createProfileDownload(name),
     'Profile 下载任务已创建'
-  );
+  ));
   if (ok) document.getElementById('userScreenName').value = '';
 }
 
@@ -2117,6 +2213,34 @@ async function apiTask(apiCall, successMsg) {
   }
 }
 
+async function runTaskButtonAction(button, actionKey, work) {
+  if (_state._pendingTaskActions.has(actionKey)) return false;
+  _state._pendingTaskActions.add(actionKey);
+
+  const originalHTML = button ? button.innerHTML : '';
+  const originalDisabled = button ? button.disabled : false;
+  const originalAriaDisabled = button ? button.getAttribute('aria-disabled') : null;
+  if (button) {
+    button.disabled = true;
+    button.setAttribute('aria-disabled', 'true');
+    button.classList.add('is-busy');
+    button.innerHTML = '<span class="loading-spinner"></span>处理中...';
+  }
+
+  try {
+    return await work();
+  } finally {
+    _state._pendingTaskActions.delete(actionKey);
+    if (button && document.body.contains(button)) {
+      button.disabled = originalDisabled;
+      if (originalAriaDisabled === null) button.removeAttribute('aria-disabled');
+      else button.setAttribute('aria-disabled', originalAriaDisabled);
+      button.classList.remove('is-busy');
+      button.innerHTML = originalHTML;
+    }
+  }
+}
+
 // 读取标准 checkbox 选项组 (auto_follow / follow_members / skip_profile / no_retry)
 function getCheckedOptions(prefix) {
   return {
@@ -2127,37 +2251,37 @@ function getCheckedOptions(prefix) {
   };
 }
 
-async function createListTask() {
+async function createListTask(button = null) {
   const id = document.getElementById('listId').value.trim();
   if (!id) return toast.show('请输入 List ID', 'error');
-  const ok = await apiTask(
+  const ok = await runTaskButtonAction(button, `create:list:${id}`, () => apiTask(
     () => api.createListDownload(id, getCheckedOptions('list')),
     '列表下载任务已创建'
-  );
+  ));
   if (ok) document.getElementById('listId').value = '';
 }
 
-async function createListProfileTask() {
+async function createListProfileTask(button = null) {
   const id = document.getElementById('listId').value.trim();
   if (!id) return toast.show('请输入 List ID', 'error');
-  const ok = await apiTask(
+  const ok = await runTaskButtonAction(button, `create:list-profile:${id}`, () => apiTask(
     () => api.createListProfile(id),
     '列表 Profile 任务已创建'
-  );
+  ));
   if (ok) document.getElementById('listId').value = '';
 }
 
-async function createFollowingTask() {
+async function createFollowingTask(button = null) {
   const name = document.getElementById('followingScreenName').value.trim();
   if (!name) return toast.show('请输入 Screen Name', 'error');
-  const ok = await apiTask(
+  const ok = await runTaskButtonAction(button, `create:following:${name}`, () => apiTask(
     () => api.createFollowingDownload(name, getCheckedOptions('following')),
     '关注下载任务已创建'
-  );
+  ));
   if (ok) document.getElementById('followingScreenName').value = '';
 }
 
-async function createMarkTask() {
+async function createMarkTask(button = null) {
   const users = document.getElementById('markUsers').value.split('\n').map(s => s.trim()).filter(Boolean);
   const listIDs = readListIDsFromTextarea('markLists');
   const followingNames = document.getElementById('markFollowingNames').value.split('\n').map(s => s.trim()).filter(Boolean);
@@ -2166,28 +2290,30 @@ async function createMarkTask() {
     return toast.show('请输入至少一个用户、列表或 Following 用户', 'error');
   }
 
-  try {
-    const timestamp = getOptionalTimestamp('markTimestamp');
-    const data = {};
-    if (users.length) data.users = users;
-    if (listIDs.length) data.lists = listIDs;
-    if (followingNames.length) data.following_names = followingNames;
-    if (timestamp) data.timestamp = timestamp;
+  await runTaskButtonAction(button, 'create:mark', async () => {
+    try {
+      const timestamp = getOptionalTimestamp('markTimestamp');
+      const data = {};
+      if (users.length) data.users = users;
+      if (listIDs.length) data.lists = listIDs;
+      if (followingNames.length) data.following_names = followingNames;
+      if (timestamp) data.timestamp = timestamp;
 
-    await api.createBatchMark(data);
-    document.getElementById('markUsers').value = '';
-    document.getElementById('markLists').value = '';
-    document.getElementById('markFollowingNames').value = '';
-    document.getElementById('markTimestamp').value = '';
+      await api.createBatchMark(data);
+      document.getElementById('markUsers').value = '';
+      document.getElementById('markLists').value = '';
+      document.getElementById('markFollowingNames').value = '';
+      document.getElementById('markTimestamp').value = '';
 
-    const totalCount = users.length + listIDs.length + followingNames.length;
-    toast.show(`已创建批量标记任务（共 ${totalCount} 个目标）`);
-  } catch (err) {
-    toast.show(err.message, 'error');
-  }
+      const totalCount = users.length + listIDs.length + followingNames.length;
+      toast.show(`已创建批量标记任务（共 ${totalCount} 个目标）`);
+    } catch (err) {
+      toast.show(err.message, 'error');
+    }
+  });
 }
 
-async function createBatchTask() {
+async function createBatchTask(button = null) {
   const users = document.getElementById('batchUsers').value.split('\n').map(s => s.trim()).filter(Boolean);
   const lists = readListIDsFromTextarea('batchLists');
   const followingNames = document.getElementById('batchFollowingNames').value.split('\n').map(s => s.trim()).filter(Boolean);
@@ -2196,26 +2322,28 @@ async function createBatchTask() {
     return toast.show('请输入至少一个用户、列表或 Following 用户', 'error');
   }
   
-  try {
-    await api.createBatchDownload({
-      users,
-      lists,
-      following_names: followingNames,
-      auto_follow: document.getElementById('batchAutoFollow').checked,
-      follow_members: document.getElementById('batchFollowMembers').checked,
-      skip_profile: document.getElementById('batchSkipProfile').checked,
-      no_retry: document.getElementById('batchNoRetry').checked
-    });
-    toast.show(`批量任务已创建 (${users.length} 用户, ${lists.length} 列表, ${followingNames.length} 关注源)`);
-    document.getElementById('batchUsers').value = '';
-    document.getElementById('batchLists').value = '';
-    document.getElementById('batchFollowingNames').value = '';
-  } catch (err) {
-    toast.show(err.message, 'error');
-  }
+  await runTaskButtonAction(button, 'create:batch', async () => {
+    try {
+      await api.createBatchDownload({
+        users,
+        lists,
+        following_names: followingNames,
+        auto_follow: document.getElementById('batchAutoFollow').checked,
+        follow_members: document.getElementById('batchFollowMembers').checked,
+        skip_profile: document.getElementById('batchSkipProfile').checked,
+        no_retry: document.getElementById('batchNoRetry').checked
+      });
+      toast.show(`批量任务已创建 (${users.length} 用户, ${lists.length} 列表, ${followingNames.length} 关注源)`);
+      document.getElementById('batchUsers').value = '';
+      document.getElementById('batchLists').value = '';
+      document.getElementById('batchFollowingNames').value = '';
+    } catch (err) {
+      toast.show(err.message, 'error');
+    }
+  });
 }
 
-async function createJsonFileTask() {
+async function createJsonFileTask(button = null) {
   const uploadInput = document.getElementById('jsonFileUpload');
   const paths = readTextareaLines('jsonFilePaths');
   const noRetry = document.getElementById('jsonFileNoRetry').checked;
@@ -2225,32 +2353,36 @@ async function createJsonFileTask() {
     for (const file of uploadInput.files) formData.append('files', file);
     formData.append('no_retry', String(noRetry));
 
-    try {
-      const result = await api.upload('/api/v1/json/file/download', formData);
-      toast.show(result.message || 'JSON 文件上传任务已创建');
-      uploadInput.value = '';
-      document.getElementById('jsonFilePaths').value = '';
-    } catch (err) {
-      toast.show(err.message, 'error');
-    }
+    await runTaskButtonAction(button, 'create:json-file:upload', async () => {
+      try {
+        const result = await api.upload('/api/v1/json/file/download', formData);
+        toast.show(result.message || 'JSON 文件上传任务已创建');
+        uploadInput.value = '';
+        document.getElementById('jsonFilePaths').value = '';
+      } catch (err) {
+        toast.show(err.message, 'error');
+      }
+    });
     return;
   }
 
   if (!paths.length) return toast.show('请选择至少一个 JSON 文件，或填写服务端路径', 'error');
 
-  try {
-    const result = await api.createJsonFileDownload({
-      paths,
-      no_retry: noRetry
-    });
-    toast.show(result.message || 'JSON 文件任务已创建');
-    document.getElementById('jsonFilePaths').value = '';
-  } catch (err) {
-    toast.show(err.message, 'error');
-  }
+  await runTaskButtonAction(button, 'create:json-file:paths', async () => {
+    try {
+      const result = await api.createJsonFileDownload({
+        paths,
+        no_retry: noRetry
+      });
+      toast.show(result.message || 'JSON 文件任务已创建');
+      document.getElementById('jsonFilePaths').value = '';
+    } catch (err) {
+      toast.show(err.message, 'error');
+    }
+  });
 }
 
-async function createJsonFolderTask() {
+async function createJsonFolderTask(button = null) {
   const uploadInput = document.getElementById('jsonFolderUpload');
   const paths = readTextareaLines('jsonFolderPath');
   const noRetry = document.getElementById('jsonFolderNoRetry').checked;
@@ -2260,78 +2392,95 @@ async function createJsonFolderTask() {
     for (const file of uploadInput.files) formData.append('files', file);
     formData.append('no_retry', String(noRetry));
 
-    try {
-      const result = await api.upload('/api/v1/json/folder/download', formData);
-      toast.show(result.message || 'LoongTweet 上传任务已创建');
-      uploadInput.value = '';
-      document.getElementById('jsonFolderPath').value = '';
-    } catch (err) {
-      toast.show(err.message, 'error');
-    }
+    await runTaskButtonAction(button, 'create:json-folder:upload', async () => {
+      try {
+        const result = await api.upload('/api/v1/json/folder/download', formData);
+        toast.show(result.message || 'LoongTweet 上传任务已创建');
+        uploadInput.value = '';
+        document.getElementById('jsonFolderPath').value = '';
+      } catch (err) {
+        toast.show(err.message, 'error');
+      }
+    });
     return;
   }
 
   if (!paths.length) return toast.show('请选择至少一个 JSON 文件，或填写 LoongTweet 文件夹路径', 'error');
 
-  try {
-    const result = await api.createJsonFolderDownload({
-      paths,
-      no_retry: noRetry
-    });
-    toast.show(result.message || 'LoongTweet 任务已创建');
-    document.getElementById('jsonFolderPath').value = '';
-  } catch (err) {
-    toast.show(err.message, 'error');
-  }
+  await runTaskButtonAction(button, 'create:json-folder:paths', async () => {
+    try {
+      const result = await api.createJsonFolderDownload({
+        paths,
+        no_retry: noRetry
+      });
+      toast.show(result.message || 'LoongTweet 任务已创建');
+      document.getElementById('jsonFolderPath').value = '';
+    } catch (err) {
+      toast.show(err.message, 'error');
+    }
+  });
 }
 
-async function cancelTask(id) {
+async function cancelTask(id, button = null) {
   if (!confirm('确定要取消这个任务吗？')) return;
-  
-  try {
-    await api.cancelTask(id);
-    toast.show('任务已取消');
-  } catch (err) {
-    toast.show(err.message, 'error');
-  }
+
+  await runTaskButtonAction(button, `cancel:${id}`, async () => {
+    try {
+      await api.cancelTask(id);
+      toast.show('任务已取消');
+      await refreshTasks({ silent: true });
+    } catch (err) {
+      toast.show(err.message, 'error');
+    }
+  });
 }
 
-async function retryTask(id) {
-  try {
-    await api.retryTask(id);
-    toast.show('任务已重新创建');
-  } catch (err) {
-    toast.show(err.message, 'error');
-  }
+async function retryTask(id, button = null) {
+  await runTaskButtonAction(button, `retry:${id}`, async () => {
+    try {
+      await api.retryTask(id);
+      toast.show('任务已重新创建');
+      await refreshTasks({ silent: true });
+    } catch (err) {
+      toast.show(err.message, 'error');
+    }
+  });
 }
 
-async function deleteTask(id) {
+async function deleteTask(id, button = null) {
   if (!confirm('确定要删除这个任务吗？')) return;
-  
-  try {
-    await api.deleteTask(id);
-    toast.show('任务已删除');
-  } catch (err) {
-    toast.show(err.message, 'error');
-  }
+
+  await runTaskButtonAction(button, `delete:${id}`, async () => {
+    try {
+      await api.deleteTask(id);
+      toast.show('任务已删除');
+      if (drawer._taskId === id) drawer.close();
+      await refreshTasks({ silent: true });
+    } catch (err) {
+      toast.show(err.message, 'error');
+    }
+  });
 }
 
-async function cancelQueuedTasks() {
+async function cancelQueuedTasks(button = null) {
   const queuedCount = store.state.tasks.filter(t => t.status === 'queued').length;
   if (queuedCount === 0) return toast.show('没有排队中的任务', 'error');
   if (!confirm(`确定要取消 ${queuedCount} 个排队中的任务吗？`)) return;
-  
-  try {
-    const result = await api.cancelQueuedTasks();
-    toast.show(`已取消 ${result.cancelled_count} 个排队中的任务`);
-  } catch (err) {
-    toast.show(err.message, 'error');
-  }
+
+  await runTaskButtonAction(button, 'cancel:queued', async () => {
+    try {
+      const result = await api.cancelQueuedTasks();
+      toast.show(`已取消 ${result.cancelled_count} 个排队中的任务`);
+      await refreshTasks({ silent: true });
+    } catch (err) {
+      toast.show(err.message, 'error');
+    }
+  });
 }
 
 async function showTaskDetail(id) {
-  drawer._taskId = id;
   drawer.open('任务详情', '<div class="text-sm text-secondary" style="text-align:center;padding:var(--space-8)">加载中...</div>');
+  drawer._taskId = id;
 
   let task;
   try {
@@ -2342,6 +2491,7 @@ async function showTaskDetail(id) {
       `<button class="btn btn-secondary" data-action="closeDrawer">关闭</button>
 	       <button class="btn btn-primary" data-task-id="${escapeAttr(id)}" data-action="showTaskDetail">重试</button>`
     );
+    drawer._taskId = id;
     return;
   }
 
@@ -2350,18 +2500,17 @@ async function showTaskDetail(id) {
       '<div class="task-detail-error">未找到该任务</div>',
       '<button class="btn btn-secondary" data-action="closeDrawer">关闭</button>'
     );
+    drawer._taskId = id;
     return;
   }
 
-  const statusMap = {
-    queued: '排队中',
-    running: '运行中',
-    completed: '已完成',
-    failed: '失败',
-    cancelled: '已取消'
-  };
+  renderTaskDetail(task);
+}
 
-  const statusText = statusMap[task.status] || escapeHtml(task.status);
+function renderTaskDetail(task, options = {}) {
+  const scrollTop = options.preserveScroll && drawer.body ? drawer.body.scrollTop : 0;
+  const status = getTaskStatusInfo(task.status);
+  const statusText = escapeHtml(status.detailText);
   const pct = getTaskProgressPercent(task);
   const stageText = task.progress?.stage ? escapeHtml(getStageText(task.progress.stage)) : '';
   const currentText = task.progress?.current ? ` · ${escapeHtml(task.progress.current)}` : '';
@@ -2469,12 +2618,12 @@ async function showTaskDetail(id) {
 
   // Build content
   const content = `
-    <div class="task-detail-header status-${task.status}">
+    <div class="task-detail-header ${status.statusClass}">
       <div class="task-detail-header-info">
         <div class="task-detail-header-title">${target || '未知目标'}</div>
         <div class="task-detail-header-sub">${escapeHtml(task.task_id)}</div>
       </div>
-      <span class="tag tag-${task.status}" style="font-size:var(--text-base)">${statusText}</span>
+      <span class="tag ${status.tag}" style="font-size:var(--text-base)">${statusText}</span>
     </div>
 
     <div class="task-detail-section">
@@ -2484,7 +2633,7 @@ async function showTaskDetail(id) {
           <div class="task-detail-label">类型</div>
           <div class="task-detail-value">${escapeHtml(task.type)}</div>
           <div class="task-detail-label">状态</div>
-          <div class="task-detail-value status-${task.status}">${statusText}</div>
+          <div class="task-detail-value ${status.statusClass}">${statusText}</div>
         </div>
       </div>
     </div>
@@ -2530,13 +2679,30 @@ async function showTaskDetail(id) {
      <button class="btn btn-secondary" data-action="closeDrawer">关闭</button>`;
 
   drawer.open('任务详情', content, footer);
+  drawer._taskId = task.task_id;
+  if (options.preserveScroll && drawer.body) {
+    requestAnimationFrame(() => { drawer.body.scrollTop = scrollTop; });
+  }
 }
 
-async function refreshTasks() {
+function updateOpenTaskDrawerFromTasks(tasks) {
+  if (!drawer._taskId || !drawer.el?.classList.contains('open')) return;
+  const task = (tasks || []).find(t => t.task_id === drawer._taskId);
+  if (!task) {
+    drawer.body.innerHTML = '<div class="task-detail-error">该任务已不在任务列表中</div>';
+    drawer.footer.innerHTML = '<button class="btn btn-secondary" data-action="closeDrawer">关闭</button>';
+    return;
+  }
+  renderTaskDetail(task, { preserveScroll: true });
+}
+
+async function refreshTasks(options = {}) {
   try {
     const data = await api.getTasks();
-    store.setState({ tasks: data.tasks || [] });
-    toast.show('任务列表已刷新');
+    const tasks = data.tasks || [];
+    store.setState({ tasks });
+    updateOpenTaskDrawerFromTasks(tasks);
+    if (!options.silent) toast.show('任务列表已刷新');
   } catch (err) {
     toast.show(err.message, 'error');
   }
@@ -2555,6 +2721,26 @@ function escapeAttr(str) {
 
 function stripAnsi(str) { return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, ''); }
 
+const LOG_STREAM_MAX_LINES = 5000;
+const LOG_DOMAIN_OPTIONS = [
+  ['all', '全部域'],
+  ['api', 'api'],
+  ['auth', 'auth'],
+  ['batch', 'batch'],
+  ['db', 'db'],
+  ['download', 'download'],
+  ['download-queue', 'download-queue'],
+  ['downloader', 'downloader'],
+  ['logs', 'logs'],
+  ['profile', 'profile'],
+  ['scheduler', 'scheduler'],
+  ['server', 'server'],
+  ['startup', 'startup'],
+  ['task', 'task'],
+  ['twitter', 'twitter'],
+  ['sse', 'sse']
+];
+
 function getLineLevel(line) {
   if (line.startsWith('FATA[')) return 'fatal';
   if (line.startsWith('ERRO[')) return 'error';
@@ -2567,6 +2753,11 @@ function getLineLevel(line) {
 function getLogEntryClass(line) {
   const level = getLineLevel(line);
   return 'log-entry' + (level ? ' log-entry-' + level : '');
+}
+
+function getLogDomain(line) {
+  const m = stripAnsi(line).match(/^(?:(?:DEBU|INFO|WARN|ERRO|FATA)\[[^\]]+\]\s+)?\[([a-z0-9_-]+)\]/i);
+  return m ? m[1].toLowerCase() : '';
 }
 
 function getLogFieldTone(key, value) {
@@ -2639,7 +2830,7 @@ function renderConfigEditor() {
 }
 
 function renderConfigForm(fields, saving, exists, loading = false) {
-  if (loading || !fields) {
+  if (loading || fields === null) {
     return `
       <div class="card">
         <div class="card-header">
@@ -2801,7 +2992,7 @@ function renderCookiesEditor() {
 }
 
 function renderCookiesForm(items, saving, exists, loading = false) {
-  if (loading) {
+  if (loading || items === null) {
     return `
       <div class="card">
         <div class="card-header">
@@ -2848,12 +3039,12 @@ function renderCookiesForm(items, saving, exists, loading = false) {
       <div class="config-field">
         <label class="config-label">Auth Token</label>
         <input type="password" class="form-input config-input cookie-input" id="cookie_auth_${idx}"
-          name="auth_token_${idx}" value="" placeholder="${item.auth_token ? '当前值: ' + escapeHtml(item.auth_token) : '请输入 auth_token'}">
+          name="auth_token_${idx}" value="" placeholder="${item.auth_token ? '当前值: ' + escapeAttr(item.auth_token) : '请输入 auth_token'}">
       </div>
       <div class="config-field">
         <label class="config-label">CT0</label>
         <input type="password" class="form-input config-input cookie-input" id="cookie_ct0_${idx}"
-          name="ct0_${idx}" value="" placeholder="${item.ct0 ? '当前值: ' + escapeHtml(item.ct0) : '请输入 ct0'}">
+          name="ct0_${idx}" value="" placeholder="${item.ct0 ? '当前值: ' + escapeAttr(item.ct0) : '请输入 ct0'}">
       </div>
     </div>
   `;
@@ -2891,17 +3082,21 @@ function renderCookiesRawEditor(raw, saving, exists) {
 }
 
 function renderLogViewer() {
-  const { logLevel, logStats } = store.state;
+  const { logLevel, logStats, logDomain, logPaused, logPausedCount } = store.state;
 
   return `
     <div class="card card-page" id="logViewerCard">
       <div class="toolbar">
         <div class="toolbar-left">
           ${renderLogFilterButtons(logLevel, logStats)}
+          ${renderLogDomainSelect(logDomain)}
           <input type="text" id="log-search-input" class="form-input search-input" placeholder="搜索日志..." value="${escapeAttr(store.state.logSearch)}">
           <button class="btn btn-ghost btn-sm" data-action="logSearch">🔍</button>
         </div>
         <div class="toolbar-right">
+          <button class="btn ${logPaused ? 'btn-primary' : 'btn-ghost'} btn-sm" id="log-pause-toggle" data-action="toggleLogPause">
+            ${logPaused ? '继续' : '暂停'}${logPausedCount > 0 ? ` (${logPausedCount})` : ''}
+          </button>
           <button class="btn btn-ghost btn-sm" data-action="logRefresh">刷新</button>
           <button class="btn btn-ghost btn-sm" data-action="logExport">导出</button>
           <label class="form-checkbox" style="font-size:12px;white-space:nowrap">
@@ -2942,13 +3137,24 @@ function getTweetId(text) {
 
 function renderLogLines(logs) {
   if (!logs || logs.length === 0) return '';
-  return logs.map(l => {
-    const clean = stripAnsi(l);
-    const tweetId = getTweetId(clean);
-    const html = highlightLogLine(clean);
-    const tweetIdAttr = tweetId ? ` data-tweet-id="${escapeAttr(tweetId)}"` : '';
-    return '<div class="' + getLogEntryClass(clean) + '"' + tweetIdAttr + '>' + html + '</div>';
-  }).join('');
+  return logs.map(renderLogEntry).join('');
+}
+
+function renderLogEntry(line) {
+  const clean = stripAnsi(line);
+  const tweetId = getTweetId(clean);
+  const domain = getLogDomain(clean);
+  const html = highlightLogLine(clean);
+  const tweetIdAttr = tweetId ? ` data-tweet-id="${escapeAttr(tweetId)}"` : '';
+  const domainAttr = domain ? ` data-log-domain="${escapeAttr(domain)}"` : '';
+  const tweetButton = tweetId ? `<button class="log-entry-action" data-action="copyLogTweetId" data-tweet-id="${escapeAttr(tweetId)}" title="复制推文 ID">ID</button>` : '';
+  return `<div class="${getLogEntryClass(clean)}"${tweetIdAttr}${domainAttr} data-log-line="${escapeAttr(clean)}">
+    <span class="log-entry-text">${html}</span>
+    <span class="log-entry-actions">
+      ${tweetButton}
+      <button class="log-entry-action" data-action="copyLogLine" title="复制整行日志">复制</button>
+    </span>
+  </div>`;
 }
 
 function renderLogFilterButtons(level, stats) {
@@ -2958,6 +3164,15 @@ function renderLogFilterButtons(level, stats) {
       return '<button class="btn btn-sm ' + (level === l ? 'btn-primary' : 'btn-ghost') + '" data-action="logSetLevel" data-level="' + l + '">' + l.toUpperCase() + (count > 0 ? ' (' + count + ')' : '') + '</button>';
     }).join('') +
     '</div>';
+}
+
+function renderLogDomainSelect(domain) {
+  const known = new Set(LOG_DOMAIN_OPTIONS.map(([value]) => value));
+  const options = LOG_DOMAIN_OPTIONS.slice();
+  if (domain && !known.has(domain)) options.push([domain, domain]);
+  return `<select id="log-domain-select" class="form-input log-domain-select" data-log-domain-filter="true">
+    ${options.map(([value, label]) => `<option value="${escapeAttr(value)}" ${domain === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+  </select>`;
 }
 
 let logAutoScroll = true;
@@ -2982,20 +3197,44 @@ function exportLogs() {
 }
 
 async function setLogLevel(level) {
-  store.setState({ logLevel: level, logPage: 1 });
+  store.setState({ logLevel: level, logPage: 1, logPausedCount: 0 });
   await refreshLogs();
   // 重连 SSE 以应用新的 level 过滤
   disconnectLogSSE();
   connectLogSSE();
 }
 
+async function setLogDomain(domain) {
+  store.setState({ logDomain: domain || 'all', logPage: 1, logPausedCount: 0 });
+  await refreshLogs();
+  disconnectLogSSE();
+  connectLogSSE();
+}
+
 async function doLogSearch() {
   const q = document.getElementById('log-search-input')?.value?.trim() || '';
-  store.setState({ logSearch: q, logPage: 1 });
+  store.setState({ logSearch: q, logPage: 1, logPausedCount: 0 });
   await refreshLogs();
   // 重连 SSE 以应用搜索过滤
   disconnectLogSSE();
   connectLogSSE();
+}
+
+async function toggleLogPause() {
+  const nextPaused = !store.state.logPaused;
+  store.setState({ logPaused: nextPaused, logPausedCount: nextPaused ? store.state.logPausedCount : 0 });
+  updateLogPauseButton();
+  if (!nextPaused) {
+    await refreshLogs();
+  }
+}
+
+function updateLogPauseButton() {
+  const btn = document.getElementById('log-pause-toggle');
+  if (!btn) return;
+  const { logPaused, logPausedCount } = store.state;
+  btn.textContent = (logPaused ? '继续' : '暂停') + (logPausedCount > 0 ? ` (${logPausedCount})` : '');
+  btn.className = 'btn ' + (logPaused ? 'btn-primary' : 'btn-ghost') + ' btn-sm';
 }
 
 function scrollLogToBottom() {
@@ -3018,12 +3257,13 @@ async function refreshLogs() {
 async function loadLogsReplace() {
   const stream = document.getElementById('log-stream');
   if (!stream) return;
-  const { logLevel, logSearch, logPage } = store.state;
+  const { logLevel, logSearch, logPage, logDomain } = store.state;
   try {
     const p = new URLSearchParams();
     p.append('page', String(logPage));
     p.append('pageSize', '200');
     if (logLevel !== 'all') p.append('level', logLevel);
+    if (logDomain !== 'all') p.append('domain', logDomain);
     if (logSearch) p.append('q', logSearch);
     const d = await api.getLogs('?' + p.toString());
     const lines = (d.logs || []).reverse();
@@ -3045,12 +3285,13 @@ async function loadMoreLogs() {
   if (!stream) { _logLoadingMore = false; return; }
   const nextPage = logPage + 1;
   store.setState({ logPage: nextPage });
-  const { logLevel, logSearch } = store.state;
+  const { logLevel, logSearch, logDomain } = store.state;
   try {
     const p = new URLSearchParams();
     p.append('page', String(nextPage));
     p.append('pageSize', '200');
     if (logLevel !== 'all') p.append('level', logLevel);
+    if (logDomain !== 'all') p.append('domain', logDomain);
     if (logSearch) p.append('q', logSearch);
     const d = await api.getLogs('?' + p.toString());
     const lines = (d.logs || []).reverse();
@@ -3268,6 +3509,12 @@ function renderScheduleFormField(item, idx) {
 }
 
 function renderScheduleForm(items, saving, exists, loading = false) {
+  const undo = store.state._scheduleUndoDelete;
+  const undoBanner = undo ? `
+    <div class="schedule-undo-banner">
+      <span>已删除规则 #${undo.index + 1}${undo.item?.name ? ` · ${escapeHtml(undo.item.name)}` : ''}</span>
+      <button class="btn btn-ghost btn-sm" data-action="undoRemoveScheduleItem">撤销</button>
+    </div>` : '';
   if (loading) {
     return `
       <div class="card">
@@ -3297,6 +3544,7 @@ function renderScheduleForm(items, saving, exists, loading = false) {
             <button class="btn btn-ghost btn-sm" data-action="addScheduleItem">➕ 添加规则</button>
           </div>
         </div>
+        ${undoBanner}
         <div class="card-body">
           <div class="empty-state">
             <div class="empty-icon">⏰</div>
@@ -3319,6 +3567,7 @@ function renderScheduleForm(items, saving, exists, loading = false) {
           </button>
         </div>
       </div>
+      ${undoBanner}
       <div class="card-body">
         ${items.map((item, idx) => renderScheduleFormField(item, idx)).join('<div class="config-divider"></div>')}
       </div>
@@ -3329,8 +3578,8 @@ function renderScheduleForm(items, saving, exists, loading = false) {
 // Shared helpers for schedule table rendering
 function typeTag(type) {
   const map = { list: ['List', 'tag-info'], user: ['User', 'tag-success'], following: ['Following', 'tag-warning'], mixed: ['Mixed', 'tag-primary'] };
-  const [label, cls] = map[type] || [escapeHtml(type), ''];
-  return `<span class="tag ${escapeHtml(cls)}">${escapeHtml(label)}</span>`;
+  const [label, cls] = map[type] || [String(type || 'Unknown'), ''];
+  return `<span class="tag ${escapeAttr(cls)}">${escapeHtml(label)}</span>`;
 }
 
 function failureTag(count) {
@@ -3422,7 +3671,7 @@ function renderScheduleItem(s) {
 
 function renderScheduleTable(schedules, exists) {
   schedules = schedules || [];
-  const active = schedules.filter(s => readScheduleEntryField(s.entry, 'enabled', 'Enabled')).length;
+  const active = schedules.filter(s => normalizeScheduleEntry(s.entry).enabled).length;
   const total = schedules.length;
   const failures = schedules.filter(s => (s.consecutive_failures || 0) > 0).length;
 
@@ -3508,6 +3757,7 @@ async function loadSchedules(options = {}) {
     if (options.updateFormItems !== false) {
       update._scheduleFormItems = entries.map(s => scheduleStatusToFormItem(s));
       update._scheduleFormDirty = false;
+      update._scheduleUndoDelete = null;
     }
     store.setState(update);
   } catch (e) {
@@ -3553,27 +3803,23 @@ function scheduleStatusToFormItem(status) {
 }
 
 function normalizeScheduleEntry(entry) {
+  entry = entry || {};
   return {
-    id: readScheduleEntryField(entry, 'id', 'ID') || '',
-    type: readScheduleEntryField(entry, 'type', 'Type') || '',
-    target: readScheduleEntryField(entry, 'target', 'Target') || '',
-    users: readScheduleEntryField(entry, 'users', 'Users') || [],
-    lists: readScheduleEntryField(entry, 'lists', 'Lists') || [],
-    following_names: readScheduleEntryField(entry, 'following_names', 'FollowingNames') || [],
-    name: readScheduleEntryField(entry, 'name', 'Name') || '',
-    schedule: readScheduleEntryField(entry, 'schedule', 'Schedule') || '',
-    enabled: readScheduleEntryField(entry, 'enabled', 'Enabled') !== false,
-    run_on_start: !!readScheduleEntryField(entry, 'run_on_start', 'RunOnStart'),
-    auto_follow: !!readScheduleEntryField(entry, 'auto_follow', 'AutoFollow'),
-    follow_members: !!readScheduleEntryField(entry, 'follow_members', 'FollowMembers'),
-    skip_profile: !!readScheduleEntryField(entry, 'skip_profile', 'SkipProfile'),
-    no_retry: !!readScheduleEntryField(entry, 'no_retry', 'NoRetry'),
+    id: entry.id || '',
+    type: entry.type || '',
+    target: entry.target || '',
+    users: entry.users || [],
+    lists: entry.lists || [],
+    following_names: entry.following_names || [],
+    name: entry.name || '',
+    schedule: entry.schedule || '',
+    enabled: entry.enabled !== false,
+    run_on_start: !!entry.run_on_start,
+    auto_follow: !!entry.auto_follow,
+    follow_members: !!entry.follow_members,
+    skip_profile: !!entry.skip_profile,
+    no_retry: !!entry.no_retry,
   };
-}
-
-function readScheduleEntryField(entry, jsonName, legacyName) {
-  if (!entry) return undefined;
-  return entry[jsonName] !== undefined ? entry[jsonName] : entry[legacyName];
 }
 
 async function loadScheduleRaw() {
@@ -3608,6 +3854,7 @@ async function saveScheduleRaw() {
       _scheduleRaw: rawData.content || '',
       _scheduleExists: rawData.exists || false,
       _scheduleSaving: false,
+      _scheduleUndoDelete: null,
     });
     setEditorValue(_state.scheduleEditor, store.state._scheduleRaw || '');
   } catch (e) {
@@ -3616,52 +3863,51 @@ async function saveScheduleRaw() {
   }
 }
 
-async function triggerSchedule(id) {
-  try {
-    const data = await api.triggerSchedule(id);
-    toast.show('已触发定时任务: ' + data.task_id);
-  } catch (e) {
-    toast.show('触发失败: ' + e.message, 'error');
-  }
+async function triggerSchedule(id, button = null) {
+  await runTaskButtonAction(button, `schedule:trigger:${id}`, async () => {
+    try {
+      const data = await api.triggerSchedule(id);
+      toast.show('已触发定时任务: ' + data.task_id);
+    } catch (e) {
+      toast.show('触发失败: ' + e.message, 'error');
+    }
+  });
 }
 
 async function triggerAllSchedules() {
   const btn = document.getElementById('btnTriggerAll');
   if (!btn) return;
-  const schedules = (store.state._schedules || []).filter(s => readScheduleEntryField(s.entry, 'enabled', 'Enabled'));
+  const schedules = (store.state._schedules || []).filter(s => normalizeScheduleEntry(s.entry).enabled);
   if (schedules.length === 0) {
     toast.show('没有已启用的调度任务', 'error');
     return;
   }
   if (!confirm(`确定要触发全部 ${schedules.length} 个已启用的调度任务吗？`)) return;
 
-  // 禁用按钮，显示 loading
-  btn.disabled = true;
-  btn.innerHTML = '<span class="loading-spinner"></span> 触发中...';
-
-  try {
-    const data = await api.triggerAllSchedules();
-    if (data.failed > 0) {
-      const errMsgs = (data.results || []).filter(r => r.error).map(r => `${r.entry_id}: ${r.error}`).join('; ');
-      toast.show(`${data.succeeded} 成功, ${data.failed} 失败: ${errMsgs}`, 'error');
-    } else {
-      toast.show(`已全部触发成功 (${data.succeeded})`);
+  await runTaskButtonAction(btn, 'schedule:trigger-all', async () => {
+    try {
+      const data = await api.triggerAllSchedules();
+      if (data.failed > 0) {
+        const errMsgs = (data.results || []).filter(r => r.error).map(r => `${r.entry_id}: ${r.error}`).join('; ');
+        toast.show(`${data.succeeded} 成功, ${data.failed} 失败: ${errMsgs}`, 'error');
+      } else {
+        toast.show(`已全部触发成功 (${data.succeeded})`);
+      }
+    } catch (e) {
+      toast.show('触发失败: ' + e.message, 'error');
     }
-  } catch (e) {
-    toast.show('触发失败: ' + e.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '⬇️ 下载全部';
-  }
+  });
 }
 
-async function toggleScheduleEnabled(id, currentEnabled) {
-  try {
-    await api.setScheduleEnabled(id, !currentEnabled);
-    toast.show(currentEnabled ? '已禁用定时任务' : '已启用定时任务');
-  } catch (e) {
-    toast.show('操作失败: ' + e.message, 'error');
-  }
+async function toggleScheduleEnabled(id, currentEnabled, button = null) {
+  await runTaskButtonAction(button, `schedule:toggle:${id}`, async () => {
+    try {
+      await api.setScheduleEnabled(id, !currentEnabled);
+      toast.show(currentEnabled ? '已禁用定时任务' : '已启用定时任务');
+    } catch (e) {
+      toast.show('操作失败: ' + e.message, 'error');
+    }
+  });
 }
 
 // ============================================
@@ -3767,14 +4013,41 @@ function clearAllScheduleValidationTimers() {
     delete _state._scheduleValidateTimers[k];
   });
   Object.keys(_state._scheduleValidateRequests).forEach(k => {
+    if (_state._scheduleValidateRequests[k]?.controller) {
+      _state._scheduleValidateRequests[k].controller.abort();
+    }
     delete _state._scheduleValidateRequests[k];
   });
 }
 
 function removeScheduleItem(index) {
   clearAllScheduleValidationTimers();
-  const items = readScheduleFormItemsFromDOM().filter((_, i) => i !== index);
-  store.setState({ _scheduleFormItems: items, _scheduleFormDirty: true });
+  const currentItems = readScheduleFormItemsFromDOM();
+  const removed = currentItems[index];
+  if (!removed) return;
+  const items = currentItems.filter((_, i) => i !== index);
+  store.setState({
+    _scheduleFormItems: items,
+    _scheduleFormDirty: true,
+    _scheduleUndoDelete: { item: removed, index }
+  });
+}
+
+function undoRemoveScheduleItem() {
+  const undo = store.state._scheduleUndoDelete;
+  if (!undo?.item) return;
+  const items = readScheduleFormItemsFromDOM();
+  const index = Math.max(0, Math.min(undo.index, items.length));
+  items.splice(index, 0, undo.item);
+  store.setState({
+    _scheduleFormItems: items,
+    _scheduleFormDirty: true,
+    _scheduleUndoDelete: null
+  });
+  requestAnimationFrame(() => {
+    const group = document.querySelectorAll('#systemSchedulesPanel .config-group')[index];
+    if (group) group.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  });
 }
 
 function readScheduleFormItemsFromDOM() {
@@ -3805,6 +4078,9 @@ function readScheduleFormItemsFromDOM() {
 function clearScheduleValidationState(index) {
   clearTimeout(_state._scheduleValidateTimers[index]);
   delete _state._scheduleValidateTimers[index];
+  if (_state._scheduleValidateRequests[index]?.controller) {
+    _state._scheduleValidateRequests[index].controller.abort();
+  }
   delete _state._scheduleValidateRequests[index];
   setScheduleValidationAriaState(index, false);
   const clearHint = () => {
@@ -3898,10 +4174,14 @@ async function validateScheduleField(idx) {
 
   // schedule 为空时也发送请求，让后端验证 target 等其他字段
   const requestSeq = ++_state._scheduleValidateRequestSeq;
-  _state._scheduleValidateRequests[idx] = requestSeq;
+  if (_state._scheduleValidateRequests[idx]?.controller) {
+    _state._scheduleValidateRequests[idx].controller.abort();
+  }
+  const controller = new AbortController();
+  _state._scheduleValidateRequests[idx] = { seq: requestSeq, controller };
   try {
-    const result = await api.validateSchedule({ entries: [entry] });
-    if (_state._scheduleValidateRequests[idx] !== requestSeq) return;
+    const result = await api.validateSchedule({ entries: [entry] }, { signal: controller.signal });
+    if (_state._scheduleValidateRequests[idx]?.seq !== requestSeq) return;
     if (result.valid) {
       hint.innerHTML = '';
       setScheduleValidationAriaState(idx, false);
@@ -3911,9 +4191,14 @@ async function validateScheduleField(idx) {
       setScheduleValidationAriaState(idx, true);
     }
   } catch (e) {
-    if (_state._scheduleValidateRequests[idx] !== requestSeq) return;
+    if (e.name === 'AbortError') return;
+    if (_state._scheduleValidateRequests[idx]?.seq !== requestSeq) return;
     hint.innerHTML = '';
     setScheduleValidationAriaState(idx, false);
+  } finally {
+    if (_state._scheduleValidateRequests[idx]?.seq === requestSeq) {
+      delete _state._scheduleValidateRequests[idx];
+    }
   }
 }
 
@@ -3932,8 +4217,8 @@ async function validateScheduleForm() {
   try {
     const result = await api.validateSchedule({ entries });
     if (!result.valid) {
-      const msg = (result.errors || []).join('; ');
-      toast.show(msg, 'error');
+      const errors = result.errors || [];
+      showScheduleValidationErrors(errors);
       return false;
     }
   } catch (e) {
@@ -3943,22 +4228,53 @@ async function validateScheduleForm() {
   return true;
 }
 
+function getScheduleErrorIndex(message) {
+  const m = String(message || '').match(/schedule #(\d+)/i);
+  if (!m) return -1;
+  return Math.max(0, Number(m[1]) - 1);
+}
+
+function focusScheduleRule(index, message) {
+  if (index < 0) return;
+  const hint = document.getElementById(`sf_schedule_hint_${index}`);
+  if (hint && message) {
+    hint.innerHTML = `<span style="color:var(--danger, #f85149)">✗ ${escapeHtml(message)}</span>`;
+  }
+  setScheduleValidationAriaState(index, true);
+  const group = hint?.closest('.config-group') || document.querySelectorAll('#systemSchedulesPanel .config-group')[index];
+  if (group) group.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  const firstInput = group?.querySelector('input, textarea, select');
+  if (firstInput) firstInput.focus({ preventScroll: true });
+}
+
+function showScheduleValidationErrors(errors) {
+  const msg = (errors || []).join('; ') || '调度配置校验失败';
+  const index = getScheduleErrorIndex(msg);
+  if (index >= 0) {
+    focusScheduleRule(index, msg);
+  }
+  toast.show(msg, 'error');
+}
+
+function failScheduleRule(index, message) {
+  focusScheduleRule(index, message);
+  toast.show(message, 'error');
+  return false;
+}
+
 async function saveScheduleForm() {
   const items = readScheduleFormItemsFromDOM();
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     if (item.type !== 'mixed' && !item.target.trim()) {
-      toast.show(`规则 #${i + 1}: 目标不能为空`, 'error');
-      return;
+      return failScheduleRule(i, `规则 #${i + 1}: 目标不能为空`);
     }
     if (item.type === 'mixed' && !item.users.length && !item.lists.length && !item.following_names.length) {
-      toast.show(`规则 #${i + 1}: 混合任务至少需要一个目标`, 'error');
-      return;
+      return failScheduleRule(i, `规则 #${i + 1}: 混合任务至少需要一个目标`);
     }
     if (!item.scheduleValue.trim()) {
-      toast.show(`规则 #${i + 1}: 调度值不能为空`, 'error');
-      return;
+      return failScheduleRule(i, `规则 #${i + 1}: 调度值不能为空`);
     }
   }
 
@@ -3988,6 +4304,7 @@ async function saveScheduleForm() {
       store.setState({
         _scheduleFormItems: saved.entries.map(entry => scheduleStatusToFormItem({ entry })),
         _scheduleFormDirty: false,
+        _scheduleUndoDelete: null,
       });
     }
     await loadSchedules({ updateFormItems: false });
@@ -3997,6 +4314,7 @@ async function saveScheduleForm() {
       _scheduleRaw: rawData.content || '',
       _scheduleExists: rawData.exists || false,
       _scheduleSaving: false,
+      _scheduleUndoDelete: null,
     });
   } catch (e) {
     toast.show('保存失败: ' + e.message, 'error');
@@ -4085,6 +4403,9 @@ async function saveConfig() {
   if (store.state.configSaving) return;
   const content = getEditorValue(_state.configEditor, store.state.configRaw);
   if (!content.trim()) return toast.show('配置不能为空', 'error');
+  const getApiKey = yaml => { const m = (yaml || '').match(/^api_key:\s*(\S+)/m); return m ? m[1] : null; };
+  const oldKey = getApiKey(store.state.configRaw);
+  const newKey = getApiKey(content);
   store.setState({ configRaw: content, configSaving: true });
   try {
     const data = await api.updateConfigRaw(content);
@@ -4094,10 +4415,7 @@ async function saveConfig() {
     });
     showManualRestartNotice('配置');
     // 比较新旧 api_key 值，仅在实际变更时清除 JWT（避免每次 raw 保存都重新登录）
-    const getApiKey = yaml => { const m = (yaml || '').match(/^api_key:\s*(\S+)/m); return m ? m[1] : null; };
-    const oldKey = getApiKey(store.state.configRaw);
-    const newKey = getApiKey(content);
-    if (newKey !== null && newKey !== oldKey) {
+    if (newKey !== oldKey) {
       localStorage.removeItem('tmd_jwt_token');
       localStorage.removeItem('tmd_jwt_expiry');
     }
@@ -4147,7 +4465,7 @@ function refreshCookiesAfterReconnect() {
 
 async function saveCookiesForm() {
   const cookies = [];
-  const items = store.state.cookieItems;
+  const items = store.state.cookieItems || [];
 
   for (let i = 0; i < items.length; i++) {
     const authInput = document.getElementById(`cookie_auth_${i}`);
@@ -4202,13 +4520,13 @@ async function saveCookies() {
 // setCookiesMode 已由上面的 cookiesEditor 工厂实例 + 薄封装取代
 
 function addCookieAccount() {
-  const items = [{ index: null, auth_token: '', ct0: '' }, ...store.state.cookieItems];
+  const items = [{ index: null, auth_token: '', ct0: '' }, ...(store.state.cookieItems || [])];
   store.setState({ cookieItems: items });
   glowNewFirstItem('systemCookiesPanel');
 }
 
 function removeCookieAccount(index) {
-  const items = store.state.cookieItems.filter((_, i) => i !== index);
+  const items = (store.state.cookieItems || []).filter((_, i) => i !== index);
   store.setState({ cookieItems: items });
 }
 
@@ -4298,9 +4616,10 @@ function connectLogSSE() {
   if (logSSESource) { logSSESource.close(); logSSESource = null; }
   if (_logSSETimer) { clearTimeout(_logSSETimer); _logSSETimer = null; }
   _logIntentionalDisconnect = false;
-  const { logLevel, logSearch } = store.state;
+  const { logLevel, logSearch, logDomain } = store.state;
   const params = new URLSearchParams();
   if (logLevel !== 'all') params.append('level', logLevel);
+  if (logDomain !== 'all') params.append('domain', logDomain);
   if (logSearch) params.append('q', logSearch);
   appendJWTToken(params);
   const qs = params.toString();
@@ -4311,14 +4630,13 @@ function connectLogSSE() {
     _logReconnectAttempts = 0; // 成功收到事件 → 连接正常，重置计数器
     const stream = document.getElementById('log-stream');
     if (!stream) return;
-    const el = document.createElement('div');
-    el.className = 'log-entry';
     const clean = stripAnsi(e.data);
-    const tweetId = getTweetId(clean);
-    if (tweetId) el.dataset.tweetId = tweetId;
-    el.className = getLogEntryClass(clean);
-    el.innerHTML = highlightLogLine(clean);
-    stream.appendChild(el);
+    if (store.state.logPaused) {
+      store.setState({ logPausedCount: (store.state.logPausedCount || 0) + 1 });
+      updateLogPauseButton();
+      return;
+    }
+    stream.insertAdjacentHTML('beforeend', renderLogEntry(clean));
     // 移除 loading 占位
     const hint = document.getElementById('log-empty-hint');
     if (hint) hint.style.display = 'none';
@@ -4333,8 +4651,8 @@ function connectLogSSE() {
         if (btn) btn.style.display = 'flex';
       }
     }
-    // Keep last 5000 lines
-    while (stream.children.length > 5000) stream.removeChild(stream.firstChild);
+    // Keep last N lines
+    while (stream.children.length > LOG_STREAM_MAX_LINES) stream.removeChild(stream.firstChild);
   });
 
   logSSESource.onerror = () => {
@@ -4359,22 +4677,28 @@ function disconnectLogSSE() {
   _logReconnectAttempts = 0;
 }
 
-// 点击日志行任意位置复制推文 ID
-document.addEventListener('click', (e) => {
-  const entry = e.target.closest('.log-entry[data-tweet-id]');
+function copyTextToClipboard(text, successMessage) {
+  navigator.clipboard.writeText(text).then(() => {
+    toast.show(successMessage, 'success');
+  }).catch(() => {
+    toast.show('复制失败，请手动选择文本复制', 'warning');
+  });
+}
+
+function copyLogLine(button) {
+  const entry = button.closest('.log-entry[data-log-line]');
   if (!entry) return;
-  const id = entry.dataset.tweetId;
-  if (id) {
-    navigator.clipboard.writeText(id).then(() => {
-      toast.show('已复制推文 ID: ' + id, 'success');
-    }).catch(() => {
-      toast.show('复制失败，请手动选择文本复制', 'warning');
-    });
-  }
-});
+  copyTextToClipboard(entry.dataset.logLine || '', '已复制日志行');
+}
+
+function copyLogTweetId(button) {
+  const id = button.dataset.tweetId || button.closest('.log-entry[data-tweet-id]')?.dataset.tweetId;
+  if (!id) return;
+  copyTextToClipboard(id, '已复制推文 ID: ' + id);
+}
 
 function syncConfigTabView() {
-  if (store.state.configMode === 'form' && (!store.state.configFields || store.state.configFields.length === 0)) {
+  if (store.state.configMode === 'form' && store.state.configFields === null) {
     loadConfigFields();
   }
   // 提前加载原始数据，切换高级模式时无需等待异步请求
@@ -4385,7 +4709,7 @@ function syncConfigTabView() {
 }
 
 function syncCookiesTabView() {
-  if (store.state.cookiesMode === 'form' && (!store.state.cookieItems || store.state.cookieItems.length === 0)) {
+  if (store.state.cookiesMode === 'form' && store.state.cookieItems === null) {
     loadCookiesItems();
   }
   // 提前加载原始数据，切换高级模式时无需等待异步请求
@@ -4581,6 +4905,7 @@ function render() {
     
     // Restore filter and search values
       restoreSearchValue('taskFilter', 'taskFilter');
+      restoreSearchValue('taskStageFilter', 'taskStageFilter');
       restoreSearchValue('taskSearch', 'taskSearch');
 
     // Restore search value for data page
@@ -4772,15 +5097,15 @@ window.addEventListener('resize', () => {
 });
 
 // Subscribe to state changes
-const dataDetector = makeChangeDetector(['dataSubPage', 'dbData', 'dbPagination', 'dbSort']);
+const dataDetector = makeChangeDetector(['dataSubPage', 'dbData', 'dbPagination', 'dbSort', 'dbLoading', 'dbError', '_prevNameUserIdFilter']);
 const scheduleDetector = makeChangeDetector(['_schedules', '_scheduleRaw', '_scheduleExists', '_scheduleSaving', '_scheduleTab', '_scheduleFormItems', '_schedulerRunning']);
 const overviewDetector = makeChangeDetector(['tasks', 'health']);
 // system 页变化检测器：取代原 syncSystemPage 中 18 行手写 lastXxx 比较
 // 注意：不包含 'tasks'，原代码 tasks 变化不触发 system 页 rebuild（lastTasksJson 是死代码）
 const systemDetector = makeChangeDetector([
   '_systemTab',
-  'configRaw', 'configSaving', 'configFields', 'configFieldsLoading', 'configMode',
-  'cookieItems', 'cookiesMode', 'cookiesRaw', 'cookiesSaving',
+  'configRaw', 'configSaving', 'configFields', 'configFieldsLoading', 'configExists', 'configMode',
+  'cookieItems', 'cookiesMode', 'cookiesRaw', 'cookiesSaving', 'cookiesExists', '_cookiesLoading',
   '_schedules', '_scheduleRaw', '_scheduleExists', '_scheduleSaving', '_scheduleTab', '_scheduleFormItems'
 ]);
 
@@ -4792,8 +5117,8 @@ function syncDataPage(state) {
   const { hasAny, changed } = dataDetector.detect(state);
   if (!hasAny) return;
 
-  // 子页面切换（如 Users→Lists）：全量重建（tab 切换需要重新渲染标题）
-  if (changed.dataSubPage) { render(); return; }
+  // 子页面、加载/错误态、筛选横幅变化：全量重建（这些区域不只影响表格主体）
+  if (changed.dataSubPage || changed.dbLoading || changed.dbError || changed._prevNameUserIdFilter) { render(); return; }
 
   // 仅数据/排序/分页变化：局部更新表格 + 分页栏，保留标签页和搜索状态
   const subPage = state.dataSubPage;
@@ -4843,8 +5168,8 @@ function rebuildConfigPanel(state, changed) {
   // rebuild 判定（与原逻辑等价）
   const rawRebuildNeeded = changed.configRaw && _state.lastConfigRaw === null && state.configRaw !== null;
   const shouldRebuild = state.configMode === 'raw'
-    ? (changed.configMode || changed.configSaving || rawRebuildNeeded)
-    : (changed.configRaw || changed.configFields || changed.configFieldsLoading || changed.configSaving || changed.configMode);
+    ? (changed.configMode || changed.configSaving || changed.configExists || rawRebuildNeeded)
+    : (changed.configRaw || changed.configFields || changed.configFieldsLoading || changed.configSaving || changed.configExists || changed.configMode);
   if (shouldRebuild) {
     _state.lastConfigRaw = state.configRaw;  // 保留 _state.lastConfigRaw 用于 rawRebuildNeeded 判定
     configEditor.rebuild();
@@ -4865,8 +5190,8 @@ function rebuildCookiesPanel(state, changed) {
   }
   const rawRebuildNeeded = changed.cookiesRaw && _state.lastCookiesRaw === null && state.cookiesRaw !== null;
   const shouldRebuild = state.cookiesMode === 'raw'
-    ? (changed.cookiesMode || changed.cookiesSaving || rawRebuildNeeded)
-    : (changed.cookieItems || changed.cookiesMode || changed.cookiesRaw || changed.cookiesSaving);
+    ? (changed.cookiesMode || changed.cookiesSaving || changed.cookiesExists || rawRebuildNeeded)
+    : (changed.cookieItems || changed.cookiesMode || changed.cookiesRaw || changed.cookiesSaving || changed.cookiesExists || changed._cookiesLoading);
   if (shouldRebuild) {
     _state.lastCookiesRaw = state.cookiesRaw;
     cookiesEditor.rebuild();
@@ -4919,10 +5244,10 @@ function syncSystemPage(state) {
   }
 
   // 三个面板独立 rebuild（仅当相关状态变化时）
-  if (changed.configRaw || changed.configSaving || changed.configFields || changed.configFieldsLoading || changed.configMode) {
+  if (changed.configRaw || changed.configSaving || changed.configFields || changed.configFieldsLoading || changed.configExists || changed.configMode) {
     rebuildConfigPanel(state, changed);
   }
-  if (changed.cookieItems || changed.cookiesMode || changed.cookiesRaw || changed.cookiesSaving) {
+  if (changed.cookieItems || changed.cookiesMode || changed.cookiesRaw || changed.cookiesSaving || changed.cookiesExists || changed._cookiesLoading) {
     rebuildCookiesPanel(state, changed);
   }
   if (changed._schedules || changed._scheduleRaw || changed._scheduleExists || changed._scheduleSaving || changed._scheduleTab || changed._scheduleFormItems) {
@@ -5050,12 +5375,17 @@ function updateTaskListUI(tasks) {
   if (!taskList) return;
   
   const filter = store.state.taskFilter;
+  const stageFilter = store.state.taskStageFilter;
   const search = store.state.taskSearch.toLowerCase();
   
   let filtered = tasks;
   
   if (filter !== 'all') {
     filtered = filtered.filter(t => t.status === filter);
+  }
+
+  if (stageFilter !== 'all') {
+    filtered = filtered.filter(t => getTaskStage(t) === stageFilter);
   }
   
   if (search) {
@@ -5066,7 +5396,11 @@ function updateTaskListUI(tasks) {
         ...(t.data?.lists || []),
         ...(t.data?.following_names || [])
       ].join(' ').toLowerCase();
-      return target.includes(search) || batchTargets.includes(search) || t.task_id.toLowerCase().includes(search) || (t.type || '').toLowerCase().includes(search);
+      const shortId = shortTaskID(t.task_id).toLowerCase();
+      const stage = getTaskStage(t).toLowerCase();
+      return target.includes(search) || batchTargets.includes(search) ||
+        t.task_id.toLowerCase().includes(search) || shortId.includes(search) ||
+        stage.includes(search) || (t.type || '').toLowerCase().includes(search);
     });
   }
   
@@ -5123,12 +5457,21 @@ document.getElementById('contentContainer').addEventListener('input', (e) => {
 });
 
 document.getElementById('contentContainer').addEventListener('change', (e) => {
+  const domainFilter = e.target.closest('[data-log-domain-filter]');
+  if (domainFilter) {
+    setLogDomain(domainFilter.value);
+    return;
+  }
+
   const el = e.target.closest('[data-binding]');
   if (!el) return;
   const binding = el.dataset.binding;
   const idx = el.dataset.idx;
   if (binding === 'taskFilter') {
     updateSearchState('taskFilter', null, el.value);
+    filterTasks();
+  } else if (binding === 'taskStageFilter') {
+    updateSearchState('taskStageFilter', null, el.value);
     filterTasks();
   } else if (binding === 'sf_type' && idx !== undefined) {
     updateScheduleFormItem(Number(idx), el.id.includes('mode') ? 'scheduleMode' : 'type', el.value);
@@ -5182,17 +5525,17 @@ document.addEventListener('click', (e) => {
     case 'navigateToTasks':       navigateTo('tasks'); break;
 
     // Task creation
-    case 'createUserTask':        createUserTask(); break;
-    case 'createProfileTask':     createProfileTask(); break;
-    case 'createListTask':        createListTask(); break;
-    case 'createListProfileTask': createListProfileTask(); break;
-    case 'createFollowingTask':   createFollowingTask(); break;
-    case 'createMarkTask':        createMarkTask(); break;
-    case 'createBatchTask':       createBatchTask(); break;
-    case 'createJsonFileTask':    createJsonFileTask(); break;
-    case 'createJsonFolderTask':  createJsonFolderTask(); break;
-    case 'handleQuickDownload':   handleQuickDownload(); break;
-    case 'cancelQueuedTasks':     cancelQueuedTasks(); break;
+    case 'createUserTask':        createUserTask(el); break;
+    case 'createProfileTask':     createProfileTask(el); break;
+    case 'createListTask':        createListTask(el); break;
+    case 'createListProfileTask': createListProfileTask(el); break;
+    case 'createFollowingTask':   createFollowingTask(el); break;
+    case 'createMarkTask':        createMarkTask(el); break;
+    case 'createBatchTask':       createBatchTask(el); break;
+    case 'createJsonFileTask':    createJsonFileTask(el); break;
+    case 'createJsonFolderTask':  createJsonFolderTask(el); break;
+    case 'handleQuickDownload':   handleQuickDownload(el); break;
+    case 'cancelQueuedTasks':     cancelQueuedTasks(el); break;
 
     // Config
     case 'setConfigMode':         setConfigMode(el.dataset.mode); break;
@@ -5214,11 +5557,12 @@ document.addEventListener('click', (e) => {
     case 'setScheduleTab':        setScheduleTab(el.dataset.tab); break;
     case 'addScheduleItem':       addScheduleItem(); break;
     case 'removeScheduleItem':    removeScheduleItem(Number(el.dataset.index)); break;
+    case 'undoRemoveScheduleItem': undoRemoveScheduleItem(); break;
     case 'saveScheduleForm':      saveScheduleForm(); break;
     case 'saveScheduleRaw':       saveScheduleRaw(); break;
-    case 'triggerSchedule':       triggerSchedule(el.dataset.scheduleId); break;
+    case 'triggerSchedule':       triggerSchedule(el.dataset.scheduleId, el); break;
     case 'triggerAllSchedules':   triggerAllSchedules(); break;
-    case 'toggleScheduleEnabled': toggleScheduleEnabled(el.dataset.scheduleId, el.dataset.enabled === 'true'); break;
+    case 'toggleScheduleEnabled': toggleScheduleEnabled(el.dataset.scheduleId, el.dataset.enabled === 'true', el); break;
 
     // DB page
     case 'changeDBPage':          changeDBPage(Number(el.dataset.delta)); break;
@@ -5229,14 +5573,18 @@ document.addEventListener('click', (e) => {
     case 'deleteDBItem':          deleteDBItem(el.dataset.dbType, el.dataset.dbId); break;
     case 'saveDBItem':            saveDBItem(el.dataset.dbType, el.dataset.dbId); break;
     case 'filterPreviousNamesByUser': filterPreviousNamesByUser(el.dataset.userId); break;
+    case 'clearPreviousNamesFilter': clearPreviousNamesFilter(); break;
 
     // Logs
     case 'logSetLevel':       setLogLevel(el.dataset.level); break;
+    case 'toggleLogPause':    toggleLogPause(); break;
     case 'logSearch':         doLogSearch(); break;
     case 'logRefresh':        refreshLogs(); break;
     case 'logExport':         exportLogs(); break;
     case 'logScrollToBottom': scrollLogToBottom(); break;
     case 'toggleLogAutoScroll':     toggleLogAutoScroll(); break;
+    case 'copyLogLine':       copyLogLine(el); break;
+    case 'copyLogTweetId':    copyLogTweetId(el); break;
 
     // Server
     case 'shutdownServer':        shutdownServer(); break;
@@ -5245,9 +5593,9 @@ document.addEventListener('click', (e) => {
     case 'closeDrawer':           drawer.close(); return;
 
     // Tasks in list/drawer
-    case 'cancelTask':            cancelTask(el.dataset.taskId); break;
-    case 'retryTask':             retryTask(el.dataset.taskId); break;
-    case 'deleteTask':            deleteTask(el.dataset.taskId); break;
+    case 'cancelTask':            cancelTask(el.dataset.taskId, el); break;
+    case 'retryTask':             retryTask(el.dataset.taskId, el); break;
+    case 'deleteTask':            deleteTask(el.dataset.taskId, el); break;
     case 'showTaskDetail':        showTaskDetail(el.dataset.taskId); break;
 
     case 'closeSidebar':
@@ -5256,8 +5604,9 @@ document.addEventListener('click', (e) => {
       break;
   }
 
-  // Actions triggered from inside the drawer close it afterwards
-  if (inDrawer) drawer.close();
+  // Most drawer actions close the drawer, but task operations update the drawer in place.
+  const drawerKeepsOpen = ['cancelTask', 'retryTask', 'deleteTask', 'showTaskDetail'];
+  if (inDrawer && !drawerKeepsOpen.includes(action)) drawer.close();
 });
 
 // Start

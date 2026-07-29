@@ -139,11 +139,61 @@ internal/api/web/
 
 `web1/app.js` is a single-file vanilla JS SPA (~5100 lines) with a custom store + subscriber pattern.
 
+### Task Console
+
+The Web1 task console renders task state from REST snapshots and SSE task broadcasts without inventing extra task states.
+
+Task list status filters use the task `status` field, while stage filters use `progress.stage` values such as `downloading`, `retrying`, `profile`, and `marking`. Task IDs are shortened only for display; full IDs remain in `data-task-id`, tooltips, detail views, and search matching.
+
+Task creation and task mutation buttons use a client-side pending-action guard so repeated clicks do not submit duplicate requests. The task detail drawer tracks the open task ID and refreshes its content from each SSE task snapshot when that task is present.
+
+### Data Console
+
+The Web1 data console renders database tables from shared column definitions so desktop tables and mobile cards expose the same fields.
+
+Data loads track per-subpage loading and error state. A request sequence guard prevents stale responses from earlier tabs or pages from overwriting the currently selected table, and the data-page detector watches loading/error/filter state so those states render immediately.
+
+Previous-name filtering is explicit: clicking a user in Previous Names sets the `userId` API filter, shows a banner with the active filter, and provides a clear action that resets pagination before reloading.
+
+### System Config Console
+
+The Web1 system config console edits runtime YAML and form fields while preserving auth state boundaries.
+
+Raw config saves compare the old and new `api_key` before mutating `configRaw`; if the key changes or is removed, cached JWT credentials are cleared. Config and cookies form data use `null` for not-yet-loaded and an empty array for loaded-but-empty so loading states and empty states do not collide.
+
+### Schedule Console
+
+The Web1 schedule console edits scheduler rules through raw YAML or structured forms while staying aligned with backend scheduler validation.
+
+Structured schedule entries use the backend JSON contract (`id`, `run_on_start`, `auto_follow`, etc.) rather than legacy Go field names. Form validation cancels stale field checks with `AbortController`, keeps a request sequence guard, and focuses the matching rule when backend errors mention `schedule #N`.
+
+Structured form deletes are undoable until a save or reload replaces local state. Schedule trigger, trigger-all, and enable/disable controls share the same pending-action guard so repeated clicks do not submit duplicate requests.
+
 ### Log Viewer
 
 The Web1 log viewer renders backend TextFormatter lines directly, then applies display-only highlighting for scanability.
 
 Historical log pages and live log SSE events share the same rendering helpers for ANSI stripping, timestamp/domain highlighting, field highlighting, and tweet-id click-to-copy. Log export appends the JWT token as a query parameter because `window.open` cannot send the API client's Authorization header.
+
+The log API and live stream both accept `level`, `q`, and `domain` filters, so the Web1 domain selector has the same pagination and realtime semantics as level and text search. Domain values match bracketed prefixes such as `[download]` and `[api]`.
+
+The Web1 log view supports pausing visual insertion of live lines without closing the SSE connection. While paused, matching lines are counted; resuming refreshes history so skipped live lines are loaded through the same paginated API path.
+
+Rendered log rows keep the stripped raw line in `data-log-line`, expose explicit copy buttons for the whole line and tweet id, and cap the live DOM stream at 5000 rows to avoid unbounded browser memory growth.
+
+### Client Request Safety
+
+The Web1 API client centralizes request cancellation, timeout handling, JWT refresh, and endpoint naming so page code does not duplicate transport behavior.
+
+Normal API calls use a 60 second timeout, while multipart uploads use a 5 minute timeout. Navigation-triggered aborts still surface as `AbortError`, but timeout-triggered aborts become user-readable timeout errors.
+
+Database endpoint helpers keep relation-scoped methods (`getDBUserRelatedEntities`, `getDBUserRelatedLinks`, `getDBListRelatedEntities`) distinct from global table methods (`getDBUserEntities`, `getDBUserLinks`, `getDBListEntities`) so object literal definitions cannot silently overwrite each other.
+
+### Rendering Safety
+
+Web1 templates must escape values according to their output context and use fixed class names for backend-controlled status values.
+
+Use `escapeHtml` for text nodes and `escapeAttr` for attribute values such as `value`, `placeholder`, `data-*`, and `class`. Backend task statuses are rendered through a whitelist mapping before they become tag text or `status-*` classes.
 
 ### Store Notification Model
 

@@ -24,6 +24,7 @@ func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	search := r.URL.Query().Get("q")
+	domain := r.URL.Query().Get("domain")
 	ctx := r.Context()
 	ch, unsubscribe := s.logHub.Subscribe()
 	defer unsubscribe()
@@ -48,7 +49,7 @@ func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
 			if line == "" {
 				continue
 			}
-			if !matchLogFilters(line, levelStr, search) {
+			if !matchLogFilters(line, levelStr, search, domain) {
 				continue
 			}
 			if err := writeSSEFrame(w, flusher, func() error {

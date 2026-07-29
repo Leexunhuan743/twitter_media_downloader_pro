@@ -21,6 +21,7 @@ const (
 
 // logrus TextFormatter 时间格式: INFO[2024-06-04T10:00:00+08:00]
 var logTimeRegex = regexp.MustCompile(`^(?:DEBU|INFO|WARN|ERRO|FATA)\[([^\]]+)\]`)
+var logDomainRegex = regexp.MustCompile(`(?i)^(?:(?:DEBU|INFO|WARN|ERRO|FATA)\[[^\]]+\]\s+)?\[([a-z0-9_-]+)\]`)
 
 func parseLogTime(line string) (time.Time, bool) {
 	m := logTimeRegex.FindStringSubmatch(line)
@@ -54,6 +55,7 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	levelStr := query.Get("level")
 	search := query.Get("q")
+	domain := query.Get("domain")
 	startStr := query.Get("start_time")
 	endStr := query.Get("end_time")
 
@@ -71,7 +73,7 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 
 	pagination := NewPaginationWithDefaults(r, defaultLogsPageSize, maxLogsPageSize, defaultPaginationSort, defaultSortOrder)
 
-	filtered := filterLogLinesReverse(s.logHub.Snapshot(), levelStr, search, hasStart, startTime, hasEnd, endTime)
+	filtered := filterLogLinesReverse(s.logHub.Snapshot(), levelStr, search, domain, hasStart, startTime, hasEnd, endTime)
 
 	total := len(filtered)
 	start := pagination.Offset
@@ -134,11 +136,11 @@ func (s *Server) handleLogExport(w http.ResponseWriter, r *http.Request) {
 }
 
 // filterLogLinesReverse 从尾向头遍历（天然逆序），过滤并直接产出结果，一次遍历完成。
-func filterLogLinesReverse(lines []string, level, search string, hasStart bool, startTime time.Time, hasEnd bool, endTime time.Time) []string {
+func filterLogLinesReverse(lines []string, level, search, domain string, hasStart bool, startTime time.Time, hasEnd bool, endTime time.Time) []string {
 	result := make([]string, 0, len(lines))
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := lines[i]
-		if !matchLogFilters(line, level, search) {
+		if !matchLogFilters(line, level, search, domain) {
 			continue
 		}
 		if hasStart || hasEnd {
@@ -157,14 +159,27 @@ func filterLogLinesReverse(lines []string, level, search string, hasStart bool, 
 	return result
 }
 
-func matchLogFilters(line, level, search string) bool {
+func matchLogFilters(line, level, search, domain string) bool {
 	if level != "" && level != "all" && !matchLogLevel(line, level) {
+		return false
+	}
+	if domain != "" && domain != "all" && !matchLogDomain(line, domain) {
 		return false
 	}
 	if search != "" && !strings.Contains(strings.ToLower(line), strings.ToLower(search)) {
 		return false
 	}
 	return true
+}
+
+func matchLogDomain(line, domain string) bool {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	domain = strings.TrimPrefix(strings.TrimSuffix(domain, "]"), "[")
+	if domain == "" || domain == "all" {
+		return true
+	}
+	m := logDomainRegex.FindStringSubmatch(strings.ToLower(line))
+	return m != nil && m[1] == domain
 }
 
 func matchLogLevel(line, level string) bool {

@@ -409,6 +409,13 @@ ul, ol {
   cursor: not-allowed;
 }
 
+.btn.is-busy,
+[aria-disabled="true"].is-busy {
+  opacity: 0.65;
+  cursor: wait;
+  pointer-events: none;
+}
+
 .btn-primary {
   background: var(--accent-primary);
   color: white;
@@ -1343,6 +1350,11 @@ ul, ol {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.task-short-id {
+  white-space: nowrap;
 }
 
 .task-progress {
@@ -1842,6 +1854,10 @@ ul, ol {
 }
 
 .log-entry {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
   padding: 8px 8px;
   font-family: var(--font-mono);
   font-size: 11px;
@@ -1852,6 +1868,41 @@ ul, ol {
   color: var(--text-secondary);
 }
 .log-entry:hover { background: var(--bg-tertiary); }
+
+.log-entry-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.log-entry-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.log-entry:hover .log-entry-actions,
+.log-entry:focus-within .log-entry-actions {
+  opacity: 1;
+}
+
+.log-entry-action {
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 10px;
+  line-height: 1.4;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.log-entry-action:hover {
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+}
 
 .log-entry-fatal,
 .log-entry-error {
@@ -1921,6 +1972,11 @@ ul, ol {
   gap: var(--space-1);
 }
 
+.log-domain-select {
+  width: 150px;
+  min-width: 130px;
+}
+
 /* Raw YAML editor shared styles */
 .raw-editor-body {
   padding: 0;
@@ -1958,6 +2014,31 @@ ul, ol {
   color: var(--text-secondary);
   font-size: var(--text-sm);
   margin-bottom: var(--space-2);
+}
+
+.db-filter-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-5);
+  background: var(--info-bg);
+  border-bottom: 1px solid var(--border-primary);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.schedule-undo-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: rgba(240, 136, 62, 0.1);
+  border-top: 1px solid var(--border-primary);
+  border-bottom: 1px solid var(--border-primary);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
 }
 
 /* Code/value display block (read-only IDs in detail views) */
