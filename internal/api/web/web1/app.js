@@ -2,6 +2,8 @@
 // Init guard — 初始化完成前忽略 SSE 任务事件以消除竞态
 // ============================================
 let _initComplete = false;
+let _initPromise = null;
+let _jwtRefreshInterval = null;
 
 // ============================================
 // Utility Functions
@@ -634,6 +636,7 @@ const sseManager = {
 
   },
   _scheduleReconnect() {
+    if (this.reconnectTimer) return;
     const delay = Math.min(this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts - 1), this.maxReconnectDelay);
     console.warn(`[SSE] 连接断开，${delay / 1000}s 后重试（第 ${this.reconnectAttempts} 次）`);
     this.reconnectTimer = setTimeout(() => {
@@ -659,6 +662,10 @@ const sseManager = {
 
   resume() {
     this.reconnectDisabled = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.connect();
   },
 
@@ -671,8 +678,16 @@ const sseManager = {
 
   refreshCurrentPage() {
     const page = store.state.currentPage;
-    if (page === 'overview' || page === 'tasks') {
+    if (page === 'overview') {
+      this._safeRefresh(() => refreshOverviewData(), page);
+      return;
+    }
+    if (page === 'tasks') {
       this._safeRefresh(() => refreshTasks(), page);
+      return;
+    }
+    if (page === 'data') {
+      this._safeRefresh(() => refreshDBData(), 'data');
       return;
     }
     if (page === 'schedules') {
@@ -2708,6 +2723,23 @@ async function refreshTasks(options = {}) {
   }
 }
 
+async function loadOverviewData() {
+  const [health, tasks] = await Promise.all([
+    api.getHealth(),
+    api.getTasks()
+  ]);
+  return {
+    health,
+    tasks: tasks.tasks || [],
+  };
+}
+
+async function refreshOverviewData() {
+  const data = await loadOverviewData();
+  store.setState(data);
+  return data;
+}
+
 function escapeHtml(str) {
   if (str == null) return '';
   const d = document.createElement('div');
@@ -4548,6 +4580,7 @@ async function shutdownServer() {
 
 function handleServerShutdown(message) {
   cleanupSystemTimers();
+  stopJWTRefreshLoop();
   api.abortAll();
   sseManager.disconnect();
   destroyAllEditors();
@@ -4604,6 +4637,12 @@ function cleanupSystemTimers() {
   _state._logsPageLoaded = false;
   clearAllScheduleValidationTimers();
   disconnectLogSSE();
+}
+
+function stopJWTRefreshLoop() {
+  if (!_jwtRefreshInterval) return;
+  clearInterval(_jwtRefreshInterval);
+  _jwtRefreshInterval = null;
 }
 
 function destroyAllEditors() {
@@ -4953,38 +4992,47 @@ window.addEventListener('unhandledrejection', function (e) {
 // Initialization
 // ============================================
 
+function refreshJWTIfNeeded() {
+  const jwt = localStorage.getItem('tmd_jwt_token');
+  if (!jwt) return;
+  // 仅在 JWT 剩余不足 30 分钟时才刷新，避免无谓的网络请求
+  const expiry = localStorage.getItem('tmd_jwt_expiry');
+  if (expiry) {
+    const remaining = new Date(expiry) - new Date();
+    if (remaining > 30 * 60 * 1000) return;
+  }
+  api._tryRefreshJWT();
+}
+
+function startJWTRefreshLoop() {
+  if (_jwtRefreshInterval) return;
+  // 定时刷新：每 45 分钟尝试刷新一次 JWT
+  // 首次刷新由第一个 API 请求的 401 处理逻辑自动触发，无需提前检查
+  _jwtRefreshInterval = setInterval(refreshJWTIfNeeded, 45 * 60 * 1000);
+}
+
 async function init() {
+  if (_initPromise) return _initPromise;
+  _initPromise = bootstrapApp();
+  return _initPromise;
+}
+
+async function bootstrapApp() {
   const { page, dataSubPage } = parseRoute();
   _state.lastPage = page;
   updateNavigationUI(page);
 
-  // 定时刷新：每 45 分钟尝试刷新一次 JWT
-  // 首次刷新由第一个 API 请求的 401 处理逻辑自动触发，无需提前检查
-  setInterval(() => {
-    const jwt = localStorage.getItem('tmd_jwt_token');
-    if (!jwt) return;
-    // 仅在 JWT 剩余不足 30 分钟时才刷新，避免无谓的网络请求
-    const expiry = localStorage.getItem('tmd_jwt_expiry');
-    if (expiry) {
-      const remaining = new Date(expiry) - new Date();
-      if (remaining > 30 * 60 * 1000) return; // 剩余充足，跳过
-    }
-    api._tryRefreshJWT();
-  }, 45 * 60 * 1000);
-
+  startJWTRefreshLoop();
   sseManager.connect();
 
   try {
-    const [health, tasks] = await Promise.all([
-      api.getHealth(),
-      api.getTasks()
-    ]);
+    const { health, tasks } = await loadOverviewData();
 
     store.setState({
       currentPage: page,
       dataSubPage: dataSubPage,
       health,
-      tasks: tasks.tasks || [],
+      tasks,
     });
 
     _initComplete = true;
@@ -5080,12 +5128,8 @@ document.getElementById('menuToggle').onclick = () => {
 
 
 document.getElementById('sseIndicator').onclick = () => {
-  const page = store.state.currentPage;
-  if (page === 'tasks') refreshTasks();
-  else if (page === 'data') refreshDBData();
-  else if (page === 'schedules') loadSchedules();
-  else if (page === 'logs') refreshLogs();
-  else init();
+  sseManager.resume();
+  sseManager.refreshCurrentPage();
 };
 
 // Handle window resize

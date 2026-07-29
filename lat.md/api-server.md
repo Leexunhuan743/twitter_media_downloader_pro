@@ -189,6 +189,14 @@ Normal API calls use a 60 second timeout, while multipart uploads use a 5 minute
 
 Database endpoint helpers keep relation-scoped methods (`getDBUserRelatedEntities`, `getDBUserRelatedLinks`, `getDBListRelatedEntities`) distinct from global table methods (`getDBUserEntities`, `getDBUserLinks`, `getDBListEntities`) so object literal definitions cannot silently overwrite each other.
 
+### SSE And App Lifecycle
+
+The Web1 app treats bootstrap, realtime reconnection, and page refresh as separate lifecycle paths.
+
+`init()` is guarded by a single bootstrap promise and starts the JWT refresh interval through an idempotent loop starter. The SSE indicator resumes the EventSource and refreshes the current page instead of re-running application initialization, preventing duplicate JWT intervals and repeated bootstrap work.
+
+SSE reconnect scheduling is single-flight: an existing reconnect timer is reused until it fires or is manually cancelled by `resume()`. Reconnected overview pages refresh both health and task snapshots, while other pages use their page-specific refresh path.
+
 ### Rendering Safety
 
 Web1 templates must escape values according to their output context and use fixed class names for backend-controlled status values.
