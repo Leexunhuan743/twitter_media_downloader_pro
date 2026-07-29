@@ -520,6 +520,25 @@ func TestDownloader_LogErrorSanitizesSensitiveText(t *testing.T) {
 	}
 }
 
+func TestDownloader_OrderedLogFieldsPrioritizesCallerContext(t *testing.T) {
+	got := orderedLogFields(DownloadRequest{
+		LogFields: map[string]interface{}{
+			"tweet_id": uint64(1000000000000000001),
+			"source":   "unit_test",
+		},
+	},
+		logField{"attempt", 1},
+		logField{"max_retries", 2},
+		logField{"url", "https://example.invalid/media.bin?tag=test"},
+		logField{"error", "test read error"},
+	)
+
+	want := ` tweet_id=1000000000000000001 source="unit_test" attempt=1 max_retries=2 url="https://example.invalid/media.bin?tag=test" error="test read error"`
+	if got != want {
+		t.Fatalf("orderedLogFields() = %q, want %q", got, want)
+	}
+}
+
 func TestDownloader_Download_RetryLogIncludesCallerContext(t *testing.T) {
 	var getOnce sync.Once
 	firstGetServed := make(chan struct{})
@@ -549,7 +568,7 @@ func TestDownloader_Download_RetryLogIncludesCallerContext(t *testing.T) {
 		URL:         server.URL + "/retry.mp4",
 		Destination: filepath.Join(t.TempDir(), "retry.mp4"),
 		LogFields: map[string]interface{}{
-			"tweet_id": uint64(2082145690277327224),
+			"tweet_id": uint64(1000000000000000002),
 		},
 	}
 
@@ -560,8 +579,13 @@ func TestDownloader_Download_RetryLogIncludesCallerContext(t *testing.T) {
 	if !strings.Contains(output, "[downloader] Download failed, retrying...") {
 		t.Fatalf("download log should include retry message, got: %s", output)
 	}
-	if !strings.Contains(output, "tweet_id=2082145690277327224") {
+	if !strings.Contains(output, "tweet_id=1000000000000000002") {
 		t.Fatalf("download retry log should include caller context, got: %s", output)
+	}
+	tweetIDIndex := strings.Index(output, "tweet_id=1000000000000000002")
+	attemptIndex := strings.Index(output, "attempt=1")
+	if tweetIDIndex < 0 || attemptIndex < 0 || tweetIDIndex > attemptIndex {
+		t.Fatalf("download retry log should put tweet_id before attempt, got: %s", output)
 	}
 }
 

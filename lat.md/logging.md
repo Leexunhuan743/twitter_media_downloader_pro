@@ -58,7 +58,7 @@ Downloader and media failure logs must sanitize URLs with `[[internal/logging/sa
 
 Tweet title logs use `[[internal/naming/tweet_naming.go#TweetNaming#LogFormat]]` so the displayed title stays close to the saved file name base while inserting a readable space before `_tweet_id` and trimming trailing title whitespace. Completion summaries rely on that title for the tweet id instead of adding a separate `tweet_id` field.
 
-Caller context that explains a file download, such as `tweet_id`, should be passed through `[[internal/downloader/types.go#DownloadRequest]]` log fields so downloader retry logs remain traceable.
+Caller context that explains a file download, such as `tweet_id`, should be passed through `[[internal/downloader/types.go#DownloadRequest]]` log fields so downloader retry logs remain traceable. Downloader logs render those caller fields before per-event fields such as `attempt`, `max_retries`, `url`, and `error`.
 
 ## Field Style
 

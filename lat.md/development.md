@@ -61,6 +61,11 @@ Network tests should synchronize on observable server events rather than dependi
 
 Downloader and profile tests that verify retry or cancellation behavior should wait for the test server to receive the intended request before cancelling or asserting. Avoid 20-50 ms timing assumptions because full-package runs can delay local HTTP scheduling.
 
+### Test Fixture Privacy
+Tests must use synthetic identifiers and reserved/example URLs rather than real production data.
+
+Do not put real tweet ids, user ids, media URLs, CDN URLs, or copied live-download log snippets in tests. Prefer obvious fake ids such as `1000000000000000001`, local `httptest.Server` URLs, and reserved domains such as `example.invalid`; if a parser specifically needs a production host shape, keep the path and ids synthetic.
+
 ## What NOT to Do
 Rules to avoid when making changes to the codebase.
 
