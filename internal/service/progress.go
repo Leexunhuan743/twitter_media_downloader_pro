@@ -66,19 +66,13 @@ func (l *LogReporter) OnProgress(taskID string, p Progress) {
 	if l.logger == nil {
 		return
 	}
-	// downloading 和 profile 阶段进度频繁，不输出日志避免刷屏
-	if p.Stage == "downloading" || p.Stage == "profile" {
+	// downloading、retrying 和 profile 阶段进度频繁，不输出日志避免刷屏
+	if p.Stage == "downloading" || p.Stage == "retrying" || p.Stage == "profile" {
 		return
 	}
 	switch p.Stage {
 	case "syncing":
 		l.logger("[task] Progress stage=syncing current=%q", p.Current)
-	case "retrying":
-		if p.Total > 0 {
-			l.logger("[task] Progress stage=retrying completed=%d total=%d failed=%d", p.Completed, p.Total, p.Failed)
-		} else {
-			l.logger("[task] Progress stage=retrying")
-		}
 	case "marking":
 		l.logger("[task] Progress stage=marking current=%q", p.Current)
 	case "preparing":

@@ -172,6 +172,9 @@ func matchLogLevel(line, level string) bool {
 	if level == "" || level == "all" {
 		return true
 	}
+	if level == "error" {
+		return strings.HasPrefix(line, "ERRO[") || strings.HasPrefix(line, "FATA[")
+	}
 
 	return strings.HasPrefix(line, logLevelPrefix(level)+"[")
 }

@@ -197,6 +197,23 @@ func TestLogReporter_OnProgress_DownloadingIsSuppressed(t *testing.T) {
 	assert.Len(t, loggedMessages, 0)
 }
 
+func TestLogReporter_OnProgress_RetryingIsSuppressed(t *testing.T) {
+	var loggedMessages []string
+	logger := func(format string, args ...interface{}) {
+		loggedMessages = append(loggedMessages, fmt.Sprintf(format, args...))
+	}
+
+	reporter := NewLogReporter(logger)
+	reporter.OnProgress("task-123", Progress{
+		Stage:     "retrying",
+		Total:     26,
+		Completed: 10,
+		Failed:    16,
+	})
+
+	assert.Empty(t, loggedMessages)
+}
+
 func TestLogReporter_OnProgress_Profile(t *testing.T) {
 	var loggedMessages []string
 	logger := func(format string, args ...interface{}) {

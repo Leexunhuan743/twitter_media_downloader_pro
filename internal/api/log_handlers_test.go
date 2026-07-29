@@ -21,3 +21,9 @@ func TestMatchLogLevelTreatsFatalAsErrorStatsInput(t *testing.T) {
 		t.Fatal("matchLogLevel() should match fatal text formatter lines")
 	}
 }
+
+func TestMatchLogLevelTreatsFatalAsErrorFilterInput(t *testing.T) {
+	if !matchLogLevel(`FATA[2026-07-29T04:55:01+08:00] [startup] failed`, "error") {
+		t.Fatal("matchLogLevel() should include fatal text formatter lines in error filters")
+	}
+}

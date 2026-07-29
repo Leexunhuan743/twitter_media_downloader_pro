@@ -12,6 +12,8 @@ The logging stack fans one application log stream out to local files, console ca
 
 Terminal-only ANSI color may be used for compact human scan points such as tweet title fields. File and Web UI log paths strip ANSI through `[[internal/logging/sanitize.go#StripANSI]]` or console capture. Web log filters and both UI themes use the current `INFO[...]` TextFormatter lines.
 
+Web1 renders the same TextFormatter lines as the CLI contract, adding display-only highlighting for timestamps, domain prefixes, and key=value fields. The raw log text remains the copy/export source.
+
 ## Public Log Contract
 
 Logs shown outside the process must be concise, consistently prefixed, and safe for operators to scan.
@@ -32,13 +34,15 @@ HTTP request logs record the request outcome without leaking credentials from qu
 
 Successful `GET`, `HEAD`, and `OPTIONS` access logs are debug-only to keep Web UI polling, static files, health checks, and SSE connections out of normal output. Mutating requests stay info; any status >=400 is warning.
 
+The Web log API treats fatal lines as part of the error level for stats and filters, so the ERROR button shows every critical log counted in its badge.
+
 ## Task Logs
 
 Task logs should describe lifecycle milestones, not every inner loop iteration.
 
 TaskManager emits `Created`, `Started`, and `Failed` entries with `task_id` so a run can be identified at its boundaries and on errors. `Completed`, `Cancelled`, and enqueue-depth summaries omit repeated task ids to keep routine output compact.
 
-The service progress reporters emit `[task] Progress` entries for syncing, retrying, marking, and preparing milestones, plus `[task] Result` summaries when task work reports stats. These progress/result summaries do not repeat `task_id`; high-frequency `downloading` and `profile` updates stay in task state/SSE rather than log lines to keep CLI output and Web logs readable.
+The service progress reporters emit `[task] Progress` entries for syncing, marking, and preparing milestones, plus `[task] Result` summaries when task work reports stats. These progress/result summaries do not repeat `task_id`; high-frequency `downloading`, `retrying`, and `profile` updates stay in task state/SSE rather than log lines to keep CLI output and Web logs readable.
 
 Task error messages must pass through `[[internal/logging/sanitize.go#RedactSensitiveText]]` before they are emitted. Target summaries should stay compact, such as `@screen_name`, `list:123`, `json-files:2`, or `batch:users=1,lists=1,following=0`.
 

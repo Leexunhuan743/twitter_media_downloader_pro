@@ -2555,22 +2555,73 @@ function escapeAttr(str) {
 
 function stripAnsi(str) { return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, ''); }
 
-function getLineColor(line) {
-  if (line.startsWith('FATA[')) return 'var(--danger)';
-  if (line.startsWith('ERRO[')) return 'var(--danger)';
-  if (line.startsWith('WARN[')) return 'var(--warning)';
-  if (line.startsWith('INFO[')) return 'var(--info)';
-  if (line.startsWith('DEBU[')) return 'var(--text-tertiary)';
-  return 'var(--text-secondary)';
+function getLineLevel(line) {
+  if (line.startsWith('FATA[')) return 'fatal';
+  if (line.startsWith('ERRO[')) return 'error';
+  if (line.startsWith('WARN[')) return 'warn';
+  if (line.startsWith('INFO[')) return 'info';
+  if (line.startsWith('DEBU[')) return 'debug';
+  return '';
 }
 
-function highlightLogTimestamp(line) {
+function getLogEntryClass(line) {
+  const level = getLineLevel(line);
+  return 'log-entry' + (level ? ' log-entry-' + level : '');
+}
+
+function getLogFieldTone(key, value) {
+  const normalized = String(value || '').replace(/^"|"$/g, '').toLowerCase();
+  const numeric = Number(normalized);
+  if (key === 'error') return 'danger';
+  if (key === 'reason') return 'warning';
+  if (key === 'dur' || key === 'duration') return 'info';
+  if (key === 'status') {
+    if (/^5/.test(normalized)) return 'danger';
+    if (/^4/.test(normalized)) return 'warning';
+    if (/^[23]/.test(normalized)) return 'success';
+  }
+  if (['failed', 'failed_tweets', 'remaining_tweets', 'remaining_entities', 'errors', 'unable_to_start'].includes(key)) {
+    return numeric > 0 ? 'danger' : 'muted';
+  }
+  if (['skipped', 'suppressed'].includes(key)) {
+    return numeric > 0 ? 'warning' : 'muted';
+  }
+  if (['succeeded', 'downloaded', 'versioned', 'total'].includes(key)) {
+    return numeric > 0 ? 'success' : 'muted';
+  }
+  return '';
+}
+
+function renderLogField(key, value) {
+  const tone = getLogFieldTone(key, value);
+  const toneClass = tone ? ' log-field-' + tone : '';
+  return '<span class="log-field' + toneClass + '"><span class="log-field-key">' +
+    escapeHtml(key) + '</span>=<span class="log-field-value">' + escapeHtml(value) + '</span></span>';
+}
+
+function highlightLogFields(line) {
+  const fieldRegex = /\b([A-Za-z_][A-Za-z0-9_-]*)=("(?:[^"\\]|\\.)*"|\S+)/g;
+  let html = '';
+  let lastIndex = 0;
+  let match;
+  while ((match = fieldRegex.exec(line)) !== null) {
+    html += escapeHtml(line.slice(lastIndex, match.index));
+    html += renderLogField(match[1], match[2]);
+    lastIndex = match.index + match[0].length;
+  }
+  html += escapeHtml(line.slice(lastIndex));
+  return html;
+}
+
+function highlightLogLine(line) {
+  let html = highlightLogFields(line);
   // 当前 logrus TextFormatter 格式: LEVEL[TIMESTAMP]
-  line = line.replace(
-    /(FATA|ERRO|WARN|INFO|DEBU)\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[-+]\d{2}:\d{2})\]/g,
-    '$1[<span class="log-timestamp">$2</span>]'
+  html = html.replace(
+    /^(FATA|ERRO|WARN|INFO|DEBU)\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[-+]\d{2}:\d{2})\]/,
+    '<span class="log-level">$1</span>[<span class="log-timestamp">$2</span>]'
   );
-  return line;
+  html = html.replace(/(\]\s+)(\[[a-z0-9_-]+\])/i, '$1<span class="log-domain">$2</span>');
+  return html;
 }
 
 function renderConfigEditor() {
@@ -2847,25 +2898,21 @@ function renderLogViewer() {
       <div class="toolbar">
         <div class="toolbar-left">
           ${renderLogFilterButtons(logLevel, logStats)}
-          <input type="text" id="log-search-input" class="form-input search-input" placeholder="搜索日志..." value="${store.state.logSearch}">
+          <input type="text" id="log-search-input" class="form-input search-input" placeholder="搜索日志..." value="${escapeAttr(store.state.logSearch)}">
           <button class="btn btn-ghost btn-sm" data-action="logSearch">🔍</button>
         </div>
         <div class="toolbar-right">
           <button class="btn btn-ghost btn-sm" data-action="logRefresh">刷新</button>
           <button class="btn btn-ghost btn-sm" data-action="logExport">导出</button>
           <label class="form-checkbox" style="font-size:12px;white-space:nowrap">
-            <input type="checkbox" id="log-auto-scroll-toggle" checked data-action="toggleLogAutoScroll">
+            <input type="checkbox" id="log-auto-scroll-toggle" ${logAutoScroll ? 'checked' : ''} data-action="toggleLogAutoScroll">
             自动滚动
           </label>
         </div>
       </div>
       <div class="card-body card-body-scroll" style="padding:0;position:relative">
         <div class="log-stream" id="log-stream">
-          <div class="empty-state" id="log-empty-hint">
-            <div class="empty-icon">📋</div>
-            <div class="empty-title">暂无日志</div>
-            <div class="empty-desc">选择日志级别或等待实时日志</div>
-          </div>
+          ${renderLogEmptyHint('暂无日志', '选择日志级别或等待实时日志')}
         </div>
         <button class="log-scroll-to-top-btn" id="log-new-arrived-btn"
           style="display:none" data-action="logScrollToBottom">
@@ -2876,10 +2923,20 @@ function renderLogViewer() {
   `;
 }
 
-// 提取日志行末尾的推文 ID（行首必须是 [...] 格式）
+function renderLogEmptyHint(title, desc) {
+  return `
+    <div class="empty-state" id="log-empty-hint">
+      <div class="empty-icon">📋</div>
+      <div class="empty-title">${escapeHtml(title)}</div>
+      <div class="empty-desc">${escapeHtml(desc)}</div>
+    </div>
+  `;
+}
+
+// 提取下载标题行末尾的推文 ID，兼容 logrus 前缀和裸 [download] 行。
 function getTweetId(text) {
-  if (!text.startsWith('[')) return null;
-  const m = text.match(/_(\d{16,20})\b/);
+  if (!text.includes('[download]')) return null;
+  const m = text.match(/\s_(\d{16,20})\b/);
   return m ? m[1] : null;
 }
 
@@ -2888,9 +2945,9 @@ function renderLogLines(logs) {
   return logs.map(l => {
     const clean = stripAnsi(l);
     const tweetId = getTweetId(clean);
-    const html = highlightLogTimestamp(escapeHtml(clean));
+    const html = highlightLogLine(clean);
     const tweetIdAttr = tweetId ? ` data-tweet-id="${escapeAttr(tweetId)}"` : '';
-    return '<div class="log-entry" style="color:' + getLineColor(clean) + '"' + tweetIdAttr + '>' + html + '</div>';
+    return '<div class="' + getLogEntryClass(clean) + '"' + tweetIdAttr + '>' + html + '</div>';
   }).join('');
 }
 
@@ -2917,7 +2974,12 @@ function toggleLogAutoScroll() {
   }
 }
 
-function exportLogs() { window.open('/api/v1/logs/export'); }
+function exportLogs() {
+  const params = new URLSearchParams();
+  appendJWTToken(params);
+  const qs = params.toString();
+  window.open('/api/v1/logs/export' + (qs ? '?' + qs : ''));
+}
 
 async function setLogLevel(level) {
   store.setState({ logLevel: level, logPage: 1 });
@@ -2965,7 +3027,7 @@ async function loadLogsReplace() {
     if (logSearch) p.append('q', logSearch);
     const d = await api.getLogs('?' + p.toString());
     const lines = (d.logs || []).reverse();
-    stream.innerHTML = renderLogLines(lines);
+    stream.innerHTML = lines.length ? renderLogLines(lines) : renderLogEmptyHint('没有匹配日志', '调整级别或搜索条件后重试');
     stream.scrollTop = stream.scrollHeight;
     store.setState({ logTotalPages: d.totalPages || 1 });
     loadLogStats();
@@ -4254,8 +4316,8 @@ function connectLogSSE() {
     const clean = stripAnsi(e.data);
     const tweetId = getTweetId(clean);
     if (tweetId) el.dataset.tweetId = tweetId;
-    el.innerHTML = highlightLogTimestamp(escapeHtml(clean));
-    el.style.color = getLineColor(clean);
+    el.className = getLogEntryClass(clean);
+    el.innerHTML = highlightLogLine(clean);
     stream.appendChild(el);
     // 移除 loading 占位
     const hint = document.getElementById('log-empty-hint');

@@ -1849,12 +1849,71 @@ ul, ol {
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-all;
+  color: var(--text-secondary);
 }
 .log-entry:hover { background: var(--bg-tertiary); }
+
+.log-entry-fatal,
+.log-entry-error {
+  color: var(--danger);
+}
+
+.log-entry-warn {
+  color: var(--warning);
+}
+
+.log-entry-info {
+  color: var(--info);
+}
+
+.log-entry-debug {
+  color: var(--text-tertiary);
+}
+
+.log-entry[data-tweet-id] {
+  cursor: copy;
+}
+
+.log-level,
+.log-domain {
+  color: var(--text-primary);
+  font-weight: var(--font-semibold);
+}
 
 .log-timestamp {
   color: var(--info);
   font-weight: 500;
+}
+
+.log-field-key {
+  color: var(--text-tertiary);
+}
+
+.log-field-value {
+  color: var(--text-secondary);
+}
+
+.log-field-success .log-field-value {
+  color: var(--success);
+  font-weight: var(--font-semibold);
+}
+
+.log-field-warning .log-field-value {
+  color: var(--warning);
+  font-weight: var(--font-semibold);
+}
+
+.log-field-danger .log-field-value {
+  color: var(--danger);
+  font-weight: var(--font-semibold);
+}
+
+.log-field-info .log-field-value {
+  color: var(--info);
+}
+
+.log-field-muted .log-field-value {
+  color: var(--text-tertiary);
 }
 
 .log-level-filters {

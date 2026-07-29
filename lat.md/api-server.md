@@ -139,6 +139,12 @@ internal/api/web/
 
 `web1/app.js` is a single-file vanilla JS SPA (~5100 lines) with a custom store + subscriber pattern.
 
+### Log Viewer
+
+The Web1 log viewer renders backend TextFormatter lines directly, then applies display-only highlighting for scanability.
+
+Historical log pages and live log SSE events share the same rendering helpers for ANSI stripping, timestamp/domain highlighting, field highlighting, and tweet-id click-to-copy. Log export appends the JWT token as a query parameter because `window.open` cannot send the API client's Authorization header.
+
 ### Store Notification Model
 
 `store.setState` updates `store.state` synchronously via `deepMerge`, but notifies subscribers **asynchronously** via a `Promise.resolve().then()` microtask.
