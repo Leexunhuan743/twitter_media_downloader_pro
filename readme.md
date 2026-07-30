@@ -1,9 +1,5 @@
 # Twitter Media Downloader Pro
 
-[![Go Version](https://img.shields.io/badge/Go-1.25.0-blue.svg)](https://go.dev/)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](./LICENSE)
-[![CI/CD](https://github.com/Leexunhuan743/twitter_media_downloader_pro/actions/workflows/go.yml/badge.svg)](.github/workflows/go.yml)
-
 > **版本**: 3.7.0 | **状态**: 活跃维护 | **许可证**: GPL-3.0
 
 Twitter Media Downloader Pro（简称 `tmdp`）的代码基于 [unkmonster/tmd](https://github.com/unkmonster/tmd) 项目，修改了部分代码，添加了新的功能特性。新增的功能见 [CHANGELOG.md文件](CHANGELOG.md)
@@ -11,22 +7,39 @@ Twitter Media Downloader Pro（简称 `tmdp`）的代码基于 [unkmonster/tmd](
 ## 目录
 
 - [功能特性](#功能特性)
+
 - [安装与配置](#安装与配置)
+
 - [安全说明](#安全说明)
+
 - [使用场景与示例](#使用场景与示例)
+
 - [命令行参数详解](#命令行参数详解)
+
 - [参数兼容性速查表](#参数兼容性速查表)
+
 - [API Server 模式](#api-server-模式)
+
 - [定时任务调度器](#定时任务调度器)
+
 - [Profile 下载功能](#profile-下载功能)
+
 - [推文 JSON 保存](#推文-json-保存)
+
 - [文件存储结构](#文件存储结构)
+
 - [高级设置](#高级设置)
+
 - [日志系统详解](#日志系统详解)
+
 - [项目架构](#项目架构)
+
 - [常见问题](#常见问题)
+
 - [输出结果格式](#输出结果格式)
+
 - [性能参考](#性能参考)
+
 - [故障排除进阶](#故障排除进阶)
 
 ***
@@ -34,16 +47,27 @@ Twitter Media Downloader Pro（简称 `tmdp`）的代码基于 [unkmonster/tmd](
 ## 功能特性
 
 - **多源下载**：支持按用户、列表、关注、混合批量、Profile 五种下载入口
+
 - **增量拉取**：基于 `latest_release_time` 时间戳，只拉取新推文
+
 - **失败重试**：失败项记录到 `.data/errors.json`（403/404 除外），支持自动重试
+
 - **多账号分流**：支持附加 Cookie 多账号分摊 API 请求压力
+
 - **JSON 导入**：支持第三方导出 JSON（`-jsonfile`）和 tmdp 元数据文件夹（`-jsonfolder`）补下载
+
 - **文件写入**：小文件 Buffer / 大文件流式(≥10MB)，原子写入，MD5 跳过未变化文件，版本备份
+
 - **标记已下载**：`-mark-downloaded` 指定时间戳，跳过历史推文
+
 - **Web 管理界面**：内置 HTTP API + SSE 实时推送 + 任务队列 + 定时调度 + 数据库管理
+
 - **API Key 认证**：内置 Bearer Token 认证层，支持 conf.yaml/环境变量/Web UI 三种配置方式，Web UI 免认证访问（详见[安全章节](#api-server-安全)）
+
 - **调度自动化**：支持 `interval` / `daily` 两种模式，`user` / `list` / `following` / `mixed` 四种目标
+
 - **Bot 平台通知**：支持 Telegram、Discord、WeChat、Feishu 六平台的消息通知和命令控制，任务完成/失败实时推送（详见 [doc/bot-integration.md](doc/bot-integration.md)）
+
 
 
 ***
@@ -53,10 +77,15 @@ Twitter Media Downloader Pro（简称 `tmdp`）的代码基于 [unkmonster/tmd](
 ### 1. 环境要求
 
 - **Go**: >= 1.25.0（从源码编译时需要）
+
 - **操作系统**: Windows 10+, macOS 10.15+, Ubuntu 18.04+
+
 - **编译器**: 支持 `CGO_ENABLED=0` 纯 Go 构建
+
 - **内存**: 建议 >= 512MB
+
 - **磁盘空间**: 根据下载数量而定
+
 - **权限**: Windows 需要管理员权限（创建符号链接）
 
 ### 2. 下载/编译
@@ -65,11 +94,11 @@ Twitter Media Downloader Pro（简称 `tmdp`）的代码基于 [unkmonster/tmd](
 
 前往 [Release](https://github.com/Leexunhuan743/twitter_media_downloader_pro/releases/latest) 下载对应平台的单文件可执行程序：
 
-| 平台 | 文件名 |
-|------|--------|
+| 平台      | 文件名                      |
+| ------- | ------------------------ |
 | Windows | `tmdp-windows-amd64.exe` |
-| Linux | `tmdp-linux-amd64` |
-| macOS | `tmdp-darwin-amd64` |
+| Linux   | `tmdp-linux-amd64`       |
+| macOS   | `tmdp-darwin-amd64`      |
 
 > **单文件，无依赖**：下载后即可直接运行，无需安装任何运行时或依赖库。放桌面就能用，放到 `PATH` 目录下更方便全局调用。
 
@@ -86,6 +115,7 @@ tmdp-windows-amd64.exe
 > 注意：Twitter Media Downloader Pro 是命令行程序，当前可执行文件/命令名仍为 `tmdp`，请在终端中运行，**不要直接双击 exe 文件**（会一闪而过）。
 
 首次运行会自动检测配置文件，不存在时进入**交互式配置向导**，依次填写：
+
 1. Twitter 登录凭据（`auth_token` 和 `ct0`）
 2. 下载根目录（存放媒体文件的路径）
 3. 可选：代理地址、下载并发数等
@@ -94,14 +124,14 @@ tmdp-windows-amd64.exe
 
 如需重新配置或修改参数，Windows 当前目录下运行 `.\tmdp-windows-amd64.exe -conf`（或重命名后运行 `.\tmdp.exe -conf`）可再次进入配置向导。若已加入 `PATH`，也可以直接运行 `tmdp -conf`。各配置项说明如下：
 
-| 配置项 | 说明 | 默认值 | 示例 |
-| --- | --- | --- | --- |
-| storage dir | 文件存储目录 | 无（必填） | `D:\twitter_downloads` |
-| auth\_token | Twitter Cookie 中的 auth\_token | 无（必填） | `a1b2c3d4e5f6...` |
-| ct0 | Twitter Cookie 中的 ct0 | 无（必填） | `x1y2z3...` |
-| max download routine | 最大并发下载数（范围 1-100） | `min(100, CPU×10)`¹ | `35` |
-| max file name len | 最大文件名长度（50-245） | `158` | `158` |
-| proxy_url | 代理服务器 URL（支持 http/https/socks5） | 空（使用系统代理） | `http://127.0.0.1:7890` |
+| 配置项                  | 说明                              | 默认值                 | 示例                      |
+| -------------------- | ------------------------------- | ------------------- | ----------------------- |
+| storage dir          | 文件存储目录                          | 无（必填）               | `D:\twitter_downloads`  |
+| auth_token          | Twitter Cookie 中的 auth_token   | 无（必填）               | `a1b2c3d4e5f6...`       |
+| ct0                  | Twitter Cookie 中的 ct0           | 无（必填）               | `x1y2z3...`             |
+| max download routine | 最大并发下载数（范围 1-100）               | `min(100, CPU×10)`¹ | `35`                    |
+| max file name len    | 最大文件名长度（50-245）                 | `158`               | `158`                   |
+| proxy_url           | 代理服务器 URL（支持 http/https/socks5） | 空（使用系统代理）           | `http://127.0.0.1:7890` |
 
 > ¹ `max download routine` 默认值为 `min(100, runtime.GOMAXPROCS(0)*10)`，即 CPU 核数的 10 倍且不超过 100。
 
@@ -142,10 +172,10 @@ GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o tmdp-macos .
 
 项目通过 GitHub Actions 自动发布 Docker 镜像到 **Docker Hub** 和 **GHCR** 双仓库，两者镜像内容完全一致，任选其一即可：
 
-| 镜像源 | 地址 |
-|--------|------|
-| **Docker Hub**（推荐） | `docker.io/leeexx00/tmdp:<tag>` |
-| **GHCR** | `ghcr.io/leexunhuan743/twitter_media_downloader_pro:<tag>` |
+| 镜像源                | 地址                                                         |
+| ------------------ | ---------------------------------------------------------- |
+| **Docker Hub**（推荐） | `docker.io/leeexx00/tmdp:<tag>`                            |
+| **GHCR**           | `ghcr.io/leexunhuan743/twitter_media_downloader_pro:<tag>` |
 
 ```bash
 # Docker Hub
@@ -218,6 +248,7 @@ services:
 ```
 
 如需切换为 GHCR 镜像源，将上述 `image` 改为：
+
 ```yaml
 image: ghcr.io/leexunhuan743/twitter_media_downloader_pro:latest
 ```
@@ -257,15 +288,25 @@ http://localhost:25556/api/v1/health
 **部署说明**
 
 - `/config`：配置、额外 cookies、调度文件、日志目录
+
 - `/data`：下载数据目录，包含 `users/` 和 `.data/foo.db`
+
 - `TMD_AUTH_TOKEN`、`TMD_CT0`：必填
+
 - `TMD_API_KEY`：可选，开启 API Key 认证（详见[API Server 安全](#api-server-安全)）
+
 - `TMD_PROXY_URL`：可选，使用代理时设置，例如 `http://host.docker.internal:7897`
+
 - `TMD_MAX_DOWNLOAD_ROUTINE`：可选，默认 `8`
+
 - `TMD_MAX_FILE_NAME_LEN`：可选，默认 `158`
+
 - `TZ`：可选，默认 `Asia/Shanghai`
+
 - 同一个 `/data` 卷只建议同时运行一个 tmdp 实例
+
 - 如果宿主机端口 `25556` 被占用，可改 compose 里的左侧端口，例如 `"8080:25556"`
+
 - 如果不想把数据放在当前目录，可把 `./config`、`./data` 改成宿主机绝对路径
 
 ### 4. 配置参考
@@ -279,13 +320,13 @@ http://localhost:25556/api/v1/health
 
 **其他配置文件**
 
-| 文件 | 位置 | 说明 |
-|------|------|------|
-| 备用 Cookie | `$HOME/.tmd2/additional_cookies.yaml` | 多账号 Cookie |
-| 定时任务 | `$HOME/.tmd2/schedules.yaml` | 调度器配置 |
-| Bot 配置 | `$HOME/.tmd2/bot_config.yaml` | Telegram/Discord/WeChat/Feishu 等平台配置（首次运行自动生成模板） |
-| 日志文件 | `$HOME/.tmd2/tmd2.log` | 主日志 |
-| CLI 日志 | `$HOME/.tmd2/client.log` | REST 客户端日志 |
+| 文件        | 位置                                    | 说明                                               |
+| --------- | ------------------------------------- | ------------------------------------------------ |
+| 备用 Cookie | `$HOME/.tmd2/additional_cookies.yaml` | 多账号 Cookie                                       |
+| 定时任务      | `$HOME/.tmd2/schedules.yaml`          | 调度器配置                                            |
+| Bot 配置    | `$HOME/.tmd2/bot_config.yaml`         | Telegram/Discord/WeChat/Feishu 等平台配置（首次运行自动生成模板） |
+| 日志文件      | `$HOME/.tmd2/tmd2.log`                | 主日志                                              |
+| CLI 日志    | `$HOME/.tmd2/client.log`              | REST 客户端日志                                       |
 
 **获取 Cookie**
 
@@ -306,17 +347,17 @@ http://localhost:25556/api/v1/health
 
 **Cookie 存储位置：**
 
-| 平台 | 路径 | 权限 |
-|------|------|------|
-| Windows | `%APPDATA%\.tmd2\conf.yaml` | 当前用户 |
-| macOS/Linux | `~/.tmd2/conf.yaml` | 当前用户 (600) |
+| 平台          | 路径                          | 权限         |
+| ----------- | --------------------------- | ---------- |
+| Windows     | `%APPDATA%\.tmd2\conf.yaml` | 当前用户       |
+| macOS/Linux | `~/.tmd2/conf.yaml`         | 当前用户 (600) |
 
 ### 权限要求
 
-| 操作系统 | 特殊权限 | 原因 |
-|---------|---------|------|
-| **Windows** | 管理员权限 | 创建符号链接需要 SeCreateSymbolicLinkPrivilege |
-| **Linux/macOS** | 文件系统写入权限 | 写入存储目录和数据库文件 |
+| 操作系统            | 特殊权限     | 原因                                     |
+| --------------- | -------- | -------------------------------------- |
+| **Windows**     | 管理员权限    | 创建符号链接需要 SeCreateSymbolicLinkPrivilege |
+| **Linux/macOS** | 文件系统写入权限 | 写入存储目录和数据库文件                           |
 
 > 💡 **提示**: Windows 用户可以在管理员 PowerShell/cmd 中执行。
 
@@ -338,7 +379,9 @@ http://localhost:25556/api/v1/health
 ```
 
 **数据保护建议：**
+
 - 定期备份 `{存储目录}` 和 `.data/foo.db`
+
 - 敏感数据（如受保护用户的推文）注意访问控制
 
 ### API Server 安全
@@ -380,9 +423,13 @@ tmdp -server
 ```
 
 - **双模式认证**：支持 JWT 会话令牌（首选）和原始 API Key（向后兼容）。通过 `POST /api/v1/auth/login` 用 API Key 换取 1 小时有效的 JWT
+
 - **认证失败**：返回 `HTTP 401` + `{"success":false,"error":"unauthorized"}` + `WWW-Authenticate` 头，附带 `X-Token-Type` 区分过期/无效
+
 - **SSE 端点**：`EventSource` 无法设置自定义头，通过 `?token=` 查询参数认证
+
 - **公开路径**：健康检查、Web UI 页面、静态文件、主题切换免认证
+
 - **Web UI 自动弹窗**：浏览器遇到 401 时自动弹出认证对话框，输入 Key 后保存并刷新页面
 
 #### Web UI 配置
@@ -544,7 +591,8 @@ tmdp -jsonfolder ./folder1/.loongtweet -jsonfolder ./folder2/.loongtweet
 tmdp -jsonfile ./search.json -user elonmusk
 ```
 
-**`-jsonfile` 输出示例**：
+**`-jsonfile`** **输出示例**：
+
 ```
 [cli] Preparing...
 [cli] Completed (main(downloaded=2, Failedtweet=0))
@@ -552,7 +600,8 @@ tmdp -jsonfile ./search.json -user elonmusk
 
 > 通过 `-dbg` 模式可查看每条推文的处理详情。
 
-**`-jsonfolder` 输出示例**：
+**`-jsonfolder`** **输出示例**：
+
 ```
 [cli] Preparing...
 [cli] Completed (main(downloaded=8, Failedtweet=2))
@@ -578,72 +627,52 @@ tmdp -user elonmusk -no-retry
 
 | 参数        | 类型   | 默认值   | 说明                                 |
 | --------- | ---- | ----- | ---------------------------------- |
-| `-conf`     | bool | false | 重新配置程序（部分更新，显示当前值可逐项修改）       |
-| `-dbg`      | bool | false | 显示调试信息，包括请求计数等                     |
-| `-server`   | bool | false | 启动 API Server 模式                   |
-| `-port`     | int  | 25556 | API Server 监听端口（仅与 `-server` 一起使用） |
+| `-conf`   | bool | false | 重新配置程序（部分更新，显示当前值可逐项修改）            |
+| `-dbg`    | bool | false | 显示调试信息，包括请求计数等                     |
+| `-server` | bool | false | 启动 API Server 模式                   |
+| `-port`   | int  | 25556 | API Server 监听端口（仅与 `-server` 一起使用） |
 
 ### 推文下载参数
 
-| 参数      | 类型     | 可重复 | 说明                       |
-| ------- | ------ | --- | ------------------------ |
+| 参数      | 类型     | 可重复 | 说明                                        |
+| ------- | ------ | --- | ----------------------------------------- |
 | `-user` | string | ✅   | 指定下载用户名（可带@前缀，如 `elonmusk` 或 `@elonmusk`） |
-| `-list` | uint64 | ✅   | 指定下载列表ID                 |
-| `-foll` | string | ✅   | 指定用户，下载其关注的所有用户          |
+| `-list` | uint64 | ✅   | 指定下载列表ID                                  |
+| `-foll` | string | ✅   | 指定用户，下载其关注的所有用户                           |
 
 ### JSON 下载参数
 
-| 参数           | 类型     | 可重复 | 说明                                                         |
-| -------------- | ------ | --- | ---------------------------------------------------------- |
-| `-jsonfile`    | string | ✅   | 从第三方工具导出的 JSON 文件下载推文媒体（图片/视频/txt/json） |
-| `-jsonfolder`  | string | ✅   | 从 tmdp 生成的 `.loongtweet` 文件夹下载推文媒体 |
+| 参数            | 类型     | 可重复 | 说明                                                       |
+| ------------- | ------ | --- | -------------------------------------------------------- |
+| `-jsonfile`   | string | ✅   | 从第三方工具导出的 JSON 文件下载推文媒体（图片/视频/txt/json）                  |
+| `-jsonfolder` | string | ✅   | 从 tmdp 生成的 `.loongtweet` 文件夹下载推文媒体（用于媒体文件丢失或第一次媒体文件下载失败） |
 
-**`-jsonfile` 参数**：
-- 用于第三方工具导出的 Twitter 推文搜索结果 JSON（包含推文列表和 media 数组）
-- **下载内容**：推文媒体文件（图片/视频）、推文文本（`.txt`）、完整 metadata（`.json`）
-- **保存位置**：`users/{screen_name}/` 目录下
-  - 媒体文件：`{推文文本}_{tweetID}.jpg`、`{推文文本}_{tweetID}(1).jpg`
-  - `.loongtweet/` 子目录：
-    - `{推文文本}_{tweetID}.txt` — 推文文本内容
-    - `{推文文本}_{tweetID}.json` — 完整 metadata（已转换+清理）
-- 文件命名与 `-user` 模式完全一致（使用 `TweetNaming`）
-- **格式转换**：自动将第三方新格式 JSON 转换为 tmdp 兼容旧格式
-  - 嵌套对象扁平化：`RelationshipPerspectives.blocked_by` → `legacy.blocked_by`
-  - 头像 URL 清理：移除 `_normal` 后缀
-  - **高清参数**：图片 URL 自动追加 `?name=4096x4096`
-- 转换失败时降级使用原始 metadata（不阻塞下载）
-
-**`-jsonfolder` 参数**：
-- 用于 tmdp 之前下载保存的 `.loongtweet` 文件夹中的 JSON 文件
-- **仅下载推文媒体文件**（图片/视频），**不保存** `.json`、`.txt`、`.profile` 等元数据
-- 适合重新下载或迁移媒体文件
-- 文件命名与 `-user` 模式完全一致
-- 图片 URL 自动追加 `?name=4096x4096` 高清参数
-
-> 💡 **推荐搭配**：使用 [twitter-web-exporter](https://github.com/prinsss/twitter-web-exporter) 浏览器脚本导出推文或用户列表为 JSON 格式，然后用 `-jsonfile` 或 `-jsonfolder` 参数下载。
+> 💡 **推荐搭配**：使用 [twitter-web-exporter](https://github.com/prinsss/twitter-web-exporter) 浏览器脚本导出推文或用户列表为 JSON 格式，然后用 `-jsonfile` 参数下载。
 
 ### 下载行为参数
 
-| 参数             | 类型   | 默认值   | 说明                        |
-| -------------- | ---- | ----- | ------------------------- |
-| `-auto-follow` | bool | false | 自动向受保护用户发送关注请求（列表下载时默认启用） |
+| 参数                | 类型   | 默认值   | 说明                                           |
+| ----------------- | ---- | ----- | -------------------------------------------- |
+| `-auto-follow`    | bool | false | 自动向受保护用户发送关注请求（列表下载时默认启用）                    |
 | `-follow-members` | bool | false | 下载时关注目标/成员（用户/列表成员/关注列表成员），失败仅 warning 不阻塞下载 |
-| `-no-retry`    | bool | false | 快速退出，不重试失败的推文             |
+| `-no-retry`       | bool | false | 快速退出，不重试失败的推文                                |
 
 > 语义区别：
+>
 > - `-auto-follow`：仅在下载过程中遇到 **受保护且未关注** 用户时发送关注请求。
+>
 > - `-follow-members`：对下载目标/成员中 **未关注** 的用户尝试关注（不限是否受保护），并避免与 `-auto-follow` 重复请求。
 
 > **忽略用户**：程序默认会忽略被静音或被屏蔽的用户，所以当你想要下载的列表中包含你不想包含的用户，可以在推特将他们屏蔽或静音。
 
 ### 标记参数
 
-| 参数                 | 类型     | 默认值   | 说明                               |
-| ------------------ | ------ | ----- | -------------------------------- |
-| `-mark-downloaded` | bool   | false | 仅标记用户为已下载，不下载内容                  |
-| `-mark-time`       | string | 当前时间  | 指定标记时间戳，格式：`2006-01-02T15:04:05` |
+| 参数                 | 类型     | 默认值   | 说明                                      |
+| ------------------ | ------ | ----- | --------------------------------------- |
+| `-mark-downloaded` | bool   | false | 仅标记用户为已下载，不下载内容（常见使用场景：指定下载某用户某时间之后的推文） |
+| `-mark-time`       | string | 当前时间  | 指定标记时间戳，格式：`2006-01-02T15:04:05`        |
 
-> **关于 `-mark-time` 格式**：示例中的 `2006-01-02T15:04:05` 是 Go 语言的参考时间格式，表示"年-月-日T时:分:秒"。实际使用时填入具体时间，例如 `2024-01-01T00:00:00` 表示 2024 年 1 月 1 日零时。
+> **关于** **`-mark-time`** **格式**：示例中的 `2006-01-02T15:04:05` 是 Go 语言的参考时间格式，表示"年-月-日T时:分:秒"。实际使用时填入具体时间，例如 `2024-01-01T00:00:00` 表示 2024 年 1 月 1 日零时。
 
 ### Profile 下载参数
 
@@ -659,32 +688,32 @@ tmdp -user elonmusk -no-retry
 
 ## 参数兼容性速查表
 
-| 组合                                    |  兼容 | 说明                      |
-| ------------------------------------- | :-: | ----------------------- |
-| `-user` + `-list` + `-foll`           |  ✅  | 多种来源可叠加                 |
-| `-user` + `-list` + `-foll` + `-jsonfile` |  ⚠️  | **仅执行 `-jsonfile`**（高优先级独占） |
-| `-user` + `-list` + `-foll` + `-jsonfolder` |  ⚠️  | **仅执行 `-jsonfolder`**（高优先级独占） |
-| `-jsonfile` + `-noprofile`            |  ⚠️  | **仅执行 `-jsonfile`**（高优先级独占） |
-| `-jsonfolder` + `-noprofile`           |  ⚠️  | **仅执行 `-jsonfolder`**（高优先级独占） |
-| `-user` + Profile 自动下载                |  ✅  | 下载推文时自动下载 Profile       |
-| `-list` + Profile 自动下载                |  ✅  | 下载列表成员推文时自动下载 Profile   |
-| `-foll` + Profile 自动下载                |  ✅  | 下载关注用户推文时自动下载 Profile   |
-| `-profile-user` + `-profile-list`     |  ✅  | 仅下载资料，不下载推文             |
-| `-user` + `-profile-user`             |  ✅  | 推文下载 + 额外用户资料           |
-| `-dbg` + 任意参数                         |  ✅  | 启用调试输出                  |
-| `-auto-follow` + 推文下载                 |  ✅  | 自动关注受保护用户               |
-| `-no-retry` + 推文下载                    |  ✅  | 失败不重试                   |
-| `-mark-downloaded` + `-mark-time`     |  ✅  | 指定标记时间                  |
-| `-mark-downloaded` + 推文下载             |  ⚠️  | **仅执行标记，不下载推文**（与稳定版不同） |
-| `-jsonfile` + `-mark-downloaded`        |  ⚠️  | **仅执行 `-jsonfile`**（高优先级独占） |
-| `-jsonfolder` + `-mark-downloaded`      |  ⚠️  | **仅执行 `-jsonfolder`**（高优先级独占） |
-| `-conf` + 其他参数                        |  ⚠️ | CLI 模式：配置后退出，忽略其他；Server 模式：配置后启动 Server |
-| `-noprofile` + 推文下载参数                 |  ✅  | 下载推文但跳过 Profile         |
-| `-follow-members` + 推文下载 |  ✅  | 下载时关注目标/成员（失败仅 warning） |
-| `-mark-downloaded` + `-user` + `-list` + `-foll` |  ✅  | 批量标记多种来源 |
-| `-server` + `-port`                   |  ✅  | 指定 API Server 端口        |
-| `-server` + 下载参数                      |  ⚠️ | Server 模式下忽略下载参数        |
-| `-server` + `-conf`                   |  ⚠️ | 配置后启动 Server           |
+| 组合                                               |  兼容 | 说明                                       |
+| ------------------------------------------------ | :-: | ---------------------------------------- |
+| `-user` + `-list` + `-foll`                      |  ✅  | 多种来源可叠加                                  |
+| `-user` + `-list` + `-foll` + `-jsonfile`        |  ⚠️ | **仅执行** **`-jsonfile`**（高优先级独占）          |
+| `-user` + `-list` + `-foll` + `-jsonfolder`      |  ⚠️ | **仅执行** **`-jsonfolder`**（高优先级独占）        |
+| `-jsonfile` + `-noprofile`                       |  ⚠️ | **仅执行** **`-jsonfile`**（高优先级独占）          |
+| `-jsonfolder` + `-noprofile`                     |  ⚠️ | **仅执行** **`-jsonfolder`**（高优先级独占）        |
+| `-user` + Profile 自动下载                           |  ✅  | 下载推文时自动下载 Profile                        |
+| `-list` + Profile 自动下载                           |  ✅  | 下载列表成员推文时自动下载 Profile                    |
+| `-foll` + Profile 自动下载                           |  ✅  | 下载关注用户推文时自动下载 Profile                    |
+| `-profile-user` + `-profile-list`                |  ✅  | 仅下载资料，不下载推文                              |
+| `-user` + `-profile-user`                        |  ✅  | 推文下载 + 额外用户资料                            |
+| `-dbg` + 任意参数                                    |  ✅  | 启用调试输出                                   |
+| `-auto-follow` + 推文下载                            |  ✅  | 自动关注受保护用户                                |
+| `-no-retry` + 推文下载                               |  ✅  | 失败不重试                                    |
+| `-mark-downloaded` + `-mark-time`                |  ✅  | 指定标记时间                                   |
+| `-mark-downloaded` + 推文下载                        |  ⚠️ | **仅执行标记，不下载推文**（与稳定版不同）                  |
+| `-jsonfile` + `-mark-downloaded`                 |  ⚠️ | **仅执行** **`-jsonfile`**（高优先级独占）          |
+| `-jsonfolder` + `-mark-downloaded`               |  ⚠️ | **仅执行** **`-jsonfolder`**（高优先级独占）        |
+| `-conf` + 其他参数                                   |  ⚠️ | CLI 模式：配置后退出，忽略其他；Server 模式：配置后启动 Server |
+| `-noprofile` + 推文下载参数                            |  ✅  | 下载推文但跳过 Profile                          |
+| `-follow-members` + 推文下载                         |  ✅  | 下载时关注目标/成员（失败仅 warning）                  |
+| `-mark-downloaded` + `-user` + `-list` + `-foll` |  ✅  | 批量标记多种来源                                 |
+| `-server` + `-port`                              |  ✅  | 指定 API Server 端口                         |
+| `-server` + 下载参数                                 |  ⚠️ | Server 模式下忽略下载参数                         |
+| `-server` + `-conf`                              |  ⚠️ | 配置后启动 Server                             |
 
 ***
 
@@ -704,107 +733,107 @@ tmdp -server -port 8080
 
 ### 功能特性
 
-| 功能           | 说明                              |
-| ------------ | ------------------------------- |
-| **REST API** | 完整的 HTTP API，支持下载任务管理、状态查询、任务取消 |
-| **Web 管理界面** | 内置可视化界面，支持浏览器访问和操作 |
-| **实时任务监控** | SSE 推送任务状态更新，无需刷新页面 |
-| **数据库浏览** | 查看已下载的用户、列表、用户实体信息 |
-| **跨域支持** | 默认启用 CORS，支持 Web 前端直接调用 |
-| **配置管理** | 双模式配置编辑器：结构化表单 + 原始 YAML 编辑 |
+| 功能            | 说明                                      |
+| ------------- | --------------------------------------- |
+| **REST API**  | 完整的 HTTP API，支持下载任务管理、状态查询、任务取消         |
+| **Web 管理界面**  | 内置可视化界面，支持浏览器访问和操作                      |
+| **实时任务监控**    | SSE 推送任务状态更新，无需刷新页面                     |
+| **数据库浏览**     | 查看已下载的用户、列表、用户实体信息                      |
+| **跨域支持**      | 默认启用 CORS，支持 Web 前端直接调用                 |
+| **配置管理**      | 双模式配置编辑器：结构化表单 + 原始 YAML 编辑             |
 | **Cookie 管理** | 独立管理主 Cookie 和备用 Cookie，支持表单和原始 YAML 编辑 |
-| **日志查看** | 实时日志流（SSE）+ 历史日志查看，支持按级别筛选、搜索、分页 |
-| **定时任务** | 可视化调度器管理，支持创建/编辑/启禁/手动触发 |
-| **失败推文管理** | 查看失败推文摘要、一键重试所有失败推文、清除错误记录 |
-| **服务器控制** | 支持通过 API/Web 优雅关闭服务器 |
+| **日志查看**      | 实时日志流（SSE）+ 历史日志查看，支持按级别筛选、搜索、分页        |
+| **定时任务**      | 可视化调度器管理，支持创建/编辑/启禁/手动触发                |
+| **失败推文管理**    | 查看失败推文摘要、一键重试所有失败推文、清除错误记录              |
+| **服务器控制**     | 支持通过 API/Web 优雅关闭服务器                    |
 
 ### API 端点速查
 
 > 🔓 = 公开（免认证） | 🔒 = 需要 Bearer Token（详见[API Server 安全](#api-server-安全)）
 
-| 方法 | 端点 | 说明 | 认证 |
-|------|------|------|:----:|
-| **GET** | `/api/v1/health` | 健康检查 | 🔓 |
-| **POST** | `/api/v1/auth/login` | API Key 换取 JWT 会话令牌 | 🔓 |
-| **POST** | `/api/v1/auth/refresh` | 刷新 JWT 令牌 | 🔒 |
-| **GET** | `/api/v1/auth/check` | 检查 JWT 有效性 | 🔒 |
-| **POST** | `/api/v1/users/{screen_name}/download` | 下载用户推文 | 🔒 |
-| **POST** | `/api/v1/users/{screen_name}/profile` | 下载用户 Profile | 🔒 |
-| **POST** | `/api/v1/users/{screen_name}/following/download` | 下载关注列表 | 🔒 |
-| **POST** | `/api/v1/users/{screen_name}/following/mark` | 标记关注列表已下载 | 🔒 |
-| **POST** | `/api/v1/users/{screen_name}/mark` | 标记用户已下载 | 🔒 |
-| **POST** | `/api/v1/lists/{list_id}/download` | 下载列表推文 | 🔒 |
-| **POST** | `/api/v1/lists/{list_id}/profile` | 下载列表 Profile | 🔒 |
-| **POST** | `/api/v1/lists/{list_id}/mark` | 标记列表已下载 | 🔒 |
-| **POST** | `/api/v1/json/file/download` | JSON 文件导入下载（支持路径列表/文件上传） | 🔒 |
-| **POST** | `/api/v1/json/folder/download` | LoongTweet 文件夹下载（支持路径列表/文件上传） | 🔒 |
-| **POST** | `/api/v1/batch/download` | 批量下载（多用户/列表） | 🔒 |
-| **POST** | `/api/v1/batch/mark` | 批量标记下载（多用户/列表/关注） | 🔒 |
-| **GET** | `/api/v1/tasks` | 任务列表 | 🔒 |
-| **GET** | `/api/v1/tasks/stats` | 任务统计（按状态计数） | 🔒 |
-| **GET** | `/api/v1/tasks/{task_id}` | 任务详情 | 🔒 |
-| **POST** | `/api/v1/tasks/{task_id}/cancel` | 取消任务 | 🔒 |
-| **POST** | `/api/v1/tasks/cancel-queued` | 取消所有排队中的任务 | 🔒 |
-| **POST** | `/api/v1/tasks/{task_id}/retry` | 重试失败/取消的任务 | 🔒 |
-| **DELETE** | `/api/v1/tasks/{task_id}` | 删除终端状态任务 | 🔒 |
-| **GET** | `/api/v1/sse/tasks` | SSE 实时任务推送 | 🔒 |
-| **GET** | `/api/v1/db/users` | 用户列表（分页） | 🔒 |
-| **GET** | `/api/v1/db/users/{id}` | 用户详情 | 🔒 |
-| **PATCH** | `/api/v1/db/users/{id}` | 部分更新用户 | 🔒 |
-| **DELETE** | `/api/v1/db/users/{id}` | 删除用户 | 🔒 |
-| **GET** | `/api/v1/db/users/{id}/previous-names` | 用户历史名称 | 🔒 |
-| **GET** | `/api/v1/db/users/{id}/entities` | 获取用户的所有实体 | 🔒 |
-| **GET** | `/api/v1/db/users/{id}/links` | 获取用户的所有链接 | 🔒 |
-| **GET** | `/api/v1/db/user-previous-names` | 全局历史名称查询（含当前名称） | 🔒 |
-| **GET** | `/api/v1/db/lists` | 列表列表（分页） | 🔒 |
-| **GET** | `/api/v1/db/lists/{id}` | 列表详情 | 🔒 |
-| **PATCH** | `/api/v1/db/lists/{id}` | 部分更新列表 | 🔒 |
-| **DELETE** | `/api/v1/db/lists/{id}` | 删除列表 | 🔒 |
-| **GET** | `/api/v1/db/lists/{id}/entities` | 获取列表的所有实体 | 🔒 |
-| **GET** | `/api/v1/db/user-entities` | 用户实体列表（分页） | 🔒 |
-| **GET** | `/api/v1/db/user-entities/{id}` | 用户实体详情 | 🔒 |
-| **PATCH** | `/api/v1/db/user-entities/{id}` | 部分更新用户实体 | 🔒 |
-| **DELETE** | `/api/v1/db/user-entities/{id}` | 删除用户实体 | 🔒 |
-| **GET** | `/api/v1/db/list-entities` | 列表实体列表（分页） | 🔒 |
-| **GET** | `/api/v1/db/list-entities/{id}` | 列表实体详情 | 🔒 |
-| **PATCH** | `/api/v1/db/list-entities/{id}` | 部分更新列表实体 | 🔒 |
-| **DELETE** | `/api/v1/db/list-entities/{id}` | 删除列表实体 | 🔒 |
-| **GET** | `/api/v1/db/user-links` | 用户链接查询 | 🔒 |
-| **GET** | `/api/v1/db/user-links/{id}` | 用户链接详情 | 🔒 |
-| **PATCH** | `/api/v1/db/user-links/{id}` | 部分更新用户链接 | 🔒 |
-| **DELETE** | `/api/v1/db/user-links/{id}` | 删除用户链接 | 🔒 |
-| **GET** | `/api/v1/db/stats` | 数据库各表记录数统计 | 🔒 |
-| **GET** | `/api/v1/config` | 系统配置（脱敏） | 🔒 |
-| **GET** | `/api/v1/config/raw` | 获取原始配置文件内容 | 🔒 |
-| **PUT** | `/api/v1/config/raw` | 更新原始配置文件 (YAML) | 🔒 |
-| **GET** | `/api/v1/config/fields` | 获取结构化配置字段列表 | 🔒 |
-| **PUT** | `/api/v1/config/fields` | 保存结构化配置字段 | 🔒 |
-| **GET** | `/api/v1/config/theme` | 获取当前前端主题 | 🔓 |
-| **POST** | `/api/v1/config/theme` | 切换前端主题 | 🔓 |
-| **GET** | `/api/v1/config/themes` | 获取可用主题列表 | 🔓 |
-| **GET** | `/api/v1/cookies` | 获取备用 Cookie 列表（脱敏） | 🔒 |
-| **PUT** | `/api/v1/cookies` | 保存备用 Cookie（表单） | 🔒 |
-| **GET** | `/api/v1/cookies/raw` | 获取原始 Cookie 文件内容 | 🔒 |
-| **PUT** | `/api/v1/cookies/raw` | 更新原始 Cookie 文件 (YAML) | 🔒 |
-| **POST** | `/api/v1/server/shutdown` | 优雅关闭服务器 | 🔒 |
-| **GET** | `/api/v1/logs` | 获取系统日志（支持筛选/分页） | 🔒 |
-| **GET** | `/api/v1/logs/stream` | SSE 实时日志流 | 🔒 |
-| **GET** | `/api/v1/logs/stats` | 日志级别统计计数 | 🔒 |
-| **GET** | `/api/v1/logs/export` | 导出完整日志文件 | 🔒 |
-| **GET** | `/api/v1/schedules` | 定时任务管理（详见[调度器API](#调度器-api)） | 🔒 |
-| **GET** | `/api/v1/errors` | 失败推文摘要（含常规+JSON来源） | 🔒 |
-| **POST** | `/api/v1/errors/retry` | 重试所有历史失败推文 | 🔒 |
-| **DELETE** | `/api/v1/errors` | 清除所有失败推文记录 | 🔒 |
-| **GET** | `/api/v1/queue/status` | 下载队列状态（待处理/活跃/分离） | 🔒 |
-| **GET** | `/` | Web 管理界面 - 仪表盘 | 🔓 |
-| **GET** | `/favicon.ico` | 浏览器图标（SPA 入口时自动请求） | 🔓 |
-| **GET** | `/tasks` | Web 管理界面 - 任务 | 🔓 |
-| **GET** | `/data` | Web 管理界面 - 数据 | 🔓 |
-| **GET** | `/schedules` | Web 管理界面 - 调度 | 🔓 |
-| **GET** | `/system` | Web 管理界面 - 系统 | 🔓 |
-| **GET** | `/logs` | Web 管理界面 - 日志 | 🔓 |
-| **GET** | `/static/{$}` | 静态资源文件（精确匹配） | 🔓 |
-| **GET** | `/static/{path...}` | 静态资源文件（路径匹配） | 🔓 |
+| 方法         | 端点                                               | 说明                            |  认证 |
+| ---------- | ------------------------------------------------ | ----------------------------- | :-: |
+| **GET**    | `/api/v1/health`                                 | 健康检查                          |  🔓 |
+| **POST**   | `/api/v1/auth/login`                             | API Key 换取 JWT 会话令牌           |  🔓 |
+| **POST**   | `/api/v1/auth/refresh`                           | 刷新 JWT 令牌                     |  🔒 |
+| **GET**    | `/api/v1/auth/check`                             | 检查 JWT 有效性                    |  🔒 |
+| **POST**   | `/api/v1/users/{screen_name}/download`           | 下载用户推文                        |  🔒 |
+| **POST**   | `/api/v1/users/{screen_name}/profile`            | 下载用户 Profile                  |  🔒 |
+| **POST**   | `/api/v1/users/{screen_name}/following/download` | 下载关注列表                        |  🔒 |
+| **POST**   | `/api/v1/users/{screen_name}/following/mark`     | 标记关注列表已下载                     |  🔒 |
+| **POST**   | `/api/v1/users/{screen_name}/mark`               | 标记用户已下载                       |  🔒 |
+| **POST**   | `/api/v1/lists/{list_id}/download`               | 下载列表推文                        |  🔒 |
+| **POST**   | `/api/v1/lists/{list_id}/profile`                | 下载列表 Profile                  |  🔒 |
+| **POST**   | `/api/v1/lists/{list_id}/mark`                   | 标记列表已下载                       |  🔒 |
+| **POST**   | `/api/v1/json/file/download`                     | JSON 文件导入下载（支持路径列表/文件上传）      |  🔒 |
+| **POST**   | `/api/v1/json/folder/download`                   | LoongTweet 文件夹下载（支持路径列表/文件上传） |  🔒 |
+| **POST**   | `/api/v1/batch/download`                         | 批量下载（多用户/列表）                  |  🔒 |
+| **POST**   | `/api/v1/batch/mark`                             | 批量标记下载（多用户/列表/关注）             |  🔒 |
+| **GET**    | `/api/v1/tasks`                                  | 任务列表                          |  🔒 |
+| **GET**    | `/api/v1/tasks/stats`                            | 任务统计（按状态计数）                   |  🔒 |
+| **GET**    | `/api/v1/tasks/{task_id}`                        | 任务详情                          |  🔒 |
+| **POST**   | `/api/v1/tasks/{task_id}/cancel`                 | 取消任务                          |  🔒 |
+| **POST**   | `/api/v1/tasks/cancel-queued`                    | 取消所有排队中的任务                    |  🔒 |
+| **POST**   | `/api/v1/tasks/{task_id}/retry`                  | 重试失败/取消的任务                    |  🔒 |
+| **DELETE** | `/api/v1/tasks/{task_id}`                        | 删除终端状态任务                      |  🔒 |
+| **GET**    | `/api/v1/sse/tasks`                              | SSE 实时任务推送                    |  🔒 |
+| **GET**    | `/api/v1/db/users`                               | 用户列表（分页）                      |  🔒 |
+| **GET**    | `/api/v1/db/users/{id}`                          | 用户详情                          |  🔒 |
+| **PATCH**  | `/api/v1/db/users/{id}`                          | 部分更新用户                        |  🔒 |
+| **DELETE** | `/api/v1/db/users/{id}`                          | 删除用户                          |  🔒 |
+| **GET**    | `/api/v1/db/users/{id}/previous-names`           | 用户历史名称                        |  🔒 |
+| **GET**    | `/api/v1/db/users/{id}/entities`                 | 获取用户的所有实体                     |  🔒 |
+| **GET**    | `/api/v1/db/users/{id}/links`                    | 获取用户的所有链接                     |  🔒 |
+| **GET**    | `/api/v1/db/user-previous-names`                 | 全局历史名称查询（含当前名称）               |  🔒 |
+| **GET**    | `/api/v1/db/lists`                               | 列表列表（分页）                      |  🔒 |
+| **GET**    | `/api/v1/db/lists/{id}`                          | 列表详情                          |  🔒 |
+| **PATCH**  | `/api/v1/db/lists/{id}`                          | 部分更新列表                        |  🔒 |
+| **DELETE** | `/api/v1/db/lists/{id}`                          | 删除列表                          |  🔒 |
+| **GET**    | `/api/v1/db/lists/{id}/entities`                 | 获取列表的所有实体                     |  🔒 |
+| **GET**    | `/api/v1/db/user-entities`                       | 用户实体列表（分页）                    |  🔒 |
+| **GET**    | `/api/v1/db/user-entities/{id}`                  | 用户实体详情                        |  🔒 |
+| **PATCH**  | `/api/v1/db/user-entities/{id}`                  | 部分更新用户实体                      |  🔒 |
+| **DELETE** | `/api/v1/db/user-entities/{id}`                  | 删除用户实体                        |  🔒 |
+| **GET**    | `/api/v1/db/list-entities`                       | 列表实体列表（分页）                    |  🔒 |
+| **GET**    | `/api/v1/db/list-entities/{id}`                  | 列表实体详情                        |  🔒 |
+| **PATCH**  | `/api/v1/db/list-entities/{id}`                  | 部分更新列表实体                      |  🔒 |
+| **DELETE** | `/api/v1/db/list-entities/{id}`                  | 删除列表实体                        |  🔒 |
+| **GET**    | `/api/v1/db/user-links`                          | 用户链接查询                        |  🔒 |
+| **GET**    | `/api/v1/db/user-links/{id}`                     | 用户链接详情                        |  🔒 |
+| **PATCH**  | `/api/v1/db/user-links/{id}`                     | 部分更新用户链接                      |  🔒 |
+| **DELETE** | `/api/v1/db/user-links/{id}`                     | 删除用户链接                        |  🔒 |
+| **GET**    | `/api/v1/db/stats`                               | 数据库各表记录数统计                    |  🔒 |
+| **GET**    | `/api/v1/config`                                 | 系统配置（脱敏）                      |  🔒 |
+| **GET**    | `/api/v1/config/raw`                             | 获取原始配置文件内容                    |  🔒 |
+| **PUT**    | `/api/v1/config/raw`                             | 更新原始配置文件 (YAML)               |  🔒 |
+| **GET**    | `/api/v1/config/fields`                          | 获取结构化配置字段列表                   |  🔒 |
+| **PUT**    | `/api/v1/config/fields`                          | 保存结构化配置字段                     |  🔒 |
+| **GET**    | `/api/v1/config/theme`                           | 获取当前前端主题                      |  🔓 |
+| **POST**   | `/api/v1/config/theme`                           | 切换前端主题                        |  🔓 |
+| **GET**    | `/api/v1/config/themes`                          | 获取可用主题列表                      |  🔓 |
+| **GET**    | `/api/v1/cookies`                                | 获取备用 Cookie 列表（脱敏）            |  🔒 |
+| **PUT**    | `/api/v1/cookies`                                | 保存备用 Cookie（表单）               |  🔒 |
+| **GET**    | `/api/v1/cookies/raw`                            | 获取原始 Cookie 文件内容              |  🔒 |
+| **PUT**    | `/api/v1/cookies/raw`                            | 更新原始 Cookie 文件 (YAML)         |  🔒 |
+| **POST**   | `/api/v1/server/shutdown`                        | 优雅关闭服务器                       |  🔒 |
+| **GET**    | `/api/v1/logs`                                   | 获取系统日志（支持筛选/分页）               |  🔒 |
+| **GET**    | `/api/v1/logs/stream`                            | SSE 实时日志流                     |  🔒 |
+| **GET**    | `/api/v1/logs/stats`                             | 日志级别统计计数                      |  🔒 |
+| **GET**    | `/api/v1/logs/export`                            | 导出完整日志文件                      |  🔒 |
+| **GET**    | `/api/v1/schedules`                              | 定时任务管理（详见[调度器API](#调度器-api)）  |  🔒 |
+| **GET**    | `/api/v1/errors`                                 | 失败推文摘要（含常规+JSON来源）            |  🔒 |
+| **POST**   | `/api/v1/errors/retry`                           | 重试所有历史失败推文                    |  🔒 |
+| **DELETE** | `/api/v1/errors`                                 | 清除所有失败推文记录                    |  🔒 |
+| **GET**    | `/api/v1/queue/status`                           | 下载队列状态（待处理/活跃/分离）             |  🔒 |
+| **GET**    | `/`                                              | Web 管理界面 - 仪表盘                |  🔓 |
+| **GET**    | `/favicon.ico`                                   | 浏览器图标（SPA 入口时自动请求）            |  🔓 |
+| **GET**    | `/tasks`                                         | Web 管理界面 - 任务                 |  🔓 |
+| **GET**    | `/data`                                          | Web 管理界面 - 数据                 |  🔓 |
+| **GET**    | `/schedules`                                     | Web 管理界面 - 调度                 |  🔓 |
+| **GET**    | `/system`                                        | Web 管理界面 - 系统                 |  🔓 |
+| **GET**    | `/logs`                                          | Web 管理界面 - 日志                 |  🔓 |
+| **GET**    | `/static/{$}`                                    | 静态资源文件（精确匹配）                  |  🔓 |
+| **GET**    | `/static/{path...}`                              | 静态资源文件（路径匹配）                  |  🔓 |
 
 > API JSON 中的 Twitter list ID 使用十进制字符串传输（例如 `"2033436439346905439"`），避免 JavaScript Number 对 64 位 ID 产生精度丢失；URL 路径参数仍直接使用同一个十进制 ID。
 
@@ -815,6 +844,7 @@ tmdp -server -port 8080
 JSON 导入端点（`/api/v1/json/file/download` 和 `/api/v1/json/folder/download`）支持**两种请求格式**，根据 `Content-Type` 自动分发：
 
 - **multipart/form-data**（推荐）：适用于 Web UI 和远程调用，直接上传 JSON 文件，无需服务端路径
+
 - **application/json**：用于 CLI 和高级用法，提供服务端文件/文件夹路径列表
 
 > 📖 **完整文档**：详细的请求/响应格式、参数说明、curl 示例和上传限制请参考 [API_DOCUMENTATION.md - 第8节](doc/API_DOCUMENTATION.md#8-从-json-文件下载)
@@ -823,43 +853,50 @@ JSON 导入端点（`/api/v1/json/file/download` 和 `/api/v1/json/folder/downlo
 
 **分页参数**（适用于所有 `GET /api/v1/db/*` 端点）：
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `page` | 1 | 页码 |
-| `pageSize` | 20 | 每页数量（最大 100） |
-| `sortBy` | id | 排序字段（白名单限制） |
+| 参数          | 默认值  | 说明             |
+| ----------- | ---- | -------------- |
+| `page`      | 1    | 页码             |
+| `pageSize`  | 20   | 每页数量（最大 100）   |
+| `sortBy`    | id   | 排序字段（白名单限制）    |
 | `sortOrder` | desc | 排序方向（asc/desc） |
-| `q` | - | 搜索关键词 |
+| `q`         | -    | 搜索关键词          |
 
 **筛选参数**（按端点不同）：
 
-| 参数 | 适用端点 | 说明 |
-|------|---------|------|
-| `accessible` | `/db/users` | 用户可访问状态筛选 |
-| `protected` | `/db/users` | 用户保护状态筛选 |
-| `userId` | `/db/user-entities`, `/db/user-links` | 按用户ID筛选 |
-| `listId` | `/db/list-entities` | 按列表ID筛选 |
-| `ownerId` | `/db/lists` | 按所有者ID筛选 |
+| 参数           | 适用端点                                  | 说明        |
+| ------------ | ------------------------------------- | --------- |
+| `accessible` | `/db/users`                           | 用户可访问状态筛选 |
+| `protected`  | `/db/users`                           | 用户保护状态筛选  |
+| `userId`     | `/db/user-entities`, `/db/user-links` | 按用户ID筛选   |
+| `listId`     | `/db/list-entities`                   | 按列表ID筛选   |
+| `ownerId`    | `/db/lists`                           | 按所有者ID筛选  |
 
 ### SSE 实时推送
 
 **任务状态推送** - `GET /api/v1/sse/tasks`：
 
 - 任务状态变更时通过事件总线实时推送（全量推送，非增量），心跳间隔 25 秒
+
 - 客户端断开时服务端通过 `context.Done()` 自动感知
+
 - 开启 API Key 认证后需通过 `?token=` 查询参数传递 Key（`EventSource` 无法设置自定义 HTTP 头）：`/api/v1/sse/tasks?token=your-key`
 
 **实时日志流** - `GET /api/v1/logs/stream`：
 
 - 基于控制台日志捕获（`consolelog.Hub`），实时推送新日志行
+
 - 支持 `level` 和 `q` 查询参数进行服务端筛选
+
 - 客户端断开时自动取消订阅
+
 - 开启 API Key 认证后同样需通过 `?token=` 查询参数：`/api/v1/logs/stream?token=your-key`
 
 ### 任务自动清理
 
 - 已完成/失败/取消的任务在 **24 小时**后自动清理
+
 - 清理每 **1 小时**执行一次
+
 - 运行中的任务不会被清理
 
 ### 服务器优雅关闭
@@ -867,9 +904,13 @@ JSON 导入端点（`/api/v1/json/file/download` 和 `/api/v1/json/folder/downlo
 Server 支持优雅关闭，确保所有资源正确释放：
 
 - **信号触发**：收到 SIGINT/SIGTERM 信号时自动执行
+
 - **API 触发**：`POST /api/v1/server/shutdown`
+
 - **关闭顺序**：取消所有运行中的任务 → 等待下载队列 15 秒 → 停止调度器 → 关闭 HTTP Server（超时 30 秒） → 关闭数据库 → 关闭日志写入器
+
 - **超时保护**：HTTP Server 关闭超时 30 秒，下载队列等待 15 秒
+
 - **幂等性**：使用 `sync.Once` 确保关闭只执行一次
 
 ### Web 管理界面
@@ -883,51 +924,91 @@ http://localhost:25556/
 界面功能：
 
 - **仪表盘**：系统状态、任务统计、快速操作
+
 - **新建任务**：创建用户/列表/批量/JSON 下载任务
+
 - **任务列表**：实时显示任务状态、进度条、取消操作
+
 - **数据管理**：完整的数据库 CRUD 操作
+
   - **Users**：查看、搜索、排序、编辑、删除用户
+
   - **Lists**：查看、搜索、排序、编辑、删除列表
+
   - **User Entities**：查看、搜索、排序、编辑、删除用户实体
+
   - **List Entities**：查看、搜索、排序、编辑、删除列表实体
+
   - **User Links**：查看、搜索、排序、编辑、删除用户链接
+
   - **User Previous Names**：查看用户历史名称变更记录
+
 - **定时任务**：调度器管理
+
   - 创建任务：支持 interval 和 daily 两种调度模式
+
   - 任务类型：支持 list/user/following 三种下载类型
+
   - 任务控制：启用/禁用、手动触发、删除
+
   - 原始编辑：支持 YAML 格式批量编辑
+
 - **系统管理**
+
   - **配置编辑**（双模式）：
+
     - 📝 **简易模式**：结构化表单，按分组显示字段（基础设置/Cookie认证/安全认证/高级选项）
+
     - 🔧 **高级模式**：原始 YAML 编辑器，适合高级用户
+
     - 自动备份、实时验证、敏感信息脱敏显示
+
   - **Cookie 管理**：
+
     - 📝 **表单模式**：结构化编辑备用 Cookie
+
     - 🔧 **原始模式**：YAML 格式编辑
+
     - 敏感信息脱敏显示
+
   - **日志查看器**：
+
     - 实时日志流（SSE 推送，无需轮询）
+
     - 按级别筛选（DEBUG/INFO/WARN/ERROR），显示各级别日志计数
+
     - 关键词搜索（300ms 防抖，减少请求频率）
+
     - 分页浏览
+
     - **日志导出**：一键下载完整日志文件
+
   - **服务器控制**：优雅关闭服务器
 
 ### API 文档
 
-详细的 API 文档请参考 [API\_DOCUMENTATION.md](doc/API_DOCUMENTATION.md)，包含：
+详细的 API 文档请参考 [API_DOCUMENTATION.md](doc/API_DOCUMENTATION.md)，包含：
 
 - 所有 API 端点说明
+
 - 请求/响应格式
+
 - 错误处理
+
 - 使用示例
+
 - **数据库管理 API**：完整的 CRUD 操作文档
+
   - 用户管理（Users）
+
   - 列表管理（Lists）
+
   - 用户实体管理（User Entities）
+
   - 列表实体管理（List Entities）
+
   - 用户链接查询（User Links）
+
   - 用户历史名称查询（User Previous Names）
 
 ### 快速示例
@@ -977,19 +1058,19 @@ tmdp Server 内置定时任务调度器，支持按时间间隔或每天固定�
 
 ### 调度模式
 
-| 模式 | 格式 | 示例 | 说明 |
-|------|------|------|------|
-| **interval** | `interval:<duration>` | `interval:2h` | 每隔指定时间执行一次 |
-| **daily** | `daily:<times>` | `daily:07:00,21:00` | 每天在指定时间执行 |
+| 模式           | 格式                    | 示例                  | 说明         |
+| ------------ | --------------------- | ------------------- | ---------- |
+| **interval** | `interval:<duration>` | `interval:2h`       | 每隔指定时间执行一次 |
+| **daily**    | `daily:<times>`       | `daily:07:00,21:00` | 每天在指定时间执行  |
 
 > interval 最小值为 `1m`（1 分钟）。
 
 ### 任务类型
 
-| 类型 | target 格式 | 说明 |
-|------|------------|------|
-| `list` | 列表 ID（正整数） | 下载列表成员推文 |
-| `user` | 用户 screen_name | 下载用户推文 |
+| 类型          | target 格式       | 说明       |
+| ----------- | --------------- | -------- |
+| `list`      | 列表 ID（正整数）      | 下载列表成员推文 |
+| `user`      | 用户 screen_name | 下载用户推文   |
 | `following` | 用户 screen_name | 下载关注列表推文 |
 
 ### 配置文件
@@ -1024,57 +1105,57 @@ schedules:
 
 ### ScheduleEntry 字段说明
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `id` | string | 否 | 唯一标识（自动生成，格式 `sch_xxxxxxxxxxxx`） |
-| `type` | string | 是 | 任务类型：`list` / `user` / `following` |
-| `target` | string | 是 | 目标（列表 ID 或用户名） |
-| `name` | string | 否 | 任务显示名称 |
-| `schedule` | string | 是 | 调度规则（`interval:` 或 `daily:`） |
-| `enabled` | bool | 否 | 是否启用（默认 false） |
-| `run_on_start` | bool | 否 | 系统首次启动时是否立即执行一次（仅 interval 模式） |
-| `auto_follow` | bool | 否 | 自动关注受保护用户 |
-| `follow_members` | bool | 否 | 下载时关注目标/成员（失败仅 warning，不阻塞下载） |
-| `skip_profile` | bool | 否 | 跳过 Profile 下载 |
-| `no_retry` | bool | 否 | 不重试失败推文 |
+| 字段               | 类型     | 必填 | 说明                                 |
+| ---------------- | ------ | -- | ---------------------------------- |
+| `id`             | string | 否  | 唯一标识（自动生成，格式 `sch_xxxxxxxxxxxx`）   |
+| `type`           | string | 是  | 任务类型：`list` / `user` / `following` |
+| `target`         | string | 是  | 目标（列表 ID 或用户名）                     |
+| `name`           | string | 否  | 任务显示名称                             |
+| `schedule`       | string | 是  | 调度规则（`interval:` 或 `daily:`）       |
+| `enabled`        | bool   | 否  | 是否启用（默认 false）                     |
+| `run_on_start`   | bool   | 否  | 系统首次启动时是否立即执行一次（仅 interval 模式）     |
+| `auto_follow`    | bool   | 否  | 自动关注受保护用户                          |
+| `follow_members` | bool   | 否  | 下载时关注目标/成员（失败仅 warning，不阻塞下载）      |
+| `skip_profile`   | bool   | 否  | 跳过 Profile 下载                      |
+| `no_retry`       | bool   | 否  | 不重试失败推文                            |
 
 ### 调度器 API
 
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| **GET** | `/api/v1/schedules` | 获取调度器状态和任务列表 |
-| **PUT** | `/api/v1/schedules` | 替换全部调度配置 |
-| **POST** | `/api/v1/schedules` | 创建定时任务 |
-| **GET** | `/api/v1/schedules/raw` | 获取原始调度配置 |
-| **PUT** | `/api/v1/schedules/raw` | 更新原始调度配置 (YAML) |
-| **POST** | `/api/v1/schedules/reload` | 重载调度配置 |
-| **POST** | `/api/v1/schedules/validate` | 验证调度配置 |
-| **POST** | `/api/v1/schedules/trigger-all` | 批量触发所有已启用调度 |
-| **GET** | `/api/v1/schedules/stats` | 调度概览统计 |
-| **PUT** | `/api/v1/schedules/{id}` | 更新定时任务 |
-| **DELETE** | `/api/v1/schedules/{id}` | 删除定时任务 |
-| **PATCH** | `/api/v1/schedules/{id}/enabled` | 启用/禁用定时任务 |
-| **POST** | `/api/v1/schedules/{id}/trigger` | 手动触发定时任务 |
-| **GET** | `/api/v1/queue/status` | 下载队列状态 |
+| 方法         | 端点                               | 说明              |
+| ---------- | -------------------------------- | --------------- |
+| **GET**    | `/api/v1/schedules`              | 获取调度器状态和任务列表    |
+| **PUT**    | `/api/v1/schedules`              | 替换全部调度配置        |
+| **POST**   | `/api/v1/schedules`              | 创建定时任务          |
+| **GET**    | `/api/v1/schedules/raw`          | 获取原始调度配置        |
+| **PUT**    | `/api/v1/schedules/raw`          | 更新原始调度配置 (YAML) |
+| **POST**   | `/api/v1/schedules/reload`       | 重载调度配置          |
+| **POST**   | `/api/v1/schedules/validate`     | 验证调度配置          |
+| **POST**   | `/api/v1/schedules/trigger-all`  | 批量触发所有已启用调度     |
+| **GET**    | `/api/v1/schedules/stats`        | 调度概览统计          |
+| **PUT**    | `/api/v1/schedules/{id}`         | 更新定时任务          |
+| **DELETE** | `/api/v1/schedules/{id}`         | 删除定时任务          |
+| **PATCH**  | `/api/v1/schedules/{id}/enabled` | 启用/禁用定时任务       |
+| **POST**   | `/api/v1/schedules/{id}/trigger` | 手动触发定时任务        |
+| **GET**    | `/api/v1/queue/status`           | 下载队列状态          |
 
 ### 调度器状态
 
 `GET /api/v1/schedules` 返回每个任务的状态信息：
 
-| 字段 | 说明 |
-|------|------|
-| `exists` | 调度配置文件是否存在 |
-| `scheduler_running` | 调度器是否运行中 |
-| `active` | 启用中的调度数量 |
-| `total` | 调度总数 |
-| `entries[].last_run_at` | 上次执行时间 |
-| `entries[].next_run_at` | 下次执行时间 |
-| `entries[].schedule_display` | 调度时间格式化显示（如 "每天 08:00"） |
-| `entries[].run_count` | 累计执行次数 |
-| `entries[].last_task_id` | 上次执行的任务 ID |
-| `entries[].last_error` | 上次执行的错误信息 |
-| `entries[].consecutive_failures` | 连续失败次数 |
-| `entries[].triggering` | 是否正在触发该调度规则；仅表示正在创建任务，不代表后台下载任务仍在运行 |
+| 字段                               | 说明                                  |
+| -------------------------------- | ----------------------------------- |
+| `exists`                         | 调度配置文件是否存在                          |
+| `scheduler_running`              | 调度器是否运行中                            |
+| `active`                         | 启用中的调度数量                            |
+| `total`                          | 调度总数                                |
+| `entries[].last_run_at`          | 上次执行时间                              |
+| `entries[].next_run_at`          | 下次执行时间                              |
+| `entries[].schedule_display`     | 调度时间格式化显示（如 "每天 08:00"）             |
+| `entries[].run_count`            | 累计执行次数                              |
+| `entries[].last_task_id`         | 上次执行的任务 ID                          |
+| `entries[].last_error`           | 上次执行的错误信息                           |
+| `entries[].consecutive_failures` | 连续失败次数                              |
+| `entries[].triggering`           | 是否正在触发该调度规则；仅表示正在创建任务，不代表后台下载任务仍在运行 |
 
 创建、更新、启用或重载定时任务后，如果存在启用中的规则且调度器未运行，服务端会自动启动调度器。
 
@@ -1140,15 +1221,21 @@ Profile 下载功能可以保存用户的完整个人资料：
 ### JSON 内容
 
 - 推文文本、时间戳、URL
+
 - 用户信息（头像已清理为高清 URL）
+
 - 媒体信息（已清理冗余字段，图片追加 `?name=4096x4096` 高清参数）
+
 - 完整的原始数据
-- **`-jsonfile` 模式额外处理**：第三方新格式自动转换为 tmdp 兼容旧格式（嵌套对象扁平化）
+
+- **`-jsonfile`** **模式额外处理**：第三方新格式自动转换为 tmdp 兼容旧格式（嵌套对象扁平化）
 
 ### 用途
 
 - 即使下载失败也能记录推文信息，便于调试
+
 - 可用于数据备份和迁移
+
 - 便于第三方工具读取推文数据
 
 ### TXT 格式示例
@@ -1282,21 +1369,21 @@ start-server.bat -port 8080
 
 ### 日志位置
 
-| 平台 | 主日志路径 | CLI 输出日志 |
-|------|----------|-------------|
-| **Windows** | `%APPDATA%\.tmd2\tmd2.log` | `%APPDATA%\.tmd2\client.log` |
-| **macOS/Linux** | `~/.tmd2/tmd2.log` | `~/.tmd2/client.log` |
+| 平台              | 主日志路径                      | CLI 输出日志                     |
+| --------------- | -------------------------- | ---------------------------- |
+| **Windows**     | `%APPDATA%\.tmd2\tmd2.log` | `%APPDATA%\.tmd2\client.log` |
+| **macOS/Linux** | `~/.tmd2/tmd2.log`         | `~/.tmd2/client.log`         |
 
 ### 日志轮转配置
 
 程序使用 [lumberjack](https://github.com/natefinch/lumberjack) 进行日志轮转：
 
-| 配置项 | 当前值 | 说明 |
-|--------|-------|------|
-| 单文件最大 | **2 MB** | 防止单个日志文件过大 |
-| 保留份数 | **2** | 最多保留 2 个历史日志文件 |
-| 保留天数 | **14 天** | 自动清理 14 天前的日志 |
-| 压缩 | ❌ 关闭 | 不压缩历史日志（便于查看） |
+| 配置项   | 当前值      | 说明             |
+| ----- | -------- | -------------- |
+| 单文件最大 | **2 MB** | 防止单个日志文件过大     |
+| 保留份数  | **2**    | 最多保留 2 个历史日志文件 |
+| 保留天数  | **14 天** | 自动清理 14 天前的日志  |
+| 压缩    | ❌ 关闭     | 不压缩历史日志（便于查看）  |
 
 ### 日志级别
 
@@ -1309,10 +1396,15 @@ tmdp -user elonmusk -dbg
 ```
 
 **Debug 模式额外输出：**
+
 - 每个 Twitter API 请求的 URL 和响应时间
+
 - 总请求数统计（`twitter.ReportRequestCount()`）
+
 - 数据库查询详情
+
 - 文件写入操作日志
+
 
 
 ## 常见问题
@@ -1337,7 +1429,7 @@ tmdp -user elonmusk -dbg
 
 创建符号链接需要管理员权限。详见[权限要求](#权限要求)。
 
-### Q: 如何获取列表ID？不知道啥是 user\_id/list\_id/screen\_name?
+### Q: 如何获取列表ID？不知道啥是 user_id/list_id/screen_name?
 
 在 Twitter 网页版打开列表，URL `https://x.com/i/lists/1234567890123` 中的数字就是列表ID。
 更多信息请参考 [doc/help.md](doc/help.md)。
@@ -1353,6 +1445,7 @@ tmdp -user elonmusk -dbg
 ### 推文下载结果
 
 CLI 模式下，下载完成后的输出示例：
+
 ```
 users: 3
     - Elon Musk(elonmusk)
@@ -1362,7 +1455,9 @@ users: 3
 ```
 
 字段说明：
+
 - `main(downloaded, Failedtweet)` — 推文媒体统计：成功下载数、失败推文数（注意 `Failedtweet` 首字母大写）
+
 - `profile(downloaded, failed, versionedfile)` — Profile 统计：成功数、失败数、版本备份数
 
 ### Profile 下载结果
@@ -1376,8 +1471,11 @@ CLI 模式下，Profile 下载结果通过日志输出，例如：
 API 模式下，Profile 结果可通过任务详情查看（`GET /api/v1/tasks/{task_id}`），包含 `profile.downloaded`、`profile.failed`、`profile.versioned` 字段。
 
 状态说明：
+
 - 用户级 `downloaded` — 下载成功
+
 - 用户级 `failed` — 下载失败
+
 - 文件级 `versioned` — 旧文件已备份到 `.versions/`
 
 ### 标记结果
@@ -1431,11 +1529,11 @@ tmdp 采用"入口层 → 服务层 → 业务层 → 基础设施层"的四层�
 
 ### 下载速度调优
 
-| 并发数 | 适用场景 | 带宽占用 | 推荐度 |
-|-------|---------|---------|--------|
-| **10-20** | 家庭网络 / 共享网络 | 低 (5-20 Mbps) | ⭐⭐⭐ 稳定首选 |
-| **20-35** | 企业网络 / 独享带宽 | 中 (20-50 Mbps) | ⭐⭐⭐⭐ **推荐值** |
-| **35-50** | 服务器 / VPS / 高速宽带 | 高 (50-100 Mbps) | ⭐⭐ 需要优质网络 |
+| 并发数       | 适用场景             | 带宽占用            | 推荐度          |
+| --------- | ---------------- | --------------- | ------------ |
+| **10-20** | 家庭网络 / 共享网络      | 低 (5-20 Mbps)   | ⭐⭐⭐ 稳定首选     |
+| **20-35** | 企业网络 / 独享带宽      | 中 (20-50 Mbps)  | ⭐⭐⭐⭐ **推荐值** |
+| **35-50** | 服务器 / VPS / 高速宽带 | 高 (50-100 Mbps) | ⭐⭐ 需要优质网络    |
 
 **配置方法：**
 
@@ -1451,13 +1549,13 @@ tmdp -conf
 
 ### 资源占用参考
 
-| 资源类型 | 空闲状态 | 下载中（并发35） | 备注 |
-|---------|---------|-----------------|------|
-| **内存** | ~40-60 MB | ~100-200 MB | 取决于并发数和文件大小 |
-| **CPU** | < 1% | 5-15% | 单核即可满足 |
-| **磁盘 I/O** | 极低 | 中等 | SSD 推荐用于大文件下载 |
-| **网络连接** | 1 个（登录） | 35+ 个 | 每个媒体文件一个连接 |
-| **数据库** | ~5 MB | ~50-200 MB | SQLite，无需额外服务 |
+| 资源类型       | 空闲状态       | 下载中（并发35）    | 备注            |
+| ---------- | ---------- | ------------ | ------------- |
+| **内存**     | \~40-60 MB | \~100-200 MB | 取决于并发数和文件大小   |
+| **CPU**    | < 1%       | 5-15%        | 单核即可满足        |
+| **磁盘 I/O** | 极低         | 中等           | SSD 推荐用于大文件下载 |
+| **网络连接**   | 1 个（登录）    | 35+ 个        | 每个媒体文件一个连接    |
+| **数据库**    | \~5 MB     | \~50-200 MB  | SQLite，无需额外服务 |
 
 ### 性能优化特性
 
@@ -1473,8 +1571,11 @@ tmdp 内置多项性能优化机制：
 ```
 
 **优势：**
+
 - 大视频文件不再占用大量内存
+
 - 实时进度跟踪
+
 - 失败时仅重试未完成部分
 
 #### 2. 增量下载
@@ -1487,8 +1588,11 @@ WHERE created_at > '2024-01-15 10:30:00'
 ```
 
 **效果：**
+
 - 首次运行：全量下载用户所有推文
+
 - 后续运行：仅下载新增推文（通常几分钟完成）
+
 - 节省 API 配额和网络带宽
 
 #### 3. MD5 去重
@@ -1504,8 +1608,11 @@ if fileWriter.Exists(md5Hash) {
 ```
 
 **适用场景：**
+
 - 重试失败任务时跳过已成功的文件
+
 - 多列表包含同一用户时避免重复保存
+
 - Profile 未变更时自动跳过
 
 #### 4. 符号链接去重
@@ -1518,17 +1625,19 @@ lists/新闻/users/   -> ../../users/Elon Musk(elonmusk)/
 ```
 
 **节省空间：**
+
 - 无论多少列表包含同一用户，本地仅保留一份存档
+
 - 显著减少磁盘空间占用（尤其对于热门用户）
 
 ### 性能瓶颈与解决方案
 
-| 瓶颈 | 表现 | 解决方案 |
-|------|------|---------|
+| 瓶颈                   | 表现                   | 解决方案                                   |
+| -------------------- | -------------------- | -------------------------------------- |
 | **Twitter API 速率限制** | 日志显示 `rate limit` 提示 | 添加备用 Cookie（`additional_cookies.yaml`） |
-| **磁盘 I/O 瓶颈** | 下载速度远低于带宽 | 使用 SSD 存储，或降低并发数 |
-| **网络延迟高** | 单个文件下载时间长 | 检查代理设置，或启用调试模式 (`-dbg`) 查看请求耗时 |
-| **内存不足** | 系统卡顿或 OOM | 降低 `max_download_routine` 到 10-20 |
+| **磁盘 I/O 瓶颈**        | 下载速度远低于带宽            | 使用 SSD 存储，或降低并发数                       |
+| **网络延迟高**            | 单个文件下载时间长            | 检查代理设置，或启用调试模式 (`-dbg`) 查看请求耗时         |
+| **内存不足**             | 系统卡顿或 OOM            | 降低 `max_download_routine` 到 10-20      |
 
 ### 监控与诊断
 
@@ -1550,15 +1659,15 @@ tmdp -user elonmusk -dbg
 
 ### 常见错误码速查
 
-| HTTP 状态码 | 错误类型 | 原因 | 解决方案 |
-|------------|---------|------|---------|
-| **429** | Too Many Requests | 触发 Twitter API 速率限制 | 等待 15 分钟自动恢复；或添加备用 Cookie |
-| **401** | Unauthorized | Cookie 失效或过期 | 运行 `tmdp -conf` 更新 Cookie |
-| **403** | Forbidden | 用户受保护且未关注 | 使用 `-auto-follow` / `-follow-members` 或手动关注后重试 |
-| **404** | Not Found | 用户不存在/已注销/被封禁 | 检查用户名是否正确；用户可能已被封禁 |
-| **500** | Internal Server Error | Twitter 服务器内部错误 | 稍后自动重试；检查网络连接 |
-| **503** | Service Unavailable | Twitter 服务暂时不可用 | 等待服务恢复后重试 |
-| **connection reset** | 网络连接中断 | 代理不稳定或网络波动 | 检查代理设置；启用 `-no-retry` 快速测试 |
+| HTTP 状态码             | 错误类型                  | 原因                  | 解决方案                                           |
+| -------------------- | --------------------- | ------------------- | ---------------------------------------------- |
+| **429**              | Too Many Requests     | 触发 Twitter API 速率限制 | 等待 15 分钟自动恢复；或添加备用 Cookie                      |
+| **401**              | Unauthorized          | Cookie 失效或过期        | 运行 `tmdp -conf` 更新 Cookie                      |
+| **403**              | Forbidden             | 用户受保护且未关注           | 使用 `-auto-follow` / `-follow-members` 或手动关注后重试 |
+| **404**              | Not Found             | 用户不存在/已注销/被封禁       | 检查用户名是否正确；用户可能已被封禁                             |
+| **500**              | Internal Server Error | Twitter 服务器内部错误     | 稍后自动重试；检查网络连接                                  |
+| **503**              | Service Unavailable   | Twitter 服务暂时不可用     | 等待服务恢复后重试                                      |
+| **connection reset** | 网络连接中断                | 代理不稳定或网络波动          | 检查代理设置；启用 `-no-retry` 快速测试                     |
 
 ### 调试技巧集锦
 
@@ -1608,26 +1717,30 @@ tmdp -user elonmusk -dbg
 ```
 
 
+
 ### 典型问题场景与解决方案
 
 #### 场景 1：首次使用完全无法下载
 
 **症状：**
+
 ```
 [ERROR] failed to login: invalid cookie or token
 ```
 
 **排查步骤：**
+
 1. ✅ 确认 Cookie 正确性（重新从浏览器复制）
 2. ✅ 检查 Cookie 是否过期（Twitter 会定期刷新）
 3. ✅ 尝试重新配置：`tmdp -conf`
 4. ✅ 确认网络可以访问 Twitter（非墙内环境）
 
----
+***
 
 #### 场景 2：下载一段时间后停止
 
 **症状：**
+
 ```
 [WARN] rate limit approaching, sleeping for 5m0s...
 ```
@@ -1635,15 +1748,19 @@ tmdp -user elonmusk -dbg
 **原因：** 触发 Twitter API 速率限制（每 15 分钟 500 次请求）
 
 **解决方案：**
+
 - **短期**：等待 15 分钟自动恢复
+
 - **长期**：添加备用 Cookie 到 `additional_cookies.yaml`
+
 - **优化**：降低并发数到 10-20
 
----
+***
 
 #### 场景 3：符号链接创建失败（Windows）
 
 **症状：**
+
 ```
 [ERROR] failed to create symlink: A required privilege is not held by the client
 ```
@@ -1651,17 +1768,20 @@ tmdp -user elonmusk -dbg
 **原因：** Windows 需要管理员权限才能创建符号链接
 
 **解决方案：**
+
 1. 右键点击 `tmdp.exe` → **"以管理员身份运行"**
 2. 或在管理员 PowerShell 中执行：
+
    ```powershell
    Start-Process tmdp.exe -Verb RunAs -ArgumentList "-user elonmusk"
    ```
 
----
+***
 
 #### 场景 4：大文件下载失败
 
 **症状：**
+
 ```
 [ERROR] download failed: context deadline exceeded
 [WARN] retrying tweet 1234567890 with 3 media(s)
@@ -1670,6 +1790,7 @@ tmdp -user elonmusk -dbg
 **原因：** 大视频文件下载超时或网络不稳定
 
 **解决方案：**
+
 1. 启用调试模式查看具体耗时：`-dbg`
 2. 降低并发数减少带宽竞争
 3. 检查磁盘空间是否充足
