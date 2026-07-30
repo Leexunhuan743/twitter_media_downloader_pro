@@ -53,6 +53,26 @@ func (s *Server) buildAndEnqueueTask(w http.ResponseWriter, task *Task) bool {
 	return true
 }
 
+// EnqueueTask builds and queues a task created outside HTTP handlers, such as
+// bot commands. It keeps those entrypoints on the same execution path as the API.
+func (s *Server) EnqueueTask(task *Task) error {
+	if task == nil {
+		return errors.New("task is nil")
+	}
+	if s.downloadQueue == nil {
+		err := errors.New("download queue not available")
+		s.taskManager.SetTaskError(task.ID, err)
+		return err
+	}
+	runFunc, err := s.buildTaskRunFunc(task)
+	if err != nil {
+		s.taskManager.SetTaskError(task.ID, err)
+		return err
+	}
+	s.enqueueTask(task, runFunc)
+	return nil
+}
+
 func formatTaskMarkTime(timestamp *time.Time) *string {
 	if timestamp == nil {
 		return nil

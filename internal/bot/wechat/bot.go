@@ -20,6 +20,7 @@ type Bot struct {
 	taskManager *api.TaskManager
 	eventBus    *api.EventBus
 	logHub      *consolelog.Hub
+	enqueueTask func(*api.Task) error
 
 	wechatBot *wechat.Bot
 
@@ -32,12 +33,13 @@ type Bot struct {
 }
 
 // NewBot 创建微信 bot 实例
-func NewBot(cfg *config.WeChatBotConfig, tm *api.TaskManager, eb *api.EventBus, lh *consolelog.Hub) *Bot {
+func NewBot(cfg *config.WeChatBotConfig, tm *api.TaskManager, eb *api.EventBus, lh *consolelog.Hub, enqueueTask func(*api.Task) error) *Bot {
 	return &Bot{
 		config:      cfg,
 		taskManager: tm,
 		eventBus:    eb,
 		logHub:      lh,
+		enqueueTask: enqueueTask,
 		userTokens:  make(map[string]string),
 		userTasks:   make(map[string]map[string]struct{}),
 		stopCh:      make(chan struct{}),

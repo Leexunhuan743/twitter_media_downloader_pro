@@ -53,6 +53,15 @@ func (b *Bot) cmdDownload(msgID, raw, openID string) {
 			NoRetry:       opts.NoRetry,
 		})
 	}
+	if b.enqueueTask == nil {
+		b.taskManager.SetTaskError(task.ID, fmt.Errorf("download queue not available"))
+		b.sendReply(msgID, "Failed to enqueue download task.")
+		return
+	}
+	if err := b.enqueueTask(task); err != nil {
+		b.sendReply(msgID, fmt.Sprintf("Failed to enqueue download task: %s", err.Error()))
+		return
+	}
 
 	b.mu.Lock()
 	if b.userTasks[openID] == nil {
@@ -88,17 +97,14 @@ func (b *Bot) cmdCancel(msgID, taskID string) {
 		b.sendReply(msgID, "Usage: /cancel <task_id>")
 		return
 	}
-	task, ok := b.taskManager.GetTask(taskID)
-	if !ok {
+	switch b.taskManager.CancelTask(taskID) {
+	case api.CancelTaskResultCancelled:
+		b.sendReply(msgID, fmt.Sprintf("Cancelling %s...", taskID))
+	case api.CancelTaskResultNotFound:
 		b.sendReply(msgID, "Task not found.")
-		return
-	}
-	if task.Status == api.TaskStatusCompleted || task.Status == api.TaskStatusFailed || task.Status == api.TaskStatusCancelled {
+	case api.CancelTaskResultNotCancellable:
 		b.sendReply(msgID, "Task already in terminal state.")
-		return
 	}
-	task.Cancel()
-	b.sendReply(msgID, fmt.Sprintf("Cancelling %s...", taskID))
 }
 
 func (b *Bot) cmdTasks(msgID string) {

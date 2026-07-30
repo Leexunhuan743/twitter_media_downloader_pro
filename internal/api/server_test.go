@@ -128,6 +128,30 @@ func setupTestServerWithAppRoot(t *testing.T, appRoot string) (*Server, *sqlx.DB
 	return server, db
 }
 
+func TestServer_EnqueueTaskRunsExistingTask(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer db.Close()
+
+	fakeService := &fakeDownloadService{batchCalls: make(chan batchDownloadCall, 1)}
+	server.downloadService = fakeService
+
+	task := server.taskManager.CreateTask(TaskTypeBatchDownload, &BatchDownloadTaskData{
+		Users: []string{"alice"},
+		Lists: []StringUint64{123},
+	})
+
+	require.NoError(t, server.EnqueueTask(task))
+
+	select {
+	case call := <-fakeService.batchCalls:
+		assert.Equal(t, task.ID, call.taskID)
+		assert.Equal(t, []string{"alice"}, call.users)
+		assert.Equal(t, []uint64{123}, call.listIDs)
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected enqueued bot/API task to execute")
+	}
+}
+
 type multipartUploadFile struct {
 	name    string
 	content string

@@ -18,6 +18,7 @@ type Bot struct {
 	taskManager *api.TaskManager
 	eventBus    *api.EventBus
 	logHub      *consolelog.Hub
+	enqueueTask func(*api.Task) error
 
 	session *discordgo.Session
 
@@ -29,12 +30,13 @@ type Bot struct {
 }
 
 // NewBot 创建 Discord bot 实例
-func NewBot(cfg *config.DiscordBotConfig, tm *api.TaskManager, eb *api.EventBus, lh *consolelog.Hub) *Bot {
+func NewBot(cfg *config.DiscordBotConfig, tm *api.TaskManager, eb *api.EventBus, lh *consolelog.Hub, enqueueTask func(*api.Task) error) *Bot {
 	return &Bot{
 		config:       cfg,
 		taskManager:  tm,
 		eventBus:     eb,
 		logHub:       lh,
+		enqueueTask:  enqueueTask,
 		channelTasks: make(map[string]map[string]struct{}),
 		stopCh:       make(chan struct{}),
 	}

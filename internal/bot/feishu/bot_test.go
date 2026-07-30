@@ -1,6 +1,8 @@
 package feishu
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -68,4 +70,14 @@ func TestBot_ParseDLArgs(t *testing.T) {
 func TestBot_StatusConstants(t *testing.T) {
 	assert.Equal(t, api.TaskStatus("completed"), api.TaskStatusCompleted)
 	assert.Equal(t, api.TaskStatus("failed"), api.TaskStatusFailed)
+}
+
+func TestBot_CallbackHandlerBeforeStartReturnsUnavailable(t *testing.T) {
+	bot := NewBot(&config.FeishuBotConfig{}, nil, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodPost, bot.CallbackPath(), nil)
+	rec := httptest.NewRecorder()
+
+	bot.CallbackHandler().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }

@@ -20,18 +20,21 @@ type Bot struct {
 	logHub   *consolelog.Hub
 	client   *http.Client
 
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	notifiedTasks map[string]struct{}
+	mu            sync.Mutex
+	stopCh        chan struct{}
+	wg            sync.WaitGroup
 }
 
 // NewBot 创建 Pushover bot 实例
 func NewBot(cfg *config.PushoverBotConfig, eb *api.EventBus, lh *consolelog.Hub) *Bot {
 	return &Bot{
-		config:   cfg,
-		eventBus: eb,
-		logHub:   lh,
-		client:   &http.Client{Timeout: 10 * time.Second},
-		stopCh:   make(chan struct{}),
+		config:        cfg,
+		eventBus:      eb,
+		logHub:        lh,
+		client:        &http.Client{Timeout: 10 * time.Second},
+		notifiedTasks: make(map[string]struct{}),
+		stopCh:        make(chan struct{}),
 	}
 }
 
@@ -60,10 +63,24 @@ func (b *Bot) notifyTaskChanges(data interface{}) {
 	if !ok {
 		return
 	}
+	var pending []*api.Task
+	b.mu.Lock()
 	for _, task := range tasks {
 		if task.Status != api.TaskStatusCompleted && task.Status != api.TaskStatusFailed {
 			continue
 		}
+		if b.notifiedTasks == nil {
+			b.notifiedTasks = make(map[string]struct{})
+		}
+		if _, ok := b.notifiedTasks[task.ID]; ok {
+			continue
+		}
+		b.notifiedTasks[task.ID] = struct{}{}
+		pending = append(pending, task)
+	}
+	b.mu.Unlock()
+
+	for _, task := range pending {
 		title := "❌ TMD Download Failed"
 		if task.Status == api.TaskStatusCompleted {
 			title = "✅ TMD Download Complete"

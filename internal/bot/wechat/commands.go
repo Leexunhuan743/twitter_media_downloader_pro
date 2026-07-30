@@ -56,6 +56,15 @@ func (b *Bot) cmdDownload(ctx context.Context, msg *wechat.Message, args string)
 			NoRetry:       opts.NoRetry,
 		})
 	}
+	if b.enqueueTask == nil {
+		b.taskManager.SetTaskError(task.ID, fmt.Errorf("download queue not available"))
+		b.wechatBot.Reply(ctx, msg, "Failed to enqueue download task.")
+		return
+	}
+	if err := b.enqueueTask(task); err != nil {
+		b.wechatBot.Reply(ctx, msg, fmt.Sprintf("Failed to enqueue download task: %s", err.Error()))
+		return
+	}
 
 	b.mu.Lock()
 	if b.userTasks[msg.FromUserID] == nil {
@@ -91,17 +100,14 @@ func (b *Bot) cmdCancel(ctx context.Context, msg *wechat.Message, args string) {
 		b.wechatBot.Reply(ctx, msg, "Usage: /cancel <task_id>")
 		return
 	}
-	task, ok := b.taskManager.GetTask(args)
-	if !ok {
+	switch b.taskManager.CancelTask(args) {
+	case api.CancelTaskResultCancelled:
+		b.wechatBot.Reply(ctx, msg, fmt.Sprintf("Cancelling %s...", args))
+	case api.CancelTaskResultNotFound:
 		b.wechatBot.Reply(ctx, msg, "Task not found.")
-		return
-	}
-	if task.Status == api.TaskStatusCompleted || task.Status == api.TaskStatusFailed || task.Status == api.TaskStatusCancelled {
+	case api.CancelTaskResultNotCancellable:
 		b.wechatBot.Reply(ctx, msg, "Task already in terminal state.")
-		return
 	}
-	task.Cancel()
-	b.wechatBot.Reply(ctx, msg, fmt.Sprintf("Cancelling %s...", args))
 }
 
 func (b *Bot) cmdTasks(ctx context.Context, msg *wechat.Message) {

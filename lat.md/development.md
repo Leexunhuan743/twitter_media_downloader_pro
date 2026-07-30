@@ -2,6 +2,16 @@
 
 Conventions and gotchas for working on the TMDP codebase.
 
+## Lat Workflow
+Project guidance keeps `lat.md/` as the durable architecture and behavior graph for agents and reviewers.
+
+- Start non-trivial repo work with `lat search` and `lat expand`; use `lat section` when a search result needs exact context.
+- Keep `AGENTS.md` aligned with the locally installed `lat --help`, upstream `lat.md/cli.md`, and upstream source. Prefer those over generated templates when they disagree.
+- `lat search` works offline by default, creates or updates `lat.md/.cache/vectors.db`, and accepts `--limit`; use `lat reindex --local|--remote` only for full rebuilds or backend switches.
+- `lat check` covers markdown refs, code refs, directory indexes, and section leading paragraphs. Use `lat check md`, `lat check code-refs`, `lat check index`, or `lat check sections` for focused diagnosis.
+- Treat `lat locate` and `lat expand` as lenient discovery tools. Any wiki link committed to docs must still pass strict resolution in `lat check`.
+- After changing behavior, architecture, tests, or docs, update relevant `lat.md/` sections and run `lat check`.
+
 ## Logging Conventions
 Every log line must follow the project's domain-prefix and capitalization standards.
 

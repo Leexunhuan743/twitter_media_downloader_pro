@@ -69,6 +69,15 @@ func (b *Bot) cmdDownload(s *discordgo.Session, i *discordgo.InteractionCreate, 
 			NoRetry:       noRetry,
 		})
 	}
+	if b.enqueueTask == nil {
+		b.taskManager.SetTaskError(task.ID, fmt.Errorf("download queue not available"))
+		b.respond(s, i, "Failed to enqueue download task.")
+		return
+	}
+	if err := b.enqueueTask(task); err != nil {
+		b.respond(s, i, fmt.Sprintf("Failed to enqueue download task: %s", err.Error()))
+		return
+	}
 
 	channelID := i.ChannelID
 	b.mu.Lock()
@@ -113,17 +122,14 @@ func (b *Bot) cmdCancel(s *discordgo.Session, i *discordgo.InteractionCreate, da
 	}
 	taskID := options[0].StringValue()
 
-	task, ok := b.taskManager.GetTask(taskID)
-	if !ok {
+	switch b.taskManager.CancelTask(taskID) {
+	case api.CancelTaskResultCancelled:
+		b.respond(s, i, fmt.Sprintf("Cancelling `%s`...", taskID))
+	case api.CancelTaskResultNotFound:
 		b.respond(s, i, "Task not found.")
-		return
-	}
-	if task.Status == api.TaskStatusCompleted || task.Status == api.TaskStatusFailed || task.Status == api.TaskStatusCancelled {
+	case api.CancelTaskResultNotCancellable:
 		b.respond(s, i, "Task already in terminal state.")
-		return
 	}
-	task.Cancel()
-	b.respond(s, i, fmt.Sprintf("Cancelling `%s`...", taskID))
 }
 
 func (b *Bot) cmdTasks(s *discordgo.Session, i *discordgo.InteractionCreate) {

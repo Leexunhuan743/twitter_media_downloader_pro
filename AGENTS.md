@@ -22,22 +22,39 @@ This project uses [lat.md](https://www.npmjs.com/package/lat.md) to maintain a s
 ```bash
 lat init                     # initialize lat.md/ in a new project
 lat locate "Section Name"    # find a section by name (exact, fuzzy)
-lat refs "file#Section"      # find what references a section
-lat search "natural language" # semantic search across all sections
-lat expand "user prompt text" # expand [[refs]] to resolved locations
+lat section "file#Section"   # show a section with content, outgoing refs, and incoming refs
+lat refs "file#Section"      # find references; add --scope=md|code|md+code to narrow
+lat search "natural language" # semantic search; use --limit N to tune result count
+lat search                   # build/update the embedding index without querying
+lat expand "user prompt text" # expand [[refs]] to resolved locations; use --stdin for pipes
+lat reindex                  # rebuild embeddings; use --local or --remote to switch backend
+lat config                   # show the lat config file path
 lat mcp                      # start MCP server (stdio) for AI agent tool access
-lat check                    # validate all links and code refs
+lat check                    # validate all; subcommands: md, code-refs, index, sections
 ```
 
 Run `lat --help` for all options, `lat <command> --help` per command.
 
+### Command behavior notes
+
+- Prefer the installed `lat --help`, upstream `lat.md/cli.md`, and source code over generated templates when they conflict; templates can lag current implementation.
+- `lat check` without a subcommand runs `md`, `code-refs`, `index`, and `sections`.
+- `lat refs --scope=md` checks markdown wiki links, `--scope=code` checks `@lat` comments, and `--scope=md+code` checks both.
+- `lat locate` and `lat expand` are exploratory and may use fuzzy matching. Do not treat a fuzzy result as a valid link until `lat check` accepts it.
+
 ### MCP (Model Context Protocol)
 
-`lat mcp` starts an MCP server (stdio transport) with 6 tools: `lat_locate`, `lat_section`, `lat_search`, `lat_expand`, `lat_check`, `lat_refs`. Configure it in your agent's MCP settings to avoid manual CLI fallback. See [upstream docs](https://github.com/1st1/lat.md#readme).
+`lat mcp` starts an MCP server (stdio transport) with 6 tools: `lat_locate`, `lat_section`, `lat_search`, `lat_expand`, `lat_check`, `lat_refs`. Configure it in your agent's MCP settings to avoid manual CLI fallback. See the [upstream CLI docs](https://github.com/1st1/lat.md/blob/main/lat.md/cli.md).
 
-### Semantic search key
+### Semantic search and embeddings
 
-If `lat search` fails because no API key is configured, explain to the user that semantic search requires a key provided via `LAT_LLM_KEY` (direct value), `LAT_LLM_KEY_FILE` (path to key file), or `LAT_LLM_KEY_HELPER` (command that prints the key). Supported key prefixes: `sk-...` (OpenAI) or `vck_...` (Vercel). If the user doesn't want to set it up, use `lat locate` for direct lookups instead.
+According to the upstream `lat.md/cli.md` design notes and current source, `lat search` works offline by default using a bundled local embedding model. Do not tell the user that an API key is required just because semantic search is involved.
+
+Hosted embeddings are optional. For higher-quality remote embeddings, configure an OpenAI (`sk-...`) or Vercel AI Gateway (`vck_...`) key via `LAT_LLM_KEY`, `LAT_LLM_KEY_FILE`, `LAT_LLM_KEY_HELPER`, or the config file shown by `lat config`. Use `lat reindex --local` to force the offline model or `lat reindex --remote` to use the hosted backend.
+
+Normal `lat search` creates or updates the generated index at `lat.md/.cache/vectors.db`; `lat reindex` is the explicit full rebuild and backend-switch command. Once an index records a model, that model is authoritative: if the current environment cannot serve it, fix the key or run `lat reindex --local` / `lat reindex --remote` instead of silently changing backends.
+
+If `lat search` fails, report the actual error and fall back to `lat locate`, `lat section`, and direct file reads rather than guessing.
 
 ---
 
@@ -56,9 +73,15 @@ If `lat search` fails because no API key is configured, explain to the user that
 # Syntax primer
 
 - **Section ids**: `lat.md/path/to/file#Heading#SubHeading` — full form uses project-root-relative path (e.g. `lat.md/tests/search#RAG Replay Tests`). Short form uses bare file name when unique (e.g. `search#RAG Replay Tests`, `cli#search#Indexing`).
-- **Wiki links**: `[[target]]` or `[[target|alias]]` — cross-references between sections. Can also reference source code: `[[src/foo.ts#myFunction]]`.
+- **Wiki links**: `[[target]]` or `[[target|alias]]` — cross-references between sections. `[[foo]]` links to file `foo.md`; it does not search headings. `[[foo#Bar#Baz]]` must include the exact heading chain. Local-only heading links such as `[[#Bar]]` are invalid.
 - **Source code links**: Wiki links in `lat.md/` files can reference functions, classes, constants, and methods in TypeScript/JavaScript/Python/Rust/Go/C files. Use the full path: `[[src/config.ts#getConfigDir]]`, `[[src/server.ts#App#listen]]` (class method), `[[lib/utils.py#parse_args]]`, `[[src/lib.rs#Greeter#greet]]` (Rust impl method), `[[src/app.go#Greeter#Greet]]` (Go method), `[[src/app.h#Greeter]]` (C struct). `lat check` validates these exist.
 - **Code refs**: `// @lat: [[section-id]]` (JS/TS/Rust/Go/C) or `# @lat: [[section-id]]` (Python) — ties source code to concepts
+
+# Index rules
+
+Every directory under `lat.md/` needs a same-name index file with a bullet list of visible files and subdirectories. The root index is `lat.md/lat.md`; a subdirectory such as `lat.md/api/` needs `lat.md/api/api.md`. Entries use `- [[name]] — description` and omit `.md`.
+
+Only Markdown belongs in `lat.md/`. Generated or editor-only files such as `.cache`, `.obsidian`, and canvases must be ignored by `lat.md/.gitignore`.
 
 # Test specs
 

@@ -20,6 +20,7 @@ type Bot struct {
 	taskManager *api.TaskManager
 	eventBus    *api.EventBus
 	logHub      *consolelog.Hub
+	enqueueTask func(*api.Task) error
 
 	cli *lark.Lark
 
@@ -27,19 +28,18 @@ type Bot struct {
 	userTasks map[string]map[string]struct{}
 	mu        sync.Mutex
 
-	callbackHandler http.HandlerFunc
-
 	stopCh chan struct{}
 	wg     sync.WaitGroup
 }
 
 // NewBot 创建飞书 bot 实例
-func NewBot(cfg *config.FeishuBotConfig, tm *api.TaskManager, eb *api.EventBus, lh *consolelog.Hub) *Bot {
+func NewBot(cfg *config.FeishuBotConfig, tm *api.TaskManager, eb *api.EventBus, lh *consolelog.Hub, enqueueTask func(*api.Task) error) *Bot {
 	return &Bot{
 		config:      cfg,
 		taskManager: tm,
 		eventBus:    eb,
 		logHub:      lh,
+		enqueueTask: enqueueTask,
 		userChats:   make(map[string]string),
 		userTasks:   make(map[string]map[string]struct{}),
 		stopCh:      make(chan struct{}),
@@ -57,16 +57,14 @@ func (b *Bot) Start() error {
 	}
 
 	cli := lark.New(opts...)
+	b.mu.Lock()
 	b.cli = cli
+	b.mu.Unlock()
 
 	cli.EventCallback.HandlerEventV2IMMessageReceiveV1(func(ctx context.Context, cli *lark.Lark, schema string, header *lark.EventHeaderV2, event *lark.EventV2IMMessageReceiveV1) (string, error) {
 		b.handleMessage(ctx, event)
 		return "", nil
 	})
-
-	b.callbackHandler = func(w http.ResponseWriter, r *http.Request) {
-		cli.EventCallback.ListenCallback(r.Context(), r.Body, w)
-	}
 
 	api.RunBotEventLoop(b.eventBus, b.stopCh, &b.wg, func(evt api.SSEEvent) {
 		b.notifyTaskChanges(evt.Data)
@@ -88,7 +86,16 @@ func (b *Bot) Name() string { return "feishu" }
 
 // CallbackHandler 返回 HTTP handler 供 Server 注册飞书事件回调路由
 func (b *Bot) CallbackHandler() http.HandlerFunc {
-	return b.callbackHandler
+	return func(w http.ResponseWriter, r *http.Request) {
+		b.mu.Lock()
+		cli := b.cli
+		b.mu.Unlock()
+		if cli == nil {
+			http.Error(w, "feishu bot not started", http.StatusServiceUnavailable)
+			return
+		}
+		cli.EventCallback.ListenCallback(r.Context(), r.Body, w)
+	}
 }
 
 // CallbackPath 返回回调路径

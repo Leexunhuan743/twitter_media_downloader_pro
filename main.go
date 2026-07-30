@@ -415,10 +415,10 @@ func initBot(botConf *config.BotConfig, server *api.Server) []bot.Bot {
 	}
 	var bots []bot.Bot
 	if botConf.Telegram != nil && botConf.Telegram.Token != "" {
-		bots = append(bots, telegram.NewBot(botConf.Telegram, server.TaskManager(), server.EventBus(), server.LogHub()))
+		bots = append(bots, telegram.NewBot(botConf.Telegram, server.TaskManager(), server.EventBus(), server.LogHub(), server.EnqueueTask))
 	}
 	if botConf.Discord != nil && botConf.Discord.Token != "" {
-		bots = append(bots, discord.NewBot(botConf.Discord, server.TaskManager(), server.EventBus(), server.LogHub()))
+		bots = append(bots, discord.NewBot(botConf.Discord, server.TaskManager(), server.EventBus(), server.LogHub(), server.EnqueueTask))
 	}
 	if botConf.Gotify != nil && botConf.Gotify.Token != "" && botConf.Gotify.ServerURL != "" {
 		bots = append(bots, gotify.NewBot(botConf.Gotify, server.EventBus(), server.LogHub()))
@@ -427,10 +427,10 @@ func initBot(botConf *config.BotConfig, server *api.Server) []bot.Bot {
 		bots = append(bots, pushover.NewBot(botConf.Pushover, server.EventBus(), server.LogHub()))
 	}
 	if botConf.WeChat != nil && botConf.WeChat.CredentialPath != "" {
-		bots = append(bots, wechat.NewBot(botConf.WeChat, server.TaskManager(), server.EventBus(), server.LogHub()))
+		bots = append(bots, wechat.NewBot(botConf.WeChat, server.TaskManager(), server.EventBus(), server.LogHub(), server.EnqueueTask))
 	}
 	if botConf.Feishu != nil && botConf.Feishu.AppID != "" && botConf.Feishu.AppSecret != "" {
-		feishuBot := feishu.NewBot(botConf.Feishu, server.TaskManager(), server.EventBus(), server.LogHub())
+		feishuBot := feishu.NewBot(botConf.Feishu, server.TaskManager(), server.EventBus(), server.LogHub(), server.EnqueueTask)
 		server.RegisterBotCallback(feishuBot.CallbackPath(), feishuBot.CallbackHandler())
 		bots = append(bots, feishuBot)
 	}

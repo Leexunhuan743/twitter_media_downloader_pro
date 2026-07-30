@@ -47,9 +47,10 @@ func ParseDownloadOptions(raw string) (remaining string, opts DownloadOptions) {
 			opts.SkipProfile = val
 		case "no_retry", "nr":
 			opts.NoRetry = val
+		default:
+			return strings.Join(parts[:end], " "), opts
 		}
 		end--
 	}
 	return strings.Join(parts[:end], " "), opts
 }
-

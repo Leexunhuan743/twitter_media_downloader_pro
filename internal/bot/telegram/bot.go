@@ -18,6 +18,7 @@ type Bot struct {
 	taskManager *api.TaskManager
 	eventBus    *api.EventBus
 	logHub      *consolelog.Hub
+	enqueueTask func(*api.Task) error
 
 	api     *tgbotapi.BotAPI
 	updates tgbotapi.UpdatesChannel
@@ -30,12 +31,13 @@ type Bot struct {
 }
 
 // NewBot 创建 Telegram bot 实例
-func NewBot(cfg *config.TelegramBotConfig, tm *api.TaskManager, eb *api.EventBus, lh *consolelog.Hub) *Bot {
+func NewBot(cfg *config.TelegramBotConfig, tm *api.TaskManager, eb *api.EventBus, lh *consolelog.Hub, enqueueTask func(*api.Task) error) *Bot {
 	return &Bot{
 		config:      cfg,
 		taskManager: tm,
 		eventBus:    eb,
 		logHub:      lh,
+		enqueueTask: enqueueTask,
 		chatTasks:   make(map[int64]map[string]struct{}),
 		stopCh:      make(chan struct{}),
 	}
