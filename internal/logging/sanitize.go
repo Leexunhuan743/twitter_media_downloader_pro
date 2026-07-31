@@ -88,3 +88,34 @@ func RequestTarget(r *http.Request) string {
 	}
 	return SanitizeURL(r.URL.RequestURI())
 }
+
+// sensitiveHeaderNames 是日志输出时需要脱敏的 HTTP 头。
+// Cookie/Set-Cookie 可能携带 auth_token、ct0；Authorization/Proxy-Authorization
+// 携带 Bearer 凭据；X-Csrf-Token 是 Twitter 会话防跨站令牌。
+var sensitiveHeaderNames = map[string]struct{}{
+	"Authorization":      {},
+	"Proxy-Authorization": {},
+	"Cookie":             {},
+	"Set-Cookie":         {},
+	"X-Csrf-Token":       {},
+}
+
+// SanitizeHeaders 返回脱敏后的 header 副本：敏感头的值整体替换为稳定指纹。
+// 用于 resty 的 OnRequestLog/OnResponseLog 回调，在 debug 全量日志输出前过滤凭据。
+func SanitizeHeaders(h http.Header) http.Header {
+	if h == nil {
+		return nil
+	}
+	out := h.Clone()
+	for name := range out {
+		if _, ok := sensitiveHeaderNames[http.CanonicalHeaderKey(name)]; !ok {
+			continue
+		}
+		values := out.Values(name)
+		for i := range values {
+			values[i] = MaskSecret(values[i])
+		}
+		out[name] = values
+	}
+	return out
+}

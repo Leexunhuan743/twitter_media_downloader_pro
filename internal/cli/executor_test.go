@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/go-resty/resty/v2"
@@ -531,4 +533,41 @@ func TestSetClientLogger_MultipleCalls(t *testing.T) {
 	SetClientLogger(client, &buf2)
 
 	assert.NotNil(t, client)
+}
+
+func TestSetClientLogger_FullLogging(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-Id", "abc123")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	client := resty.New()
+	var buf bytes.Buffer
+	SetClientLogger(client, &buf)
+
+	resp, err := client.R().
+		SetHeader("Authorization", "Bearer supersecret-token").
+		SetHeader("Cookie", "auth_token=supersecret-cookie; ct0=supersecret-ct0").
+		SetHeader("X-Csrf-Token", "supersecret-csrf").
+		Get(server.URL + "/media")
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode())
+
+	out := buf.String()
+	// 全量：请求行 + 响应状态 + 耗时 + 响应体
+	assert.Contains(t, out, "~~~ REQUEST ~~~")
+	assert.Contains(t, out, "GET")
+	assert.Contains(t, out, "/media")
+	assert.Contains(t, out, "~~~ RESPONSE ~~~")
+	assert.Contains(t, out, "200 OK")
+	assert.Contains(t, out, "TIME DURATION")
+	assert.Contains(t, out, `{"ok":true}`)
+	// 敏感头必须脱敏，不得出现明文凭据
+	assert.NotContains(t, out, "supersecret-token")
+	assert.NotContains(t, out, "supersecret-cookie")
+	assert.NotContains(t, out, "supersecret-ct0")
+	assert.NotContains(t, out, "supersecret-csrf")
+	assert.Contains(t, out, "[redacted:")
 }

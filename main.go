@@ -14,7 +14,6 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"github.com/jmoiron/sqlx"
-	"github.com/natefinch/lumberjack"
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/logging"
 
@@ -38,12 +37,9 @@ import (
 )
 
 func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
-	log.SetFormatter(&log.TextFormatter{
-		ForceColors:    true,
-		FullTimestamp:  true,
-		DisableSorting: true,
-		PadLevelText:   false,
-	})
+	formatter := logging.NewTextFormatter()
+	formatter.ForceColors = true // 终端彩色；文件端由 LumberjackHook 剥离 ANSI
+	log.SetFormatter(formatter)
 
 	if dbg {
 		log.SetLevel(log.DebugLevel)
@@ -96,20 +92,8 @@ func main() {
 		log.Fatalf("[startup] App directory create failed path=%q error=%q", logging.Path(appRootPath), err.Error())
 	}
 
-	logWriter := &lumberjack.Logger{
-		Filename:   logPath,
-		MaxSize:    2,
-		MaxBackups: 2,
-		MaxAge:     14,
-		Compress:   true,
-	}
-	cliLogWriter := &lumberjack.Logger{
-		Filename:   cliLogPath,
-		MaxSize:    2,
-		MaxBackups: 2,
-		MaxAge:     14,
-		Compress:   true,
-	}
+	logWriter := logging.NewRotatingWriter(logPath)
+	cliLogWriter := logging.NewRotatingWriter(cliLogPath)
 	defer cliLogWriter.Close()
 	defer logWriter.Close()
 	consoleLogHub := consolelog.DefaultHub()

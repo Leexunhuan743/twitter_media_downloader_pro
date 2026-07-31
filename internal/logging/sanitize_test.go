@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -56,4 +57,25 @@ func TestRedactSensitiveText(t *testing.T) {
 	assert.NotContains(t, got, "cookie")
 	assert.NotContains(t, got, "csrf")
 	assert.Contains(t, got, "Authorization=")
+}
+
+func TestSanitizeHeadersRedactsCredentials(t *testing.T) {
+	h := http.Header{}
+	h.Set("Authorization", "Bearer secret-bearer")
+	h.Set("Cookie", "auth_token=secret-cookie; ct0=secret-ct0")
+	h.Set("X-Csrf-Token", "secret-csrf")
+	h.Set("X-Request-Id", "keep-me")
+
+	got := SanitizeHeaders(h)
+
+	// 敏感头脱敏为指纹，不含明文
+	assert.NotContains(t, got.Get("Authorization"), "secret-bearer")
+	assert.NotContains(t, got.Get("Cookie"), "secret-cookie")
+	assert.NotContains(t, got.Get("Cookie"), "secret-ct0")
+	assert.NotContains(t, got.Get("X-Csrf-Token"), "secret-csrf")
+	assert.Contains(t, got.Get("Authorization"), "[redacted:")
+	// 非敏感头保持原样
+	assert.Equal(t, "keep-me", got.Get("X-Request-Id"))
+	// 原始 header 不被修改（返回副本）
+	assert.Equal(t, "Bearer secret-bearer", h.Get("Authorization"))
 }

@@ -6,7 +6,7 @@ TMDP logs should read as a coherent operational timeline while remaining safe to
 
 The logging stack fans one application log stream out to local files, console capture, Web UI APIs, and bot alert loops.
 
-`main.go` initializes logrus with a text formatter, starts `consolelog.Hub` capture, and installs `[[internal/logging/lumberjack_hook.go#LumberjackHook]]` for rotated file writes. REST and SSE log consumers read from the in-memory hub; `client.log` remains a separate Resty client log.
+`main.go` initializes logrus with a text formatter, starts `consolelog.Hub` capture, and installs `[[internal/logging/lumberjack_hook.go#LumberjackHook]]` for rotated file writes. Both rotated files (`tmd2.log` and `client.log`) are created through the shared `[[internal/logging/rotation.go#NewRotatingWriter]]` factory (2 MB / 2 backups / 14 days / gzip), and the formatter base configuration is shared via `[[internal/logging/rotation.go#NewTextFormatter]]` with per-sink overrides (`ForceColors` for the terminal-facing main logger, `DisableQuote` for Resty's multiline blocks). REST and SSE log consumers read from the in-memory hub; `client.log` is a separate Resty client log written by `[[internal/cli/executor.go#SetClientLogger]]`.
 
 `[[internal/consolelog/hub.go#StopCapture]]` restores logrus output before closing capture pipes, so start-server shutdown logs do not write to a closed stderr pipe. `main.go` owns final rotated-log writer cleanup after shutdown completes.
 
@@ -19,6 +19,12 @@ Web1 renders the same TextFormatter lines as the CLI contract, adding display-on
 Logs shown outside the process must be concise, consistently prefixed, and safe for operators to scan.
 
 Every user-visible log line starts with a domain prefix such as `[cli]`, `[api]`, `[download]`, `[scheduler]`, or `[auth]`. The JSON API and Web UI parse current `INFO[...]` TextFormatter prefixes, timestamps, task ids, and domain text, but the raw line remains the stable fallback.
+
+## HTTP Client Log
+
+The Resty client log mirrors the main log's full-detail policy while redacting credentials before they reach disk.
+
+`[[internal/cli/executor.go#SetClientLogger]]` enables Resty debug (`SetDebug(true)`) and sets the dedicated logger to debug level, so `client.log` records every request and response (method, URL, status, duration, headers, body) regardless of the `-dbg` flag. Sensitive headers are replaced with stable fingerprints through `[[internal/logging/sanitize.go#SanitizeHeaders]]` (Authorization, Cookie, Set-Cookie, X-Csrf-Token, Proxy-Authorization) via `OnRequestLog`/`OnResponseLog` callbacks that run before Resty's default debug text is composed. Body output is capped at 1 MB per request/response (`SetDebugBodyLimit`) so oversized GraphQL responses cannot flood the rotated log. The media download client (`internal/downloader`) is not wired to `client.log`; its logs live in the main log.
 
 ## Sensitive Data
 

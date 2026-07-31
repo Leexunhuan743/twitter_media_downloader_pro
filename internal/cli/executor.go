@@ -10,6 +10,7 @@ import (
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
 
+	"github.com/unkmonster/tmd/internal/logging"
 	"github.com/unkmonster/tmd/internal/service"
 )
 
@@ -266,15 +267,26 @@ func Execute(ctx context.Context, args []string, deps *Dependencies) error {
 }
 
 // SetClientLogger 设置客户端日志
+// client.log 采用与主日志（tmd2.log）一致的全量策略：开启 resty debug 后
+// 每个 HTTP 请求/响应（方法、URL、状态码、耗时、headers、body）都会记录。
+// 敏感头（Authorization/Cookie/X-Csrf-Token 等）经 logging.SanitizeHeaders 脱敏；
+// 单个请求/响应 body 超过 1MB 的部分截断，避免超大响应打爆日志。
 func SetClientLogger(client *resty.Client, out io.Writer) {
 	logger := log.New()
-	logger.SetLevel(log.InfoLevel)
+	logger.SetLevel(log.DebugLevel)
 	logger.SetOutput(out)
-	logger.SetFormatter(&log.TextFormatter{
-		FullTimestamp:  true,
-		DisableQuote:   true,
-		DisableSorting: true,
-		PadLevelText:   false,
-	})
+	formatter := logging.NewTextFormatter()
+	formatter.DisableQuote = true // resty 多行请求/响应块不做 %q 转义
+	logger.SetFormatter(formatter)
 	client.SetLogger(logger)
+	client.SetDebug(true)
+	client.SetDebugBodyLimit(1 << 20) // 1MB
+	client.OnRequestLog(func(rl *resty.RequestLog) error {
+		rl.Header = logging.SanitizeHeaders(rl.Header)
+		return nil
+	})
+	client.OnResponseLog(func(rl *resty.ResponseLog) error {
+		rl.Header = logging.SanitizeHeaders(rl.Header)
+		return nil
+	})
 }
