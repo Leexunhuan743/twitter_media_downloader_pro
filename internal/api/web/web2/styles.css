@@ -26,11 +26,14 @@
   --border: #e4e4e7;
   --text: #18181b;
   --text-secondary: #71717a;
-  --text-muted: #a1a1aa;
+  --text-muted: #6b7280;
 
   --accent: #2563eb;
   --accent-hover: #1d4ed8;
   --accent-light: #eff6ff;
+
+  --info: #2563eb;   /* 日志时间戳等 info 色（原引用未定义） */
+  --danger: #dc2626; /* 认证失败/过期提示红字（原引用未定义） */
 
   --green: #16a34a;
   --green-bg: #f0fdf4;
@@ -91,7 +94,7 @@ a:hover { text-decoration: underline; }
 .sidebar-logo svg { flex-shrink: 0; }
 .sidebar-subtitle {
   font-size: 11px;
-  color: #52525b;
+  color: #71717a;
   margin-top: 2px;
   padding-left: 32px;
 }
@@ -99,7 +102,7 @@ a:hover { text-decoration: underline; }
 .nav-section-label {
   font-size: 11px;
   font-weight: 600;
-  color: #52525b;
+  color: #71717a;
   text-transform: uppercase;
   letter-spacing: .6px;
   padding: 16px 12px 6px;
@@ -127,7 +130,7 @@ a:hover { text-decoration: underline; }
   padding: 12px;
   border-top: 1px solid #27272a;
   font-size: 11px;
-  color: #52525b;
+  color: #71717a;
   text-align: center;
 }
 
@@ -293,7 +296,6 @@ a:hover { text-decoration: underline; }
 .btn-sm { padding: 4px 10px; font-size: 12px; }
 .btn-sm svg { width: 14px; height: 14px; }
 .btn-xs { padding: 2px 6px; font-size: 11px; }
-.btn-block { width: 100%; justify-content: center; }
 
 /* Forms */
 .form-group { margin-bottom: 16px; }
@@ -615,19 +617,6 @@ pre { font-family: var(--font-mono); font-size: 12px; background: var(--sidebar-
 }
 
 /* Upload zone */
-.upload-zone {
-  border: 2px dashed var(--border);
-  border-radius: var(--radius);
-  padding: 32px;
-  text-align: center;
-  cursor: pointer;
-  transition: all .12s ease;
-  background: var(--bg);
-}
-.upload-zone:hover, .upload-zone.dragover { border-color: var(--accent); background: var(--accent-light); }
-.upload-zone svg { width: 32px; height: 32px; color: var(--text-muted); margin-bottom: 8px; }
-.upload-zone p { font-size: 13px; color: var(--text-secondary); }
-.upload-zone .hint { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
 
 /* Schedule items */
 .schedule-item {
@@ -699,19 +688,15 @@ pre { font-family: var(--font-mono); font-size: 12px; background: var(--sidebar-
 
 /* Utility */
 .flex { display: flex; }
-.flex-col { flex-direction: column; }
 .items-center { align-items: center; }
-.justify-between { justify-content: space-between; }
 .gap-2 { gap: 8px; }
 .gap-4 { gap: 16px; }
 .mt-2 { margin-top: 8px; }
 .mt-4 { margin-top: 16px; }
 .mb-2 { margin-bottom: 8px; }
 .mb-4 { margin-bottom: 16px; }
-.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .text-sm { font-size: 12px; }
 .text-muted { color: var(--text-secondary); }
-.w-full { width: 100%; }
 .hidden { display: none !important; }
 
 /* Download tab panels */
@@ -776,9 +761,6 @@ pre { font-family: var(--font-mono); font-size: 12px; background: var(--sidebar-
 }
 
 /* Download form sizing */
-.download-form { max-width: 520px; }
-.download-form-wide { max-width: 640px; }
-.multi-input textarea { min-height: 80px; }
 
 /* ---- Responsive ---- */
 @media (max-width: 1023px) {

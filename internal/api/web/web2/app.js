@@ -19,6 +19,13 @@ function fetchWithTimeout(url, options) {
 
 const API = {
   _refreshPromise: null, // _tryRefreshJWT 去重锁
+  // 安全解析：非 JSON 响应（HTML 错误页/代理页）给出可读错误而非 SyntaxError
+  async _parse(r) {
+    const ct = r.headers.get('content-type') || '';
+    if (ct.includes('application/json')) return r.json();
+    const text = await r.text();
+    throw new Error('Server returned non-JSON response (HTTP ' + r.status + '): ' + text.slice(0, 120));
+  },
   async _fetch(url, options) {
     const jwt = localStorage.getItem('tmd_jwt_token');
     if (jwt) {
@@ -81,31 +88,38 @@ const API = {
   },
   get: async (url) => {
     const r = await API._fetch(apiBase() + url);
-    const j = await r.json();
+    const j = await API._parse(r);
     if (!j.success) throw new Error(j.error || 'Request failed');
     return j.data;
   },
   post: async (url, body) => {
     const r = await API._fetch(apiBase() + url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined });
-    const j = await r.json();
+    const j = await API._parse(r);
     if (!j.success) throw new Error(j.error || 'Request failed');
     return j.data;
   },
   put: async (url, body) => {
     const r = await API._fetch(apiBase() + url, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined });
-    const j = await r.json();
+    const j = await API._parse(r);
     if (!j.success) throw new Error(j.error || 'Request failed');
     return j.data;
   },
   patch: async (url, body) => {
     const r = await API._fetch(apiBase() + url, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined });
-    const j = await r.json();
+    const j = await API._parse(r);
     if (!j.success) throw new Error(j.error || 'Request failed');
     return j.data;
   },
   del: async (url) => {
     const r = await API._fetch(apiBase() + url, { method: 'DELETE' });
-    const j = await r.json();
+    const j = await API._parse(r);
+    if (!j.success) throw new Error(j.error || 'Request failed');
+    return j.data;
+  },
+  // multipart 上传：不手动设 Content-Type（浏览器自动带 boundary）
+  upload: async (url, formData) => {
+    const r = await API._fetch(apiBase() + url, { method: 'POST', body: formData });
+    const j = await API._parse(r);
     if (!j.success) throw new Error(j.error || 'Request failed');
     return j.data;
   }
@@ -253,7 +267,7 @@ function toast(msg, type) {
   el.className = 'toast toast-' + type;
   el.id = 'toast-' + id;
   const icons = { success:'✓', error:'✕', warning:'!', info:'i' };
-  el.innerHTML = '<span class="toast-icon">' + icons[type] + '</span><span class="toast-msg">' + esc(msg) + '</span><button class="toast-close" onclick="dismissToast(' + id + ')">✕</button>';
+  el.innerHTML = '<span class="toast-icon">' + icons[type] + '</span><span class="toast-msg">' + esc(msg) + '</span><button class="toast-close">✕</button>';
   el.querySelector('.toast-close').onclick = () => el.remove();
   container.appendChild(el);
   setTimeout(() => { const e = document.getElementById('toast-'+id); if (e) e.remove(); }, 5000);
@@ -269,14 +283,23 @@ function openModal(html) {
   closeModal();
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
   overlay.innerHTML = '<div class="modal">' + html + '</div>';
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
   document.body.appendChild(overlay);
   currentModal = overlay;
+  // 焦点管理：聚焦弹窗内第一个可聚焦控件
+  const focusable = overlay.querySelector('input, select, textarea, button');
+  if (focusable) setTimeout(() => focusable.focus(), 50);
 }
 function closeModal() {
   if (currentModal) { currentModal.remove(); currentModal = null; }
 }
+// ESC 关闭弹窗/侧边栏
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { closeModal(); closeSidebar(); }
+});
 
 /* ---- Global State ---- */
 let pageTasks = [];
@@ -284,6 +307,15 @@ let sseConnected = false;
 let _sseAuthChecked = false;
 let pageRenderers = {};
 let _lastSchedulesData = null;
+let _tasksRESTEpoch = 0; // SSE tasks 快照应用时递增，丢弃迟到的 REST 兜底响应
+let _dbTabSeq = 0; // 数据页 tab 请求代际：丢弃旧 tab 的迟到响应
+let _logGen = 0; // 日志分页代际：refresh/筛选变化时递增，丢弃过期 loadMore 响应
+let _prependedCount = 0; // loadMore 前置的日志行数（SSE trim 时保留，防刚加载的旧页被削掉）
+let _actionBusy = false; // 下载/标记类动作的全局防重入锁
+
+// 任务状态白名单：未知状态不进入 HTML 属性/class（防属性注入）
+const TASK_STATUS_WHITELIST = ['queued', 'running', 'completed', 'failed', 'cancelled'];
+const safeTaskStatus = (s) => TASK_STATUS_WHITELIST.includes(s) ? s : 'unknown';
 
 // Debounce utility to batch rapid updates
 function debounce(fn, delay) {
@@ -324,6 +356,8 @@ const ENDPOINTS = {
   // JSON
   jsonFileDownload:    (data) => API.post('/api/v1/json/file/download', data),
   jsonFolderDownload:  (data) => API.post('/api/v1/json/folder/download', data),
+  jsonFileUpload:      (fd) => API.upload('/api/v1/json/file/download', fd),
+  jsonFolderUpload:    (fd) => API.upload('/api/v1/json/folder/download', fd),
 
   // DB
   dbUsers:             (p) => API.get('/api/v1/db/users' + qs(p)),
@@ -343,6 +377,13 @@ const ENDPOINTS = {
   dbUserLinksAll:      (p) => API.get('/api/v1/db/user-links' + qs(p)),
   dbPrevNamesAll:      (p) => API.get('/api/v1/db/user-previous-names' + qs(p)),
   dbStats:             () => API.get('/api/v1/db/stats'),
+  // 行级：user-entities / list-entities / user-links 详情与删除
+  dbUserEntity:        (id) => API.get('/api/v1/db/user-entities/' + encodeURIComponent(id)),
+  dbUserEntityDelete:  (id) => API.del('/api/v1/db/user-entities/' + encodeURIComponent(id)),
+  dbListEntity:        (id) => API.get('/api/v1/db/list-entities/' + encodeURIComponent(id)),
+  dbListEntityDelete:  (id) => API.del('/api/v1/db/list-entities/' + encodeURIComponent(id)),
+  dbUserLink:          (id) => API.get('/api/v1/db/user-links/' + encodeURIComponent(id)),
+  dbUserLinkDelete:    (id) => API.del('/api/v1/db/user-links/' + encodeURIComponent(id)),
 
   // Config
   config:        () => API.get('/api/v1/config'),
@@ -405,10 +446,16 @@ function navigateTo(page) {
   currentPage = page;
   history.pushState({page}, '', page === 'tasks' ? '/' : '/' + page);
   renderPage(page);
+  // 移动端：导航后收起侧边栏并隐藏遮罩
+  closeSidebar();
 }
 
 window.addEventListener('popstate', (e) => {
   const page = location.pathname.replace(/^\//, '') || 'tasks';
+  // 与 navigateTo 共用离开清理：浏览器前进/后退离开日志页也要断开 log SSE
+  if (currentPage === 'logs' && page !== 'logs') {
+    disconnectLogSSE();
+  }
   currentPage = page;
   renderPage(page);
 });
@@ -465,10 +512,13 @@ function tryRefreshJWT(label, done) {
 
 // Debounce rapid SSE updates to avoid excessive re-renders
 const debouncedTasksUpdate = debounce(function(tasks) {
+  _tasksRESTEpoch++; // 新快照生效，作废在途 REST 兜底响应
   pageTasks = tasks;
   if (currentPage === 'tasks' && pageRenderers.tasks) {
     try { updateTasksView(); } catch(err) { console.warn('SSE tasks update error:', err); }
   }
+  // errors 数据随任务终态变化，跟随任务事件去抖刷新（原实现每 SSE 事件直接请求，形成风暴）
+  if (currentPage === 'tasks') loadErrors();
 }, 100);
 const debouncedSchedulesUpdate = debounce(function(data) {
   _lastSchedulesData = data;
@@ -493,7 +543,6 @@ function connectSSE() {
       const tasks = JSON.parse(e.data);
       if (Array.isArray(tasks)) {
         debouncedTasksUpdate(tasks);
-        loadErrors();
       }
     } catch(err) { /* ignore parse errors */ }
   });
@@ -526,10 +575,11 @@ function connectSSE() {
   sseSource.onopen = () => {
     sseConnected = true;
     sseReconnectDelay = 1000;
-    // Refresh current page data after reconnect
+    // Refresh current page data after reconnect（保留当前页码，不踢回第 1 页）
     if (currentPage === 'data') {
       const activeTab = document.querySelector('#db-tabs .tab.active');
-      loadDBTab(activeTab ? activeTab.dataset.dbtab : 'users');
+      const tab = activeTab ? activeTab.dataset.dbtab : 'users';
+      loadDBTab(tab, dbPageState[tab] !== undefined ? dbPageState[tab] : 0);
     }
     document.querySelector('.health-dot') && (document.querySelector('.health-dot').style.background = 'var(--green)');
   };
@@ -538,7 +588,12 @@ function connectSSE() {
     sseConnected = false;
     document.querySelector('.health-dot') && (document.querySelector('.health-dot').style.background = 'var(--red)');
     sseSource.close();
-    tryRefreshJWT('SSE', () => {
+    // 无条件尝试刷新 JWT（无 2 分钟窗口限制）；刷新失败且本地有 token → 会话失效，弹认证框
+    API._tryRefreshJWT().then(ok => {
+      if (!ok && localStorage.getItem('tmd_jwt_token')) {
+        showAuthDialog('Session expired - please re-authenticate');
+        return;
+      }
       sseReconnectDelay = Math.min(sseReconnectDelay * 2, 30000);
       sseReconnectTimer = setTimeout(connectSSE, sseReconnectDelay);
     });
@@ -558,7 +613,9 @@ async function checkHealth() {
   } catch(e) {
     const dot = document.getElementById('health-dot');
     if (dot) dot.className = 'health-dot error';
-    document.getElementById('health-text').textContent = 'Offline';
+    const text = document.getElementById('health-text');
+    // 401 = 认证问题而非服务器故障，避免误导用户
+    if (text) text.textContent = (e.status === 401) ? 'Auth required' : 'Offline';
   }
 }
 
@@ -583,6 +640,7 @@ function renderTasksPage(container) {
         <span id="errors-panel-title">Failed Records</span>
         <span id="errors-panel-badge" style="margin-left:auto"></span>
         <span id="errors-panel-arrow" style="margin-left:8px;transition:transform .2s">▶</span>
+      </div>
       <div class="card-body hidden" id="errors-panel-body">
         <div id="errors-panel-content"><div class="loading"><div class="spinner"></div> Loading...</div></div>
       </div>
@@ -637,6 +695,15 @@ function renderTasksPage(container) {
   pageRenderers.tasks = renderTasksPage;
   updateTasksView();
   loadErrors();
+  // SSE 未就绪时的兜底：REST 拉取填充任务列表（SSE 快照到达后自动作废）
+  const epoch = _tasksRESTEpoch;
+  ENDPOINTS.tasks().then(r => {
+    if (epoch !== _tasksRESTEpoch) return; // 期间 SSE 已提供更新快照，丢弃迟到响应
+    if (Array.isArray(r.tasks)) {
+      pageTasks = r.tasks;
+      if (currentPage === 'tasks') updateTasksView();
+    }
+  }).catch(() => { /* SSE 断开时静默，页面保持空态 */ });
 }
 
 function updateTasksView() {
@@ -677,7 +744,7 @@ function updateTasksView() {
     return `<tr data-status="${t.status}">
       <td>${taskTypeIcon(t.type)}</td>
       <td><span class="mono">${esc(t.task_id || t.id)}</span><div class="text-sm text-muted">${taskTypeName(t.type)}${target ? ' - ' + esc(target) : ''}</div></td>
-      <td><span class="badge badge-${t.status}">${t.status}</span></td>
+      <td><span class="badge badge-${safeTaskStatus(t.status)}">${esc(t.status)}</span></td>
       <td>
         <div class="progress-bar-wrap"><div class="progress-bar-fill ${barClass}" style="width:${pct}%"></div></div>
         <div class="progress-detail">
@@ -727,7 +794,14 @@ function showBatchForm() {
         </div>
         <div class="form-row">
           <label class="checkbox-label"><input type="checkbox" id="dl-user-autofollow"> Auto-follow</label>
+          <label class="checkbox-label"><input type="checkbox" id="dl-user-followmembers"> Follow members</label>
+          <label class="checkbox-label"><input type="checkbox" id="dl-user-skipprofile"> Skip profile</label>
           <label class="checkbox-label"><input type="checkbox" id="dl-user-noretry"> No retry</label>
+        </div>
+        <div class="form-group">
+          <label>Mark timestamp (optional)</label>
+          <input type="datetime-local" id="dl-user-marktime">
+          <div class="text-sm text-muted">Leave empty to mark as now.</div>
         </div>
         <div class="form-actions">
           <button class="btn btn-primary" onclick="doUserDownload()">Download User</button>
@@ -744,7 +818,14 @@ function showBatchForm() {
         </div>
         <div class="form-row">
           <label class="checkbox-label"><input type="checkbox" id="dl-list-autofollow"> Auto-follow</label>
+          <label class="checkbox-label"><input type="checkbox" id="dl-list-followmembers"> Follow members</label>
+          <label class="checkbox-label"><input type="checkbox" id="dl-list-skipprofile"> Skip profile</label>
           <label class="checkbox-label"><input type="checkbox" id="dl-list-noretry"> No retry</label>
+        </div>
+        <div class="form-group">
+          <label>Mark timestamp (optional)</label>
+          <input type="datetime-local" id="dl-list-marktime">
+          <div class="text-sm text-muted">Leave empty to mark as now.</div>
         </div>
         <div class="form-actions">
           <button class="btn btn-primary" onclick="doListDownload()">Download List</button>
@@ -761,7 +842,14 @@ function showBatchForm() {
         </div>
         <div class="form-row">
           <label class="checkbox-label"><input type="checkbox" id="dl-foll-autofollow"> Auto-follow</label>
+          <label class="checkbox-label"><input type="checkbox" id="dl-foll-followmembers"> Follow members</label>
+          <label class="checkbox-label"><input type="checkbox" id="dl-foll-skipprofile"> Skip profile</label>
           <label class="checkbox-label"><input type="checkbox" id="dl-foll-noretry"> No retry</label>
+        </div>
+        <div class="form-group">
+          <label>Mark timestamp (optional)</label>
+          <input type="datetime-local" id="dl-foll-marktime">
+          <div class="text-sm text-muted">Leave empty to mark as now.</div>
         </div>
         <div class="form-actions">
           <button class="btn btn-primary" onclick="doFollowingDownload()">Download</button>
@@ -786,6 +874,7 @@ function showBatchForm() {
         <div class="form-row">
           <label class="checkbox-label"><input type="checkbox" id="dl-batch-autofollow"> Auto-follow</label>
           <label class="checkbox-label"><input type="checkbox" id="dl-batch-followmembers"> Follow members</label>
+          <label class="checkbox-label"><input type="checkbox" id="dl-batch-skipprofile"> Skip profile</label>
           <label class="checkbox-label"><input type="checkbox" id="dl-batch-noretry"> No retry</label>
         </div>
         <div class="form-actions">
@@ -797,7 +886,12 @@ function showBatchForm() {
       <!-- JSON Download -->
       <div class="dl-tab-content hidden" id="dl-tab-json">
         <div class="form-group">
-          <label>JSON File Paths (one per line)</label>
+          <label>Upload JSON files (third-party export / .loongtweet)</label>
+          <input type="file" id="dl-json-files" multiple accept=".json,application/json">
+          <div class="text-sm text-muted">Select files to upload, or use server paths below.</div>
+        </div>
+        <div class="form-group">
+          <label>Server JSON File Paths (one per line)</label>
           <textarea id="dl-json-paths" rows="3" placeholder="/path/to/tweets.json"></textarea>
         </div>
         <label class="checkbox-label"><input type="checkbox" id="dl-json-noretry"> No retry</label>
@@ -823,15 +917,19 @@ function showBatchForm() {
 async function doUserDownload() {
   const name = document.getElementById('dl-user-name').value.trim();
   if (!name) return toast('Enter a screen name', 'warning');
+  // 先读控件值再关弹窗（弹窗关闭后 DOM 已移除）
+  const auto_follow = document.getElementById('dl-user-autofollow').checked;
+  const follow_members = document.getElementById('dl-user-followmembers').checked;
+  const skip_profile = document.getElementById('dl-user-skipprofile').checked;
+  const no_retry = document.getElementById('dl-user-noretry').checked;
   closeModal();
+  if (_actionBusy) return;
+  _actionBusy = true;
   try {
-    const r = await ENDPOINTS.userDownload(name, {
-      auto_follow: document.getElementById('dl-user-autofollow').checked,
-      no_retry: document.getElementById('dl-user-noretry').checked
-    });
+    const r = await ENDPOINTS.userDownload(name, { auto_follow, follow_members, skip_profile, no_retry });
     toast('Task created: ' + r.task_id, 'success');
-    document.getElementById('dl-user-name').value = '';
   } catch(e) { toast(e.message, 'error'); }
+  finally { _actionBusy = false; }
 }
 
 async function doUserProfile() {
@@ -845,22 +943,29 @@ async function doUserProfile() {
 async function doUserMark() {
   const name = document.getElementById('dl-user-name').value.trim();
   if (!name) return toast('Enter a screen name', 'warning');
+  // 先读控件值再关弹窗（弹窗关闭后 DOM 已移除）
+  const ts = document.getElementById('dl-user-marktime').value || '';
   closeModal();
-  try { const r = await ENDPOINTS.userMark(name); toast('Marked: ' + r.task_id, 'success'); }
+  try { const r = await ENDPOINTS.userMark(name, ts || undefined); toast('Marked: ' + r.task_id, 'success'); }
   catch(e) { toast(e.message, 'error'); }
 }
 
 async function doListDownload() {
   const id = document.getElementById('dl-list-id').value.trim();
   if (!id) return toast('Enter a list ID', 'warning');
+  // 先读控件值再关弹窗（弹窗关闭后 DOM 已移除）
+  const auto_follow = document.getElementById('dl-list-autofollow').checked;
+  const follow_members = document.getElementById('dl-list-followmembers').checked;
+  const skip_profile = document.getElementById('dl-list-skipprofile').checked;
+  const no_retry = document.getElementById('dl-list-noretry').checked;
   closeModal();
+  if (_actionBusy) return;
+  _actionBusy = true;
   try {
-    const r = await ENDPOINTS.listDownload(id, {
-      auto_follow: document.getElementById('dl-list-autofollow').checked,
-      no_retry: document.getElementById('dl-list-noretry').checked
-    });
+    const r = await ENDPOINTS.listDownload(id, { auto_follow, follow_members, skip_profile, no_retry });
     toast('Task created: ' + r.task_id, 'success');
   } catch(e) { toast(e.message, 'error'); }
+  finally { _actionBusy = false; }
 }
 
 async function doListProfile() {
@@ -874,29 +979,38 @@ async function doListProfile() {
 async function doListMark() {
   const id = document.getElementById('dl-list-id').value.trim();
   if (!id) return toast('Enter a list ID', 'warning');
+  // 先读控件值再关弹窗（弹窗关闭后 DOM 已移除）
+  const ts = document.getElementById('dl-list-marktime').value || '';
   closeModal();
-  try { const r = await ENDPOINTS.listMark(id); toast('Marked: ' + r.task_id, 'success'); }
+  try { const r = await ENDPOINTS.listMark(id, ts || undefined); toast('Marked: ' + r.task_id, 'success'); }
   catch(e) { toast(e.message, 'error'); }
 }
 
 async function doFollowingDownload() {
   const name = document.getElementById('dl-foll-name').value.trim();
   if (!name) return toast('Enter a screen name', 'warning');
+  // 先读控件值再关弹窗（弹窗关闭后 DOM 已移除）
+  const auto_follow = document.getElementById('dl-foll-autofollow').checked;
+  const follow_members = document.getElementById('dl-foll-followmembers').checked;
+  const skip_profile = document.getElementById('dl-foll-skipprofile').checked;
+  const no_retry = document.getElementById('dl-foll-noretry').checked;
   closeModal();
+  if (_actionBusy) return;
+  _actionBusy = true;
   try {
-    const r = await ENDPOINTS.userFollowingDL(name, {
-      auto_follow: document.getElementById('dl-foll-autofollow').checked,
-      no_retry: document.getElementById('dl-foll-noretry').checked
-    });
+    const r = await ENDPOINTS.userFollowingDL(name, { auto_follow, follow_members, skip_profile, no_retry });
     toast('Task created: ' + r.task_id, 'success');
   } catch(e) { toast(e.message, 'error'); }
+  finally { _actionBusy = false; }
 }
 
 async function doFollowingMark() {
   const name = document.getElementById('dl-foll-name').value.trim();
   if (!name) return toast('Enter a screen name', 'warning');
+  // 先读控件值再关弹窗（弹窗关闭后 DOM 已移除）
+  const ts = document.getElementById('dl-foll-marktime').value || '';
   closeModal();
-  try { const r = await ENDPOINTS.userFollowingMark(name); toast('Marked: ' + r.task_id, 'success'); }
+  try { const r = await ENDPOINTS.userFollowingMark(name, ts || undefined); toast('Marked: ' + r.task_id, 'success'); }
   catch(e) { toast(e.message, 'error'); }
 }
 
@@ -905,16 +1019,22 @@ async function doBatchDownload() {
   const lists = document.getElementById('dl-batch-lists').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
   const foll = document.getElementById('dl-batch-foll').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
   if (!users.length && !lists.length && !foll.length) return toast('Enter at least one target', 'warning');
+  // 先读控件值再关弹窗（弹窗关闭后 DOM 已移除）
+  const auto_follow = document.getElementById('dl-batch-autofollow').checked;
+  const follow_members = document.getElementById('dl-batch-followmembers').checked;
+  const skip_profile = document.getElementById('dl-batch-skipprofile').checked;
+  const no_retry = document.getElementById('dl-batch-noretry').checked;
   closeModal();
+  if (_actionBusy) return;
+  _actionBusy = true;
   try {
     const r = await ENDPOINTS.batchDownload({
       users, lists, following_names: foll,
-      auto_follow: document.getElementById('dl-batch-autofollow').checked,
-      follow_members: document.getElementById('dl-batch-followmembers').checked,
-      no_retry: document.getElementById('dl-batch-noretry').checked
+      auto_follow, follow_members, skip_profile, no_retry
     });
     toast('Batch task: ' + r.task_id, 'success');
   } catch(e) { toast(e.message, 'error'); }
+  finally { _actionBusy = false; }
 }
 
 async function doBatchMark() {
@@ -930,23 +1050,55 @@ async function doBatchMark() {
 }
 
 async function doJSONFileDownload() {
+  const fileInput = document.getElementById('dl-json-files');
+  const files = fileInput && fileInput.files ? Array.from(fileInput.files) : [];
   const paths = document.getElementById('dl-json-paths').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
-  if (!paths.length) return toast('Enter at least one path', 'warning');
+  if (!files.length && !paths.length) return toast('Select files or enter at least one path', 'warning');
+  // 先读控件值再关弹窗（弹窗关闭后 DOM 已移除）
+  const no_retry = document.getElementById('dl-json-noretry').checked;
   closeModal();
+  if (_actionBusy) return;
+  _actionBusy = true;
   try {
-    const r = await ENDPOINTS.jsonFileDownload({ paths, no_retry: document.getElementById('dl-json-noretry').checked });
-    toast('Task created: ' + r.task_id, 'success');
+    if (files.length) {
+      // multipart 上传：浏览器直接上传文件，无需服务端路径
+      const fd = new FormData();
+      files.forEach(f => fd.append('files', f));
+      if (no_retry) fd.append('no_retry', 'true');
+      const r = await ENDPOINTS.jsonFileUpload(fd);
+      toast('Task created: ' + r.task_id, 'success');
+    } else {
+      const r = await ENDPOINTS.jsonFileDownload({ paths, no_retry });
+      toast('Task created: ' + r.task_id, 'success');
+    }
   } catch(e) { toast(e.message, 'error'); }
+  finally { _actionBusy = false; }
 }
 
 async function doJSONFolderDownload() {
+  const fileInput = document.getElementById('dl-json-files');
+  const files = fileInput && fileInput.files ? Array.from(fileInput.files) : [];
   const paths = document.getElementById('dl-json-paths').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
-  if (!paths.length) return toast('Enter at least one path', 'warning');
+  if (!files.length && !paths.length) return toast('Select files or enter at least one path', 'warning');
+  // 先读控件值再关弹窗（弹窗关闭后 DOM 已移除）
+  const no_retry = document.getElementById('dl-json-noretry').checked;
   closeModal();
+  if (_actionBusy) return;
+  _actionBusy = true;
   try {
-    const r = await ENDPOINTS.jsonFolderDownload({ paths, no_retry: document.getElementById('dl-json-noretry').checked });
-    toast('Task created: ' + r.task_id, 'success');
+    if (files.length) {
+      // multipart 上传（.loongtweet 文件夹可打包为 zip 上传，或逐个上传其内 json）
+      const fd = new FormData();
+      files.forEach(f => fd.append('files', f));
+      if (no_retry) fd.append('no_retry', 'true');
+      const r = await ENDPOINTS.jsonFolderUpload(fd);
+      toast('Task created: ' + r.task_id, 'success');
+    } else {
+      const r = await ENDPOINTS.jsonFolderDownload({ paths, no_retry });
+      toast('Task created: ' + r.task_id, 'success');
+    }
   } catch(e) { toast(e.message, 'error'); }
+  finally { _actionBusy = false; }
 }
 
 // Task actions
@@ -1010,7 +1162,7 @@ async function showTaskDetail(id) {
       <div style="background:${bg};border-radius:var(--radius);padding:12px 16px;margin-bottom:16px">
         <div style="font-weight:600;font-size:15px">${esc(target || task.task_id)}</div>
         <div class="text-sm text-muted" style="margin-top:4px">${esc(task.task_id)}</div>
-        <div style="margin-top:8px"><span class="badge badge-${task.status}">${task.status}</span> <span class="text-sm text-muted">${taskTypeName(task.type)}</span></div>
+        <div style="margin-top:8px"><span class="badge badge-${safeTaskStatus(task.status)}">${esc(task.status)}</span> <span class="text-sm text-muted">${taskTypeName(task.type)}</span></div>
       </div>
 
       <div class="section-header"><h3>Progress</h3></div>
@@ -1038,6 +1190,9 @@ async function showTaskDetail(id) {
 }
 
 async function cancelAllQueued() {
+  const queued = pageTasks.filter(t => t.status === 'queued').length;
+  if (queued === 0) return toast('No queued tasks to cancel', 'info');
+  if (!confirm('Cancel all ' + queued + ' queued tasks?')) return;
   try { const r = await ENDPOINTS.cancelQueued(); toast('Cancelled ' + (r.cancelled_count || 0) + ' tasks', 'info'); }
   catch(e) { toast(e.message, 'error'); }
 }
@@ -1124,42 +1279,75 @@ function renderDataPage(container) {
 
 let dbPageState = { users:0, lists:0, entities:0, 'list-entities':0, links:0, prevnames:0 };
 let dbSearchState = { users:'', lists:'', entities:'', 'list-entities':'', links:'', prevnames:'' };
+let dbSortState = { users:{by:'id',order:'desc'}, lists:{by:'id',order:'desc'}, entities:{by:'id',order:'desc'}, 'list-entities':{by:'id',order:'desc'}, links:{by:'id',order:'desc'}, prevnames:{by:'record_date',order:'desc'} };
 const DB_PAGE_SIZE = 20;
+
+// 表头排序：切换 asc/desc 并重载当前页
+function sortDB(tab, field) {
+  const cur = dbSortState[tab] || { by: 'id', order: 'desc' };
+  dbSortState[tab] = {
+    by: field,
+    order: (cur.by === field && cur.order === 'asc') ? 'desc' : 'asc'
+  };
+  loadDBTab(tab, 0);
+}
+
+// 排序表头：当前排序字段加箭头指示
+function sortableTh(label, tab, field, sort) {
+  const active = sort && sort.by === field;
+  const arrow = active ? (sort.order === 'asc' ? ' &uarr;' : ' &darr;') : '';
+  return `<th style="cursor:pointer" onclick="sortDB('${tab}','${field}')">${label}${arrow}</th>`;
+}
 
 async function loadDBTab(tab, page) {
   const content = document.getElementById('db-content');
   if (!content) return;
+  // 代际守卫：快速切 tab/翻页时丢弃旧请求的迟到响应，防止旧 tab 数据覆盖新 tab
+  const seq = ++_dbTabSeq;
+  const tabAtRequest = tab;
   if (page != null) dbPageState[tab] = page;
   else dbPageState[tab] = 0;
   const p = dbPageState[tab];
   const q = dbSearchState[tab] || '';
+  const sort = dbSortState[tab] || { by: 'id', order: 'desc' };
 
   content.innerHTML = '<div class="loading"><div class="spinner"></div> Loading...</div>';
 
   try {
+    let html = '';
     switch (tab) {
-      case 'users': await renderDBUsers(content, p, q); break;
-      case 'lists': await renderDBLists(content, p, q); break;
-      case 'entities': await renderDBEntities(content, p, q, 'user-entities', 'user_entities'); break;
-      case 'list-entities': await renderDBEntities(content, p, q, 'list-entities', 'list_entities'); break;
-      case 'links': await renderDBEntities(content, p, q, 'user-links', 'user_links'); break;
-      case 'prevnames': await renderDBPrevNames(content, p, q); break;
-      case 'stats': await renderDBStats(content); break;
+      case 'users': html = await renderDBUsers(content, p, q, sort); break;
+      case 'lists': html = await renderDBLists(content, p, q, sort); break;
+      case 'entities': html = await renderDBEntities(content, p, q, 'user-entities', 'user_entities', sort); break;
+      case 'list-entities': html = await renderDBEntities(content, p, q, 'list-entities', 'list_entities', sort); break;
+      case 'links': html = await renderDBEntities(content, p, q, 'user-links', 'user_links', sort); break;
+      case 'prevnames': html = await renderDBPrevNames(content, p, q, sort); break;
+      case 'stats': html = await renderDBStats(content); break;
     }
+    // 响应已过期（期间切换了 tab/发起了新请求）→ 丢弃，不覆盖当前内容
+    if (seq !== _dbTabSeq || tabAtRequest !== currentDBTab()) return;
+    content.innerHTML = html;
   } catch(e) {
+    if (seq !== _dbTabSeq) return;
     content.innerHTML = '<div class="empty-state"><p>Error loading data: ' + esc(e.message) + '</p></div>';
   }
 }
 
-async function renderDBUsers(content, page, search) {
+function currentDBTab() {
+  const active = document.querySelector('#db-tabs .tab.active');
+  return active ? active.dataset.dbtab : 'users';
+}
+
+async function renderDBUsers(content, page, search, sort) {
   const params = { page: page + 1, pageSize: DB_PAGE_SIZE };
-  if (search) params.search = search;
+  if (search) params.q = search;
+  if (sort) { params.sortBy = sort.by; params.sortOrder = sort.order; }
   const r = await ENDPOINTS.dbUsers(params);
   const users = r.data || r || [];
   const total = r.total || users.length;
   const totalPages = r.totalPages || 1;
 
-  content.innerHTML = `
+  return `
     <div class="filter-bar">
       <input type="text" id="db-search-input" placeholder="Search screen name..." value="${esc(search)}">
       <button class="btn btn-primary btn-sm" onclick="dbSearch('users')">Search</button>
@@ -1167,7 +1355,7 @@ async function renderDBUsers(content, page, search) {
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>ID</th><th>Screen Name</th><th>Display Name</th><th>Protected</th><th>Friends</th><th>Accessible</th><th>Actions</th></tr></thead>
+        <thead><tr>${sortableTh('ID', 'users', 'id', sort)}${sortableTh('Screen Name', 'users', 'screen_name', sort)}${sortableTh('Display Name', 'users', 'name', sort)}<th>Protected</th><th>Friends</th><th>Accessible</th><th>Actions</th></tr></thead>
         <tbody>${users.map(u => `<tr>
           <td><span class="mono">${esc(u.id||'')}</span></td>
           <td>${esc(u.screen_name||'')}</td>
@@ -1182,23 +1370,24 @@ async function renderDBUsers(content, page, search) {
     ${renderPagination(page, totalPages, total, 'users')}`;
 }
 
-async function renderDBLists(content, page, search) {
+async function renderDBLists(content, page, search, sort) {
   const params = { page: page + 1, pageSize: DB_PAGE_SIZE };
-  if (search) params.search = search;
+  if (search) params.q = search;
+  if (sort) { params.sortBy = sort.by; params.sortOrder = sort.order; }
   const r = await ENDPOINTS.dbLists(params);
   const lists = r.data || r || [];
   const total = r.total || lists.length;
   const totalPages = r.totalPages || 1;
 
-  content.innerHTML = `
+  return `
     <div class="filter-bar">
-      <input type="text" id="db-search-input" placeholder="Search list name..." value="${esc(search)}">
+      <input type="text" id="db-search-input" placeholder="Search..." value="${esc(search)}">
       <button class="btn btn-primary btn-sm" onclick="dbSearch('lists')">Search</button>
       <button class="btn btn-ghost btn-sm" onclick="dbSearchClear('lists')">Clear</button>
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>ID</th><th>Name</th><th>Owner ID</th><th>Actions</th></tr></thead>
+        <thead><tr>${sortableTh('ID', 'lists', 'id', sort)}${sortableTh('Name', 'lists', 'name', sort)}${sortableTh('Owner ID', 'lists', 'owner_id', sort)}<th>Actions</th></tr></thead>
         <tbody>${lists.map(l => `<tr>
           <td><span class="mono">${esc(l.id||'')}</span></td>
           <td>${esc(l.name||'')}</td>
@@ -1210,30 +1399,32 @@ async function renderDBLists(content, page, search) {
     ${renderPagination(page, totalPages, total, 'lists')}`;
 }
 
-async function renderDBEntities(content, page, search, ep, label) {
+async function renderDBEntities(content, page, search, ep, label, sort) {
   const params = { page: page + 1, pageSize: DB_PAGE_SIZE };
-  if (search) params.search = search;
+  if (search) params.q = search;
+  if (sort) { params.sortBy = sort.by; params.sortOrder = sort.order; }
   const r = await ENDPOINTS['db' + ep.charAt(0).toUpperCase() + ep.slice(1).replace(/-([a-z])/g, (_,c) => c.toUpperCase()) + 'All'](params);
   const items = r.data || r || [];
   const total = r.total || items.length;
   const totalPages = r.totalPages || 1;
 
   const cols = label === 'user_entities'
-    ? '<th>ID</th><th>User ID</th><th>Name</th><th>Parent Dir</th><th>Media</th><th>Latest Release</th>'
+    ? `${sortableTh('ID', ep, 'id', sort)}${sortableTh('User ID', ep, 'user_id', sort)}${sortableTh('Name', ep, 'name', sort)}<th>Parent Dir</th>${sortableTh('Media', ep, 'media_count', sort)}<th>Latest Release</th><th>Actions</th>`
     : label === 'list_entities'
-    ? '<th>ID</th><th>List ID</th><th>Name</th><th>Parent Dir</th><th>List Name</th>'
-    : '<th>ID</th><th>User ID</th><th>Name</th><th>Parent Entity</th>';
+    ? `${sortableTh('ID', ep, 'id', sort)}${sortableTh('List ID', ep, 'lst_id', sort)}${sortableTh('Name', ep, 'name', sort)}<th>Parent Dir</th><th>List Name</th><th>Actions</th>`
+    : `${sortableTh('ID', ep, 'id', sort)}${sortableTh('User ID', ep, 'user_id', sort)}${sortableTh('Name', ep, 'name', sort)}<th>Parent Entity</th><th>Actions</th>`;
 
   const rows = items.map(i => {
+    const actions = `<td><button class="btn btn-xs btn-ghost" onclick="viewEntityDetail('${ep}', '${jsEsc(i.id)}')">View</button> <button class="btn btn-xs btn-ghost" onclick="if(confirm('Delete entity ${jsEsc(i.id)}?')){deleteEntity('${ep}', '${jsEsc(i.id)}')}">Delete</button></td>`;
     if (label === 'user_entities')
-      return `<tr><td><span class="mono">${esc(i.id||'')}</span></td><td>${esc(i.user_id||'')}</td><td>${esc(i.name||'')}</td><td>${esc(i.parent_dir||'')}</td><td>${i.media_count||0}</td><td class="text-sm">${esc(i.latest_release_time||'')}</td></tr>`;
+      return `<tr><td><span class="mono">${esc(i.id||'')}</span></td><td>${esc(i.user_id||'')}</td><td>${esc(i.name||'')}</td><td>${esc(i.parent_dir||'')}</td><td>${i.media_count||0}</td><td class="text-sm">${esc(i.latest_release_time||'')}</td>${actions}</tr>`;
     else if (label === 'list_entities')
-      return `<tr><td><span class="mono">${esc(i.id||'')}</span></td><td>${esc(i.lst_id||'')}</td><td>${esc(i.name||'')}</td><td>${esc(i.parent_dir||'')}</td><td>${esc(i.list_name||'')}</td></tr>`;
+      return `<tr><td><span class="mono">${esc(i.id||'')}</span></td><td>${esc(i.lst_id||'')}</td><td>${esc(i.name||'')}</td><td>${esc(i.parent_dir||'')}</td><td>${esc(i.list_name||'')}</td>${actions}</tr>`;
     else
-      return `<tr><td><span class="mono">${esc(i.id||'')}</span></td><td>${esc(i.user_id||'')}</td><td>${esc(i.name||'')}</td><td>${esc(i.parent_lst_entity_name||i.parent_lst_entity_id||'')}</td></tr>`;
+      return `<tr><td><span class="mono">${esc(i.id||'')}</span></td><td>${esc(i.user_id||'')}</td><td>${esc(i.name||'')}</td><td>${esc(i.parent_lst_entity_name||i.parent_lst_entity_id||'')}</td>${actions}</tr>`;
   }).join('');
 
-  content.innerHTML = `
+  return `
     <div class="filter-bar">
       <input type="text" id="db-search-input" placeholder="Search..." value="${esc(search)}">
       <button class="btn btn-primary btn-sm" onclick="dbSearch('${ep}')">Search</button>
@@ -1245,15 +1436,56 @@ async function renderDBEntities(content, page, search, ep, label) {
     ${renderPagination(page, totalPages, total, ep)}`;
 }
 
-async function renderDBPrevNames(content, page, search) {
+// 实体/链接详情 + 删除（user-entities / list-entities / user-links）
+async function viewEntityDetail(ep, id) {
+  const getters = {
+    'user-entities': ENDPOINTS.dbUserEntity,
+    'list-entities': ENDPOINTS.dbListEntity,
+    'user-links': ENDPOINTS.dbUserLink
+  };
+  const labels = {
+    'user-entities': 'User Entity',
+    'list-entities': 'List Entity',
+    'user-links': 'User Link'
+  };
+  try {
+    const item = await getters[ep](id);
+    if (!item) return toast('Not found', 'error');
+    const fields = Object.entries(item).map(([k, v]) =>
+      `<div class="form-row"><div class="form-group"><label>${esc(k)}</label><code>${esc(v == null ? '-' : String(v))}</code></div></div>`
+    ).join('');
+    openModal(`
+      <div class="modal-header"><h2>${labels[ep]}: ${esc(item.name || item.id)}</h2><button class="btn btn-ghost btn-sm" onclick="closeModal()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+      <div class="modal-body">${fields}</div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      </div>`);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function deleteEntity(ep, id) {
+  const deleters = {
+    'user-entities': ENDPOINTS.dbUserEntityDelete,
+    'list-entities': ENDPOINTS.dbListEntityDelete,
+    'user-links': ENDPOINTS.dbUserLinkDelete
+  };
+  try {
+    await deleters[ep](id);
+    toast('Deleted', 'success');
+    loadDBTab(currentDBTab());
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function renderDBPrevNames(content, page, search, sort) {
   const params = { page: page + 1, pageSize: DB_PAGE_SIZE };
-  if (search) params.search = search;
+  if (search) params.q = search;
+  if (sort) { params.sortBy = sort.by; params.sortOrder = sort.order; }
   const r = await ENDPOINTS.dbPrevNamesAll(params);
   const items = r.data || r || [];
   const total = r.total || items.length;
   const totalPages = r.totalPages || 1;
 
-  content.innerHTML = `
+  return `
     <div class="filter-bar">
       <input type="text" id="db-search-input" placeholder="Search..." value="${esc(search)}">
       <button class="btn btn-primary btn-sm" onclick="dbSearch('prevnames')">Search</button>
@@ -1261,7 +1493,7 @@ async function renderDBPrevNames(content, page, search) {
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>ID</th><th>User ID</th><th>Screen Name</th><th>Name</th><th>Record Date</th><th>Current</th></tr></thead>
+        <thead><tr>${sortableTh('ID', 'prevnames', 'id', sort)}${sortableTh('Screen Name', 'prevnames', 'screen_name', sort)}${sortableTh('Name', 'prevnames', 'name', sort)}${sortableTh('Date', 'prevnames', 'record_date', sort)}</tr></thead>
         <tbody>${items.map(i => `<tr><td><span class="mono">${esc(i.id||'')}</span></td><td>${esc(i.user_id||'')}</td><td>${esc(i.screen_name||'')}</td><td>${esc(i.name||'')}</td><td class="text-sm">${esc(i.record_date||'')}</td><td>${i.current_screen_name ? esc(i.current_screen_name) : '-'}</td></tr>`).join('')}</tbody>
       </table>
     </div>
@@ -1272,13 +1504,13 @@ async function renderDBStats(content) {
   const s = await ENDPOINTS.dbStats();
   const items = [
     ['Total Users', s.users || 0],
-    ['Total Lists', s.lsts || 0],
+    ['Total Lists', s.lists || 0],
     ['User Entities', s.user_entities || 0],
     ['List Entities', s.lst_entities || 0],
     ['Links', s.user_links || 0],
     ['Previous Names', s.user_previous_names || 0],
   ];
-  content.innerHTML = `<div class="stats-grid">${items.map(([k,v]) => `<div class="stat-card total"><div class="stat-value">${v}</div><div class="stat-label">${k}</div></div>`).join('')}</div>`;
+  return `<div class="stats-grid">${items.map(([k,v]) => `<div class="stat-card total"><div class="stat-value">${v}</div><div class="stat-label">${k}</div></div>`).join('')}</div>`;
 }
 
 function renderPagination(page, totalPages, total, tabId) {
@@ -1322,22 +1554,24 @@ window.dbSearchClear = (tab) => {
 
 async function viewUserDetail(id) {
   try {
-    const u = await ENDPOINTS.dbUser(id);
+    const [u, prev, ents, links] = await Promise.all([
+      ENDPOINTS.dbUser(id),
+      ENDPOINTS.dbUserPrevNames(id),
+      ENDPOINTS.dbUserEntities(id),
+      ENDPOINTS.dbUserLinks(id)
+    ]);
     if (!u) return toast('User not found', 'error');
-    const prev = await ENDPOINTS.dbUserPrevNames(id);
-    const ents = await ENDPOINTS.dbUserEntities(id);
-    const links = await ENDPOINTS.dbUserLinks(id);
 
     openModal(`
       <div class="modal-header"><h2>User: ${esc(u.screen_name)}</h2><button class="btn btn-ghost btn-sm" onclick="closeModal()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
       <div class="modal-body">
         <div class="form-row">
           <div class="form-group"><label>ID</label><code>${esc(u.id)}</code></div>
-          <div class="form-group"><label>Screen Name</label><code>${esc(u.screen_name)}</code></div>
+          <div class="form-group"><label>Protected</label><code>${u.protected ? 'Yes' : 'No'}</code></div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label>Name</label><code>${esc(u.name)}</code></div>
-          <div class="form-group"><label>Protected</label><code>${u.protected ? 'Yes' : 'No'}</code></div>
+          <div class="form-group"><label>Screen Name</label><input type="text" id="db-edit-screenname" value="${esc(u.screen_name)}"></div>
+          <div class="form-group"><label>Name</label><input type="text" id="db-edit-name" value="${esc(u.name)}"></div>
         </div>
         ${prev.length ? `<div class="section-header mt-4"><h3>Previous Names (${prev.length})</h3></div>
         <table><thead><tr><th>Screen Name</th><th>Name</th><th>Date</th></tr></thead><tbody>${prev.map(p => `<tr><td>${esc(p.screen_name)}</td><td>${esc(p.name)}</td><td class="text-sm">${esc(p.record_date)}</td></tr>`).join('')}</tbody></table>` : ''}
@@ -1348,8 +1582,20 @@ async function viewUserDetail(id) {
       </div>
       <div class="modal-footer">
         <button class="btn btn-ghost" onclick="closeModal()">Close</button>
-        <button class="btn btn-danger" onclick="if(confirm('Delete user ${jsEsc(u.screen_name)}?')){ENDPOINTS.dbUserDelete('${jsEsc(u.id)}').then(()=>{closeModal();loadDBTab('users');}).catch(e=>toast(e.message,'error'))}">Delete</button>
+        <button class="btn btn-primary" onclick="saveUserEdit('${jsEsc(u.id)}')">Save</button>
+        <button class="btn btn-danger" onclick="if(confirm('Delete user ${jsEsc(u.screen_name)}?')){ENDPOINTS.dbUserDelete('${jsEsc(u.id)}').then(()=>{closeModal();loadDBTab(currentDBTab());}).catch(e=>toast(e.message,'error'))}">Delete</button>
       </div>`);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function saveUserEdit(id) {
+  const screen_name = document.getElementById('db-edit-screenname').value.trim();
+  const name = document.getElementById('db-edit-name').value.trim();
+  closeModal();
+  try {
+    await ENDPOINTS.dbUserUpdate(id, { screen_name, name });
+    toast('User updated', 'success');
+    loadDBTab(currentDBTab());
   } catch(e) { toast(e.message, 'error'); }
 }
 
@@ -1365,12 +1611,25 @@ async function viewListDetail(id) {
           <div class="form-group"><label>ID</label><code>${esc(l.id)}</code></div>
           <div class="form-group"><label>Owner ID</label><code>${esc(l.owner_user_id)}</code></div>
         </div>
+        <div class="form-group"><label>Name</label><input type="text" id="db-edit-listname" value="${esc(l.name)}"></div>
         ${ents.length ? `<div class="section-header mt-4"><h3>Entities (${ents.length})</h3></div>
         <table><thead><tr><th>Name</th><th>Parent Dir</th></tr></thead><tbody>${ents.map(e => `<tr><td>${esc(e.name)}</td><td>${esc(e.parent_dir)}</td></tr>`).join('')}</tbody></table>` : ''}
       </div>
       <div class="modal-footer">
         <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+        <button class="btn btn-primary" onclick="saveListEdit('${jsEsc(l.id)}')">Save</button>
+        <button class="btn btn-danger" onclick="if(confirm('Delete list ${jsEsc(l.name)}?')){ENDPOINTS.dbListDelete('${jsEsc(l.id)}').then(()=>{closeModal();loadDBTab(currentDBTab());}).catch(e=>toast(e.message,'error'))}">Delete</button>
       </div>`);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function saveListEdit(id) {
+  const name = document.getElementById('db-edit-listname').value.trim();
+  closeModal();
+  try {
+    await ENDPOINTS.dbListUpdate(id, { name });
+    toast('List updated', 'success');
+    loadDBTab(currentDBTab());
   } catch(e) { toast(e.message, 'error'); }
 }
 
@@ -1382,6 +1641,7 @@ function renderSchedulesPage(container) {
         <h2>Schedules</h2>
         <div class="flex gap-2">
           <button class="btn btn-primary btn-sm" onclick="showNewScheduleForm()">+ Add</button>
+          <button class="btn btn-ghost btn-sm" onclick="showSchedulesRawEditor()">Raw YAML</button>
           <button class="btn btn-ghost btn-sm" onclick="triggerAllSchedules()">Trigger All</button>
           <button class="btn btn-ghost btn-sm" onclick="reloadSchedules()">Reload</button>
         </div>
@@ -1456,7 +1716,11 @@ function updateSchedulesView() {
     return;
   }
 
-  listEl.innerHTML = flatEntries.map(e => `
+  listEl.innerHTML = flatEntries.map(e => {
+    // 手写 yaml 条目可能无 id：无 id 时后端无法定位，禁用全部操作并提示
+    const hasId = !!(e.id);
+    const opDisabled = hasId ? '' : ' disabled title="Entry has no ID (edit schedules.yaml to add one)"';
+    return `
     <div class="schedule-item${e.consecutive_failures > 0 ? ' has-failure' : ''}">
       <div class="schedule-item-header">
         <div class="schedule-item-title">
@@ -1464,19 +1728,20 @@ function updateSchedulesView() {
           <strong>${esc(e.name || e.target || 'Unnamed')}</strong>
           <span class="badge badge-${e.type === 'list' ? 'running' : 'queued'}">${esc(e.type)}</span>
           ${e.consecutive_failures > 0 ? `<span class="badge badge-failed">${e.consecutive_failures} failures</span>` : ''}
+          ${!hasId ? '<span class="badge badge-failed" title="Missing id field">no id</span>' : ''}
         </div>
         <div class="flex gap-2">
-          <label class="toggle">
-            <input type="checkbox" name="sched-toggle-${esc(e.id)}" ${e.enabled ? 'checked' : ''} onchange="toggleSchedule('${jsEsc(e.id)}', this.checked)">
+          <label class="toggle"${opDisabled}>
+            <input type="checkbox" name="sched-toggle-${esc(e.id)}" ${e.enabled ? 'checked' : ''} onchange="toggleSchedule('${jsEsc(e.id)}', this.checked)"${hasId ? '' : ' disabled'}>
             <span class="toggle-slider"></span>
           </label>
-          <button class="btn btn-xs btn-ghost" onclick="triggerSchedule('${jsEsc(e.id)}')" title="Run now">
+          <button class="btn btn-xs btn-ghost" onclick="triggerSchedule('${jsEsc(e.id)}')" title="Run now"${opDisabled}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
           </button>
-          <button class="btn btn-xs btn-ghost" onclick="editSchedule('${jsEsc(e.id)}')" title="Edit">
+          <button class="btn btn-xs btn-ghost" onclick="editSchedule('${jsEsc(e.id)}')" title="Edit"${opDisabled}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>
-          <button class="btn btn-xs btn-ghost" onclick="deleteSchedule('${jsEsc(e.id)}')" title="Delete">
+          <button class="btn btn-xs btn-ghost" onclick="deleteSchedule('${jsEsc(e.id)}')" title="Delete"${opDisabled}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
         </div>
@@ -1488,7 +1753,39 @@ function updateSchedulesView() {
         ${e.next_run_at ? '<span> &middot; Next: ' + relativeTime(e.next_run_at) + '</span>' : ''}
         ${e.last_error ? '<span class="fail"> &middot; Error: ' + esc(e.last_error) + '</span>' : ''}
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
+}
+
+// Raw YAML 调度编辑器：直接编辑 schedules.yaml 全文
+async function showSchedulesRawEditor() {
+  let content = '';
+  try {
+    const d = await ENDPOINTS.schedulesRaw();
+    content = d.content || '';
+  } catch(e) {
+    return toast(e.message, 'error');
+  }
+  openModal(`
+    <div class="modal-header"><h2>Schedules YAML</h2><button class="btn btn-ghost btn-sm" onclick="closeModal()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="modal-body">
+      <textarea id="sched-raw-content" rows="18" style="width:100%;font-family:monospace;font-size:12px" spellcheck="false">${esc(content)}</textarea>
+      <div class="text-sm text-muted">Save reloads the scheduler with the new configuration.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSchedulesRawEditor()">Save &amp; Reload</button>
+    </div>`);
+}
+
+async function saveSchedulesRawEditor() {
+  const content = document.getElementById('sched-raw-content').value;
+  closeModal();
+  try {
+    await ENDPOINTS.saveSchedulesRaw(content);
+    toast('Schedules saved & reloaded', 'success');
+    loadSchedules();
+  } catch(e) { toast(e.message, 'error'); }
 }
 
 function showNewScheduleForm() {
@@ -1528,10 +1825,18 @@ function showNewScheduleForm() {
       </div>
       <div class="form-group">
         <label>Schedule</label>
-        <input type="text" id="sched-schedule" placeholder="daily 08:00,20:00 or interval 4h">
-        <div class="hint">Format: "daily HH:MM" or "interval 1h30m"</div>
+        <input type="text" id="sched-schedule" placeholder="daily:08:00,20:00 or interval:4h">
+        <div class="hint">Format: "daily:HH:MM,HH:MM" or "interval:1h30m"</div>
       </div>
-      <label class="checkbox-label"><input type="checkbox" id="sched-runonstart"> Run on start</label>
+      <div class="form-row">
+        <label class="checkbox-label"><input type="checkbox" id="sched-runonstart"> Run on start</label>
+      </div>
+      <div class="form-row">
+        <label class="checkbox-label"><input type="checkbox" id="sched-autofollow"> Auto-follow</label>
+        <label class="checkbox-label"><input type="checkbox" id="sched-followmembers"> Follow members</label>
+        <label class="checkbox-label"><input type="checkbox" id="sched-skipprofile"> Skip profile</label>
+        <label class="checkbox-label"><input type="checkbox" id="sched-noretry"> No retry</label>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -1549,24 +1854,34 @@ function toggleSchedTargetFields() {
 
 async function saveNewSchedule() {
   const type = document.getElementById('sched-type').value;
-  const schedule = document.getElementById('sched-schedule').value.trim();
+  let schedule = document.getElementById('sched-schedule').value.trim();
   if (!schedule) return toast('Schedule pattern required', 'warning');
+  // 规范化：兼容 "daily 08:00" / "interval 4h" 空格写法 → "daily:08:00" / "interval:4h"
+  schedule = schedule.replace(/^(daily|interval)\s+/, '$1:');
   const name = document.getElementById('sched-name').value.trim();
   const runOnStart = document.getElementById('sched-runonstart').checked;
+  // 先读全部控件值并校验，再关弹窗（弹窗关闭后 DOM 已移除）
+  const payload = {
+    type, name, schedule, enabled: true, run_on_start: runOnStart,
+    auto_follow: document.getElementById('sched-autofollow').checked,
+    follow_members: document.getElementById('sched-followmembers').checked,
+    skip_profile: document.getElementById('sched-skipprofile').checked,
+    no_retry: document.getElementById('sched-noretry').checked
+  };
+  if (type === 'mixed') {
+    const users = document.getElementById('sched-mixed-users').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
+    const lists = document.getElementById('sched-mixed-lists').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
+    const foll = document.getElementById('sched-mixed-foll').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
+    if (!users.length && !lists.length && !foll.length) return toast('Enter at least one target', 'warning');
+    payload.users = users; payload.lists = lists; payload.following_names = foll;
+  } else {
+    const target = document.getElementById('sched-target').value.trim();
+    if (!target) return toast('Target required', 'warning');
+    payload.target = target;
+  }
   closeModal();
   try {
-    const base = { type, name, schedule, enabled: true, run_on_start: runOnStart };
-    if (type === 'mixed') {
-      const users = document.getElementById('sched-mixed-users').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
-      const lists = document.getElementById('sched-mixed-lists').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
-      const foll = document.getElementById('sched-mixed-foll').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
-      if (!users.length && !lists.length && !foll.length) return toast('Enter at least one target', 'warning');
-      await ENDPOINTS.createSchedule({ ...base, users, lists, following_names: foll });
-    } else {
-      const target = document.getElementById('sched-target').value.trim();
-      if (!target) return toast('Target required', 'warning');
-      await ENDPOINTS.createSchedule({ ...base, target });
-    }
+    await ENDPOINTS.createSchedule(payload);
     toast('Schedule created', 'success');
     loadSchedules();
   } catch(e) { toast(e.message, 'error'); }
@@ -1648,6 +1963,12 @@ async function editSchedule(id) {
         <input type="text" id="sched-edit-schedule" value="${esc(ent.schedule||'')}">
       </div>
       <label class="checkbox-label"><input type="checkbox" id="sched-edit-runonstart" ${ent.run_on_start ? 'checked' : ''}> Run on start</label>
+      <div class="form-row">
+        <label class="checkbox-label"><input type="checkbox" id="sched-edit-autofollow" ${ent.auto_follow ? 'checked' : ''}> Auto-follow</label>
+        <label class="checkbox-label"><input type="checkbox" id="sched-edit-followmembers" ${ent.follow_members ? 'checked' : ''}> Follow members</label>
+        <label class="checkbox-label"><input type="checkbox" id="sched-edit-skipprofile" ${ent.skip_profile ? 'checked' : ''}> Skip profile</label>
+        <label class="checkbox-label"><input type="checkbox" id="sched-edit-noretry" ${ent.no_retry ? 'checked' : ''}> No retry</label>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -1658,22 +1979,33 @@ async function editSchedule(id) {
 async function saveScheduleEdit(id) {
   const type = document.getElementById('sched-edit-type').value;
   const name = document.getElementById('sched-edit-name').value.trim();
-  const schedule = document.getElementById('sched-edit-schedule').value.trim();
+  let schedule = document.getElementById('sched-edit-schedule').value.trim();
   if (!schedule) return toast('Schedule pattern required', 'warning');
+  // 规范化：兼容 "daily 08:00" / "interval 4h" 空格写法 → "daily:08:00" / "interval:4h"
+  schedule = schedule.replace(/^(daily|interval)\s+/, '$1:');
   const runOnStart = document.getElementById('sched-edit-runonstart').checked;
+  // 先读全部控件值并校验，再关弹窗（弹窗关闭后 DOM 已移除）
+  const payload = {
+    type, name, schedule, run_on_start: runOnStart,
+    auto_follow: document.getElementById('sched-edit-autofollow').checked,
+    follow_members: document.getElementById('sched-edit-followmembers').checked,
+    skip_profile: document.getElementById('sched-edit-skipprofile').checked,
+    no_retry: document.getElementById('sched-edit-noretry').checked
+  };
+  if (type === 'mixed') {
+    const users = document.getElementById('sched-edit-mixed-users').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
+    const lists = document.getElementById('sched-edit-mixed-lists').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
+    const foll = document.getElementById('sched-edit-mixed-foll').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
+    if (!users.length && !lists.length && !foll.length) return toast('Enter at least one target', 'warning');
+    payload.users = users; payload.lists = lists; payload.following_names = foll;
+  } else {
+    const target = document.getElementById('sched-edit-target').value.trim();
+    if (!target) return toast('Target required', 'warning');
+    payload.target = target;
+  }
   closeModal();
   try {
-    const base = { type, name, schedule, run_on_start: runOnStart };
-    if (type === 'mixed') {
-      const users = document.getElementById('sched-edit-mixed-users').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
-      const lists = document.getElementById('sched-edit-mixed-lists').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
-      const foll = document.getElementById('sched-edit-mixed-foll').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
-      await ENDPOINTS.updateSchedule(id, { ...base, users, lists, following_names: foll });
-    } else {
-      const target = document.getElementById('sched-edit-target').value.trim();
-      if (!target) return toast('Target required', 'warning');
-      await ENDPOINTS.updateSchedule(id, { ...base, target });
-    }
+    await ENDPOINTS.updateSchedule(id, payload);
     toast('Schedule updated', 'success');
     loadSchedules();
   } catch(e) { toast(e.message, 'error'); }
@@ -1752,6 +2084,11 @@ async function loadSystemData() {
       ].map(([k, v, cls]) => `<div class="stat-card ${cls}"><div class="stat-value">${v}</div><div class="stat-label">${k}</div></div>`).join('');
     }
   } catch(e) { /* ignore */ }
+  // 队列状态加载失败时给出可重试提示（原实现静默吞错）
+  const qEl = document.getElementById('sys-queue');
+  if (qEl && !qEl.children.length) {
+    qEl.innerHTML = '<div class="empty-state"><p>Failed to load queue status: ' + esc(e && e.message || 'unknown error') + '</p><button class="btn btn-ghost btn-sm mt-2" onclick="loadSystemData()">Retry</button></div>';
+  }
 }
 
 async function loadConfigTab(tab) {
@@ -1796,19 +2133,25 @@ async function renderConfigFields(content) {
 
 async function saveConfigFields() {
   try {
-    const r = await ENDPOINTS.configFields();
+    await ENDPOINTS.configFields();
     const fields = r.fields || [];
     const data = {};
+    let clearingApiKey = false;
     fields.forEach(f => {
       const el = document.getElementById('cf-' + f.name);
       if (!el) return;
       // 空密码字段使用 sentinel 值：api_key 可安全清空，其他密码字段保留旧值
       if (f.type === 'password' && el.value.trim() === '') {
         data[f.name] = f.name === 'api_key' ? '__CLEAR__' : '__KEEP_OLD__';
+        if (f.name === 'api_key' && data[f.name] === '__CLEAR__' && (r.fields.find(x => x.name === 'api_key') || {}).value) clearingApiKey = true;
         return;
       }
       data[f.name] = el.value;
     });
+    // 清空 api_key 会关闭 HTTP 认证并作废全部 JWT——需显式确认
+    if (clearingApiKey && !confirm('API Key field is empty - this will CLEAR the API key and disable authentication. Continue?')) {
+      return;
+    }
     await ENDPOINTS.saveConfigFields(data);
     // 如果 api_key 变更，清除过期 JWT
     if ('api_key' in data && data['api_key'] !== '__KEEP_OLD__') {
@@ -1956,7 +2299,7 @@ async function loginWithApiKey(key) {
     method: 'POST',
     headers: { 'Authorization': 'Bearer ' + key }
   });
-  const json = await res.json();
+  const json = await API._parse(res);
   if (!json.success || !json.data || !json.data.token) {
     throw new Error(json.error || 'Login failed');
   }
@@ -2000,6 +2343,7 @@ async function refreshSecJWT() {
 function clearSecKey() {
   localStorage.removeItem('tmd_jwt_token');
   localStorage.removeItem('tmd_jwt_expiry');
+  localStorage.removeItem('tmd_api_key'); // 与 saveSecKey 保持一致
   const el = document.getElementById('sec-api-key');
   if (el) el.value = '';
   updateSecStatus('✅ Authentication cleared');
@@ -2044,10 +2388,19 @@ function renderLogsPage(container) {
       <div class="card">
         <div class="card-header">
           <div class="flex gap-2 items-center" style="flex-wrap:wrap">
-            <input type="text" id="log-level" placeholder="level (info/warn/error)" style="width:140px" onkeydown="if(event.key==='Enter')setLogLevel()">
-            <input type="text" id="log-search-input" placeholder="search text..." style="width:140px" onkeydown="if(event.key==='Enter')doLogSearch()">
+            <input type="text" id="log-level" placeholder="level (info/warn/error)" style="width:130px" onkeydown="if(event.key==='Enter')setLogLevel()">
+            <select id="log-domain" style="width:130px" onchange="setLogDomain()">
+              <option value="">All domains</option>
+              <option value="api">api</option><option value="auth">auth</option><option value="batch">batch</option>
+              <option value="db">db</option><option value="download">download</option><option value="downloader">downloader</option>
+              <option value="logs">logs</option><option value="profile">profile</option><option value="scheduler">scheduler</option>
+              <option value="server">server</option><option value="startup">startup</option><option value="task">task</option>
+              <option value="twitter">twitter</option><option value="sse">sse</option><option value="consolelog">consolelog</option>
+            </select>
+            <input type="text" id="log-search-input" placeholder="search text..." style="width:130px" onkeydown="if(event.key==='Enter')doLogSearch()">
             <button class="btn btn-primary btn-sm" onclick="setLogLevel()">Filter</button>
             <button class="btn btn-ghost btn-sm" onclick="doLogSearch()">Search</button>
+            <button class="btn btn-ghost btn-sm" id="log-pause-btn" onclick="toggleLogPause()">Pause</button>
             <span id="log-stats-inline" class="text-sm text-muted" style="margin-left:8px"></span>
           </div>
         </div>
@@ -2071,24 +2424,30 @@ function renderLogsPage(container) {
 
   // Auto-uncheck only when user scrolls UP from bottom (scrolling down never unchecks)
   let _lastScrollTop = 0;
+  let _logScrollRAF = null;
   const logStream = document.getElementById('log-stream');
   logStream.addEventListener('scroll', () => {
-    const atBottom = logStream.scrollTop + logStream.clientHeight >= logStream.scrollHeight - 10;
-    const scrolledUp = logStream.scrollTop < _lastScrollTop;
-    _lastScrollTop = logStream.scrollTop;
-    if (logStream.scrollTop <= 0) {
-      // 滚动到顶部 → 加载上一页并拼接
-      loadMoreLogs();
-    } else if (atBottom) {
-      // User scrolled to bottom → hide button if visible
-      const btn = document.getElementById('log-new-arrived-btn');
-      if (btn) btn.style.display = 'none';
-    } else if (scrolledUp && logAutoScroll) {
-      // User scrolled up → uncheck
-      logAutoScroll = false;
-      const cb = document.getElementById('log-auto-scroll-toggle');
-      if (cb) cb.checked = false;
-    }
+    // rAF 节流：滚动事件每帧最多处理一次，避免逐帧强制布局
+    if (_logScrollRAF) return;
+    _logScrollRAF = requestAnimationFrame(() => {
+      _logScrollRAF = null;
+      const atBottom = logStream.scrollTop + logStream.clientHeight >= logStream.scrollHeight - 10;
+      const scrolledUp = logStream.scrollTop < _lastScrollTop;
+      _lastScrollTop = logStream.scrollTop;
+      if (logStream.scrollTop <= 0) {
+        // 滚动到顶部 → 加载上一页并拼接
+        loadMoreLogs();
+      } else if (atBottom) {
+        // User scrolled to bottom → hide button if visible
+        const btn = document.getElementById('log-new-arrived-btn');
+        if (btn) btn.style.display = 'none';
+      } else if (scrolledUp && logAutoScroll) {
+        // User scrolled up → uncheck
+        logAutoScroll = false;
+        const cb = document.getElementById('log-auto-scroll-toggle');
+        if (cb) cb.checked = false;
+      }
+    });
   });
 }
 
@@ -2100,6 +2459,11 @@ let _logSSETimer = null;
 let _logPage = 1;
 let _logTotalPages = 1;
 let _logLoadingMore = false;
+let logDomain = '';      // 域过滤（空 = 全部）
+let logPaused = false;   // 暂停实时插入
+let logPausedCount = 0;  // 暂停期间跳过的行数
+let _logBatch = [];      // 日志流批量追加缓冲（rAF 合并）
+let _logFlushRAF = null;
 
 function toggleLogAutoScroll() {
   logAutoScroll = document.getElementById('log-auto-scroll-toggle').checked;
@@ -2108,19 +2472,58 @@ function toggleLogAutoScroll() {
     if (stream) stream.scrollTop = stream.scrollHeight;
   }
 }
-function exportLogs() { window.open(apiBase() + '/api/v1/logs/export'); }
+async function exportLogs() {
+  // fetch + Authorization 头 + blob 下载：window.open 无法带头且 URL 拼 token 会泄露 JWT
+  try {
+    const res = await fetch(apiBase() + '/api/v1/logs/export', {
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('tmd_jwt_token') || '') }
+    });
+    if (!res.ok) throw new Error('Export failed (HTTP ' + res.status + ')');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'tmd2.log';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch(e) { toast(e.message, 'error'); }
+}
 
 function setLogLevel() {
   _logPage = 1;
-  refreshLogs();
+  // 先断开旧 SSE，避免 refresh 前旧流追加的行被 innerHTML 重置清掉（丢行窗口）
   disconnectLogSSE();
+  refreshLogs();
   connectLogSSE();
+}
+
+function setLogDomain() {
+  const sel = document.getElementById('log-domain');
+  logDomain = sel ? sel.value : '';
+  _logPage = 1;
+  // 先断开旧 SSE，避免丢行窗口
+  disconnectLogSSE();
+  refreshLogs();
+  connectLogSSE();
+}
+
+function toggleLogPause() {
+  logPaused = !logPaused;
+  if (!logPaused) {
+    logPausedCount = 0;
+    refreshLogs(); // 恢复时刷新历史，补齐暂停期间错过的行
+  }
+  const btn = document.getElementById('log-pause-btn');
+  if (btn) btn.textContent = logPaused ? 'Continue (' + logPausedCount + ')' : 'Pause';
 }
 
 function doLogSearch() {
   _logPage = 1;
-  refreshLogs();
+  // 先断开旧 SSE，避免 refresh 前旧流追加的行被 innerHTML 重置清掉（丢行窗口）
   disconnectLogSSE();
+  refreshLogs();
   connectLogSSE();
 }
 
@@ -2137,7 +2540,10 @@ function scrollLogToBottom() {
 async function refreshLogs() {
   _logPage = 1;
   _logLoadingMore = false;
+  _prependedCount = 0; // 重置前置页计数
   await loadLogsReplace();
+  // 实时流断开（重连耗尽/未连接）时通过刷新按钮复活
+  if (!logSSESource) connectLogSSE();
 }
 
 async function loadLogsReplace() {
@@ -2146,7 +2552,7 @@ async function loadLogsReplace() {
   const level = document.getElementById('log-level') ? document.getElementById('log-level').value.trim() : '';
   const q = document.getElementById('log-search-input') ? document.getElementById('log-search-input').value.trim() : '';
   try {
-    const r = await ENDPOINTS.logs({ page: _logPage, pageSize: 200, level: level || undefined, q: q || undefined });
+    const r = await ENDPOINTS.logs({ page: _logPage, pageSize: 200, level: level || undefined, domain: logDomain || undefined, q: q || undefined });
     _logTotalPages = r.totalPages || 1;
     const lines = (r.logs || []).reverse();
     stream.innerHTML = lines.map(l => {
@@ -2155,7 +2561,8 @@ async function loadLogsReplace() {
       const tweetId = getTweetId(clean);
       return '<div class="log-entry" style="color:' + color + '"' + (tweetId ? ' data-tweet-id="' + tweetId + '"' : '') + '>' + highlightLogTimestamp(esc(clean)) + '</div>';
     }).join('');
-    stream.scrollTop = stream.scrollHeight;
+    // 仅在自动滚动开启时滚到底部（关闭时保留用户阅读位置）
+    if (logAutoScroll) stream.scrollTop = stream.scrollHeight;
   } catch(e) {
     stream.innerHTML = '<div class="log-entry">Error loading logs: ' + esc(e.message) + '</div>';
   }
@@ -2172,7 +2579,7 @@ async function loadMoreLogs() {
   const level = document.getElementById('log-level') ? document.getElementById('log-level').value.trim() : '';
   const q = document.getElementById('log-search-input') ? document.getElementById('log-search-input').value.trim() : '';
   try {
-    const r = await ENDPOINTS.logs({ page: nextPage, pageSize: 200, level: level || undefined, q: q || undefined });
+    const r = await ENDPOINTS.logs({ page: nextPage, pageSize: 200, level: level || undefined, domain: logDomain || undefined, q: q || undefined });
     const lines = (r.logs || []).reverse();
     const oldHeight = stream.scrollHeight;
     const newLines = lines.map(l => {
@@ -2182,6 +2589,8 @@ async function loadMoreLogs() {
       return '<div class="log-entry" style="color:' + color + '"' + (tweetId ? ' data-tweet-id="' + tweetId + '"' : '') + '>' + highlightLogTimestamp(esc(clean)) + '</div>';
     }).join('');
     stream.innerHTML = newLines + stream.innerHTML;
+    // 记录前置页行数：SSE trim 时保留，防止刚加载的旧页被立即削掉
+    _prependedCount += lines.length;
     // 保持视觉位置不变
     stream.scrollTop = (stream.scrollHeight - oldHeight) + stream.scrollTop;
     _logTotalPages = r.totalPages || 1;
@@ -2196,7 +2605,7 @@ async function loadLogStats() {
   try {
     const s = await ENDPOINTS.logStats();
     const el = document.getElementById('log-stats-inline');
-    if (el) el.textContent = (s.total || 0) + ' lines' + (s.level ? ', level: ' + s.level : '');
+    if (el) el.textContent = (s.total || 0) + ' lines' + ((s.error || 0) > 0 ? ', errors: ' + s.error : '') + ((s.warn || 0) > 0 ? ', warns: ' + s.warn : '');
   } catch(e) { /* optional stat, ignore silently */ }
 }
 
@@ -2208,6 +2617,7 @@ function connectLogSSE() {
   const q = document.getElementById('log-search-input') ? document.getElementById('log-search-input').value.trim() : '';
   const params = new URLSearchParams();
   if (level) params.append('level', level);
+  if (logDomain) params.append('domain', logDomain);
   if (q) params.append('q', q);
   const key = sseJWT();
   if (key) params.append('token', key);
@@ -2215,31 +2625,57 @@ function connectLogSSE() {
   logSSESource = new EventSource(apiBase() + '/api/v1/logs/stream' + (qs ? '?' + qs : ''));
 
   logSSESource.addEventListener('log', (e) => {
+    _logReconnectAttempts = 0; // 成功收到事件 → 连接正常，重置计数（防累计 60 次后永久断流）
     const stream = document.getElementById('log-stream');
     if (!stream) return;
-    const el = document.createElement('div');
-    el.className = 'log-entry';
-    const clean = stripAnsi(e.data);
-    const tweetId = getTweetId(clean);
-    if (tweetId) el.dataset.tweetId = tweetId;
-    const color = getLogLineColor(clean);
-    el.innerHTML = highlightLogTimestamp(esc(clean));
-    el.style.color = color;
-    stream.appendChild(el);
-    if (logAutoScroll) {
-      // Auto-scroll is checked → always scroll to show new log
-      stream.scrollTop = stream.scrollHeight;
-    } else {
-      // Only show button if user is NOT at the bottom
-      const userAtBottom = stream.scrollTop + stream.clientHeight >= stream.scrollHeight - 10;
-      if (!userAtBottom) {
-        const btn = document.getElementById('log-new-arrived-btn');
-        if (btn) btn.style.display = 'flex';
-      }
+    // 暂停时只计数不插入（恢复时刷新历史补齐）
+    if (logPaused) {
+      logPausedCount++;
+      const btn = document.getElementById('log-pause-btn');
+      if (btn) btn.textContent = 'Continue (' + logPausedCount + ')';
+      return;
     }
-    // Keep last 5000 lines
-    while (stream.children.length > 5000) stream.removeChild(stream.firstChild);
+    // 批量追加：同帧内多条日志合并为一次 DOM 插入，避免逐行 append + scrollTop 强制布局
+    _logBatch.push(e.data);
+    if (_logFlushRAF) return;
+    _logFlushRAF = requestAnimationFrame(() => {
+      _logFlushRAF = null;
+      const stream = document.getElementById('log-stream');
+      if (!stream || _logBatch.length === 0) { _logBatch = []; return; }
+      const lines = _logBatch;
+      _logBatch = [];
+      const frag = document.createDocumentFragment();
+      for (const raw of lines) {
+        const el = document.createElement('div');
+        el.className = 'log-entry';
+        const clean = stripAnsi(raw);
+        const tweetId = getTweetId(clean);
+        if (tweetId) el.dataset.tweetId = tweetId;
+        const color = getLogLineColor(clean);
+        el.innerHTML = highlightLogTimestamp(esc(clean));
+        el.style.color = color;
+        frag.appendChild(el);
+      }
+      stream.appendChild(frag);
+      if (logAutoScroll) {
+        // Auto-scroll：延迟到下一帧，合并强制布局
+        requestAnimationFrame(() => { stream.scrollTop = stream.scrollHeight; });
+      } else {
+        // Only show button if user is NOT at the bottom
+        const userAtBottom = stream.scrollTop + stream.clientHeight >= stream.scrollHeight - 10;
+        if (!userAtBottom) {
+          const btn = document.getElementById('log-new-arrived-btn');
+          if (btn) btn.style.display = 'flex';
+        }
+      }
+      // Keep last 5000 lines（保留 loadMore 前置的旧页，防刚加载内容被削掉）
+      while (stream.children.length > 5000 + _prependedCount) stream.removeChild(stream.firstChild);
+    });
   });
+
+  logSSESource.onopen = () => {
+    _logReconnectAttempts = 0; // 连接成功 → 重置重连计数
+  };
 
   logSSESource.onerror = () => {
     if (logSSESource) { logSSESource.close(); logSSESource = null; }
@@ -2247,6 +2683,7 @@ function connectLogSSE() {
     _logReconnectAttempts++;
     if (_logReconnectAttempts > 60) {
       _logReconnectAttempts = 0;
+      toast('Log stream disconnected - press Refresh to reconnect', 'warning');
       return;
     }
     const delay = Math.min(2000 * Math.pow(1.5, _logReconnectAttempts - 1), 30000);
@@ -2277,7 +2714,22 @@ document.addEventListener('click', (e) => {
 
 /* ---- Sidebar ---- */
 function toggleSidebar() {
-  document.getElementById('sidebar').classList.toggle('open');
+  const sb = document.getElementById('sidebar');
+  const open = sb.classList.toggle('open');
+  const overlay = document.getElementById('sidebar-overlay');
+  if (overlay) overlay.style.display = open ? 'block' : 'none';
+  const btn = document.querySelector('.mobile-menu-btn');
+  if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function closeSidebar() {
+  const sb = document.getElementById('sidebar');
+  if (!sb) return;
+  sb.classList.remove('open');
+  const overlay = document.getElementById('sidebar-overlay');
+  if (overlay) overlay.style.display = 'none';
+  const btn = document.querySelector('.mobile-menu-btn');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
 }
 
 /* ---- Errors ---- */

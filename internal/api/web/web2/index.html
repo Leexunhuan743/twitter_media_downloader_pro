@@ -77,12 +77,15 @@
     <main class="page-content" id="page-content">
       <div class="loading"><div class="spinner"></div> Loading...</div>
     </main>
+    <!-- Sidebar Overlay (mobile) -->
+    <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:99"></div>
+
   </div>
 
 </div>
 
-<!-- Toast Container -->
-<div class="toast-container" id="toast-container"></div>
+<!-- Toast Container (aria-live for screen readers) -->
+<div class="toast-container" id="toast-container" role="status" aria-live="polite"></div>
 
 <script src="/static/app.js"></script>
 </body>
