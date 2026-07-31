@@ -609,7 +609,7 @@ async function checkHealth() {
     if (dot) dot.className = 'health-dot';
     if (text) text.textContent = h.status || 'OK';
     const vi = document.getElementById('version-info');
-    if (vi) vi.innerHTML = '<a href="https://github.com/leeexx2001/tmd" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">' + esc(h.version || 'v2') + ' &middot; Go + SQLite</a>';
+    if (vi) vi.innerHTML = '<a href="https://github.com/Leexunhuan743/twitter_media_downloader_pro" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">' + esc(h.version || 'v2') + ' &middot; Go + SQLite</a>';
   } catch(e) {
     const dot = document.getElementById('health-dot');
     if (dot) dot.className = 'health-dot error';
