@@ -22,6 +22,8 @@ Twitter Media Downloader Pro（简称 `tmdp`）的代码基于 [unkmonster/tmd](
 
 - [定时任务调度器](#定时任务调度器)
 
+- [Bot 集成](#bot-集成)
+
 - [Profile 下载功能](#profile-下载功能)
 
 - [推文 JSON 保存](#推文-json-保存)
@@ -66,7 +68,7 @@ Twitter Media Downloader Pro（简称 `tmdp`）的代码基于 [unkmonster/tmd](
 
 - **调度自动化**：支持 `interval` / `daily` 两种模式，`user` / `list` / `following` / `mixed` 四种目标
 
-- **Bot 平台通知**：支持 Telegram、Discord、WeChat、Feishu 六平台的消息通知和命令控制，任务完成/失败实时推送（详见 [doc/bot-integration.md](doc/bot-integration.md)）
+- **Bot 平台通知**：支持 Telegram、Discord、WeChat、Feishu（命令控制 + 通知）与 Gotify、Pushover（仅通知）六平台，任务完成/失败实时推送（详见[Bot 集成](#bot-集成)）
 
 
 
@@ -324,9 +326,9 @@ http://localhost:25556/api/v1/health
 | --------- | ------------------------------------- | ------------------------------------------------ |
 | 备用 Cookie | `$HOME/.tmd2/additional_cookies.yaml` | 多账号 Cookie                                       |
 | 定时任务      | `$HOME/.tmd2/schedules.yaml`          | 调度器配置                                            |
-| Bot 配置    | `$HOME/.tmd2/bot_config.yaml`         | Telegram/Discord/WeChat/Feishu 等平台配置（首次运行自动生成模板） |
-| 日志文件      | `$HOME/.tmd2/tmd2.log`                | 主日志                                              |
-| CLI 日志    | `$HOME/.tmd2/client.log`              | REST 客户端日志                                       |
+| Bot 配置    | `$HOME/.tmd2/bot_config.yaml`         | 六平台 Bot 配置：Telegram/Discord/WeChat/Feishu（命令控制）+ Gotify/Pushover（仅推送）。首次运行自动生成注释模板 |
+| 日志文件      | `$HOME/.tmd2/tmd2.log`                | 主日志（全量：所有域的 logrus 日志，级别随 `-dbg`）          |
+| HTTP 客户端日志 | `$HOME/.tmd2/client.log`              | Twitter API 客户端的全量请求/响应日志（方法、URL、状态码、耗时、headers、body） |
 
 **获取 Cookie**
 
@@ -594,8 +596,7 @@ tmdp -jsonfile ./search.json -user elonmusk
 **`-jsonfile`** **输出示例**：
 
 ```
-[cli] Preparing...
-[cli] Completed (main(downloaded=2, Failedtweet=0))
+[task] Result summary="main(downloaded=2, Failedtweet=0)"
 ```
 
 > 通过 `-dbg` 模式可查看每条推文的处理详情。
@@ -603,8 +604,7 @@ tmdp -jsonfile ./search.json -user elonmusk
 **`-jsonfolder`** **输出示例**：
 
 ```
-[cli] Preparing...
-[cli] Completed (main(downloaded=8, Failedtweet=2))
+[task] Result summary="main(downloaded=8, Failedtweet=2)"
 ```
 
 > 💡 **推荐搭配**：使用 [twitter-web-exporter](https://github.com/prinsss/twitter-web-exporter) 浏览器脚本导出推文或用户列表为 JSON 格式，然后用 `-jsonfile` 或 `-jsonfolder` 参数下载。
@@ -670,9 +670,13 @@ tmdp -user elonmusk -no-retry
 | 参数                 | 类型     | 默认值   | 说明                                      |
 | ------------------ | ------ | ----- | --------------------------------------- |
 | `-mark-downloaded` | bool   | false | 仅标记用户为已下载，不下载内容（常见使用场景：指定下载某用户某时间之后的推文） |
-| `-mark-time`       | string | 当前时间  | 指定标记时间戳，格式：`2006-01-02T15:04:05`        |
+| `-mark-time`       | string | 当前时间  | 指定标记时间戳，格式：`2006-01-02T15:04:05`，或 `null`/`nil` 表示全量标记 |
 
 > **关于** **`-mark-time`** **格式**：示例中的 `2006-01-02T15:04:05` 是 Go 语言的参考时间格式，表示"年-月-日T时:分:秒"。实际使用时填入具体时间，例如 `2024-01-01T00:00:00` 表示 2024 年 1 月 1 日零时。
+>
+> - 省略 `-mark-time`：以**当前时间**为标记点（默认）
+> - 传 `null` 或 `nil`（不区分大小写）：**全量标记**，清除已记录的最新推文时间，下次下载将重新拉取全部历史推文
+> - 传具体时间：标记为指定时间，仅拉取该时间之后的推文
 
 ### Profile 下载参数
 
@@ -921,6 +925,15 @@ Server 支持优雅关闭，确保所有资源正确释放：
 http://localhost:25556/
 ```
 
+**双主题界面**：内置两套无构建步骤的原生前端，页面左下角的 🎨 浮动按钮可随时切换（`web1` 经典主题功能最全，`web2` 精简主题更轻量）：
+
+| 主题   | 说明                    | 位置                             |
+| ---- | --------------------- | ------------------------------ |
+| web1 | 经典主题（默认），功能最全 | `internal/api/web/web1/`        |
+| web2 | 精简主题                  | `internal/api/web/web2/`        |
+
+主题通过公开 API 切换：`GET /api/v1/config/themes`（可用主题+当前值）、`POST /api/v1/config/theme`（切换）。设置 `TMD_DEV=1` 启动时前端走本地目录文件而非嵌入资源，修改 `web1`/`web2` 下的 HTML/JS/CSS 后刷新浏览器即可生效，无需重新编译。
+
 界面功能：
 
 - **仪表盘**：系统状态、任务统计、快速操作
@@ -947,7 +960,7 @@ http://localhost:25556/
 
   - 创建任务：支持 interval 和 daily 两种调度模式
 
-  - 任务类型：支持 list/user/following 三种下载类型
+  - 任务类型：支持 list/user/following/mixed 四种下载类型
 
   - 任务控制：启用/禁用、手动触发、删除
 
@@ -1063,7 +1076,7 @@ tmdp Server 内置定时任务调度器，支持按时间间隔或每天固定�
 | **interval** | `interval:<duration>` | `interval:2h`       | 每隔指定时间执行一次 |
 | **daily**    | `daily:<times>`       | `daily:07:00,21:00` | 每天在指定时间执行  |
 
-> interval 最小值为 `1m`（1 分钟）。
+> interval 最小值为 `1m`（1 分钟）。daily 模式时间点最多 **96 个**，必须使用 `HH:MM` 24 小时制，逗号分隔。
 
 ### 任务类型
 
@@ -1072,6 +1085,7 @@ tmdp Server 内置定时任务调度器，支持按时间间隔或每天固定�
 | `list`      | 列表 ID（正整数）      | 下载列表成员推文 |
 | `user`      | 用户 screen_name | 下载用户推文   |
 | `following` | 用户 screen_name | 下载关注列表推文 |
+| `mixed`     | 不使用 `target`，改用 `users` / `lists` / `following_names` 字段 | 混合多用户/列表/关注下载 |
 
 ### 配置文件
 
@@ -1101,19 +1115,32 @@ schedules:
     follow_members: false
     skip_profile: false
     no_retry: false
+  - id: mixed_tech
+    type: mixed
+    users: [elonmusk, NASA]
+    lists: ["1234567890123"]
+    following_names: [myusername]
+    name: "混合批量同步"
+    schedule: "daily:06:30"
+    enabled: true
 ```
+
+`mixed` 类型至少需要 `users`、`lists`、`following_names` 中的一项；`lists` 中的列表 ID 必须为正整数。
 
 ### ScheduleEntry 字段说明
 
 | 字段               | 类型     | 必填 | 说明                                 |
 | ---------------- | ------ | -- | ---------------------------------- |
-| `id`             | string | 否  | 唯一标识（自动生成，格式 `sch_xxxxxxxxxxxx`）   |
-| `type`           | string | 是  | 任务类型：`list` / `user` / `following` |
-| `target`         | string | 是  | 目标（列表 ID 或用户名）                     |
+| `id`             | string | 否  | 唯一标识：留空自动生成（`sch_` + 12 位十六进制），也可手动指定（仅限字母/数字/`_`/`-`） |
+| `type`           | string | 是  | 任务类型：`list` / `user` / `following` / `mixed` |
+| `target`         | string | 条件 | 目标（列表 ID 或用户名）；`mixed` 类型不使用，改用 `users` / `lists` / `following_names` |
+| `users`          | []string | 否  | 仅 `mixed` 类型：下载的用户列表 |
+| `lists`          | []string | 否  | 仅 `mixed` 类型：下载的列表 ID 列表（字符串形式，避免 64 位 ID 精度丢失） |
+| `following_names` | []string | 否  | 仅 `mixed` 类型：下载关注列表的目标用户名列表 |
 | `name`           | string | 否  | 任务显示名称                             |
 | `schedule`       | string | 是  | 调度规则（`interval:` 或 `daily:`）       |
 | `enabled`        | bool   | 否  | 是否启用（默认 false）                     |
-| `run_on_start`   | bool   | 否  | 系统首次启动时是否立即执行一次（仅 interval 模式）     |
+| `run_on_start`   | bool   | 否  | 系统首次启动时是否立即执行一次（interval 与 daily 模式均支持） |
 | `auto_follow`    | bool   | 否  | 自动关注受保护用户                          |
 | `follow_members` | bool   | 否  | 下载时关注目标/成员（失败仅 warning，不阻塞下载）      |
 | `skip_profile`   | bool   | 否  | 跳过 Profile 下载                      |
@@ -1158,6 +1185,107 @@ schedules:
 | `entries[].triggering`           | 是否正在触发该调度规则；仅表示正在创建任务，不代表后台下载任务仍在运行 |
 
 创建、更新、启用或重载定时任务后，如果存在启用中的规则且调度器未运行，服务端会自动启动调度器。
+
+***
+
+## Bot 集成
+
+tmdp Server 模式支持接入 6 种 Bot 平台，用于远程命令控制、任务结果通知和错误日志告警。仅在 Server 模式下启用；修改 `bot_config.yaml` 后需要重启服务生效。
+
+### 平台矩阵
+
+| 平台      | 传输方式                                        | 命令控制 | 通知范围              | 配置要求                    |
+| ------- | ------------------------------------------- | ---- | ----------------- | ----------------------- |
+| Telegram | 长轮询（`getUpdates`，60s timeout）               | `/dl` `/status` `/cancel` `/tasks` `/help` | 任务发起者的聊天；日志告警推送给 allowed_users | `token`（必填）             |
+| Discord  | WebSocket Gateway + 全局 Slash 命令             | 同上（原生布尔选项）      | 任务发起者的频道；日志告警 DM 给 allowed_users | `token`（必填）             |
+| WeChat   | wechat-robot-go iLink 协议（首次登录需扫码）          | 同上               | 任务发起者；日志告警给本次运行中出现过的用户     | `credential_path`（必填）   |
+| Feishu   | HTTP 回调（默认 `/api/v1/bot/feishu/callback`）  | 同上               | 任务发起者；日志告警给本次运行中出现过的用户     | `app_id` + `app_secret`（必填） |
+| Gotify   | Gotify HTTP 推送 API                          | 无（仅推送）          | 每个终止任务推送一次；错误日志告警         | `server_url` + `token`（必填） |
+| Pushover | Pushover HTTP 推送 API                       | 无（仅推送）          | 每个终止任务推送一次；错误日志告警         | `user` + `token`（必填）     |
+
+### 命令说明
+
+Telegram / WeChat / Feishu 使用文本命令，Discord 使用 Slash 命令（选项为原生布尔值）：
+
+```
+/dl [user|list|foll] <target> [opt=val ...]   # 下载：user 用户 / list 列表ID / foll 关注列表；省略类型时默认 user
+/status <task_id>                              # 查询任务状态
+/cancel <task_id>                              # 取消任务
+/tasks                                         # 列出近期任务
+/help                                          # 帮助信息
+```
+
+示例：
+
+```
+/dl elonmusk
+/dl user elonmusk
+/dl list 1234567890123
+/dl foll elonmusk auto_follow=true skip_profile=true
+```
+
+`/dl` 支持的命令选项（可简写）：
+
+| 选项               | 简写 | 说明                          | 适用命令   |
+| ---------------- | -- | --------------------------- | ------ |
+| `auto_follow`    | `af` | 自动关注受保护用户                  | user/list/foll |
+| `follow_members` | `fm` | 下载时关注目标/成员                  | list/foll |
+| `skip_profile`   | `sp` | 跳过 Profile 下载               | user/list/foll |
+| `no_retry`       | `nr` | 不重试失败推文                     | user/list/foll |
+
+> Bot 命令走与 HTTP/调度器相同的任务队列路径：`/dl` 创建任务后必须经 `Server.EnqueueTask` 入队才会执行；`/cancel` 通过 `TaskManager.CancelTask` 取消，保证任务状态、上下文和 SSE 推送一致。
+
+### 通知机制
+
+- **任务结果**：命令类平台只通知**发起该任务的聊天/用户/频道**（每平台维护任务归属表）；Gotify/Pushover 对每个终止任务广播一次（内部去重，避免重复推送）。
+- **日志告警**：所有平台订阅日志流，仅推送 `ERRO`/`FATA` 级别日志行，且每个平台限速 1 行/秒。
+
+### bot_config.yaml 字段
+
+配置文件位于 `$HOME/.tmd2/bot_config.yaml`（Windows: `%APPDATA%\.tmd2\bot_config.yaml`），首次运行 Server 模式时自动生成含完整注释的模板。只填写需要启用的平台，其余留空即可：
+
+```yaml
+# Telegram: https://t.me/BotFather 创建机器人，token 格式 123456789:ABC-xxx
+# 获取自己的 user id：向机器人发消息后访问 https://api.telegram.org/bot<token>/getUpdates
+telegram:
+  token: "123456789:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+  allowed_users: [123456789]
+
+# Discord: https://discord.com/developers/applications 创建应用 → Bot → Reset Token
+# 开发者模式 → 右键用户 → Copy User ID
+discord:
+  token: "MTE5ODk4MjQ2NzE4NTMyMTI5OQ.GnO2X.xxx"
+  allowed_users: ["123456789012345678"]
+
+# WeChat iLink：个人微信接入，首次登录扫码。credential_path 相对工作目录，登录后自动生成
+wechat:
+  credential_path: ".weixin-token.json"
+  allowed_users: ["friend@im.wechat"]
+
+# Feishu/Lark：https://open.feishu.cn/app 创建应用，开启机器人能力并订阅"接收消息 v2.0"事件
+# 回调地址填 https://your-domain/api/v1/bot/feishu/callback
+feishu:
+  app_id: "cli_xxxxxxxxxxxx"
+  app_secret: "xxxxxxxxxxxxxxxxxxxxxxxxxx"
+  verify_token: "xxxxxxxxxxxx"
+  encrypt_key: ""
+  allowed_users: ["ou_xxxxxxxxxxxxx"]
+
+# Gotify（仅推送）：自建推送服务 https://github.com/gotify/server
+gotify:
+  server_url: "http://gotify.lan:8080"
+  token: "S3cr3tT0k3n"
+  priority: 5
+
+# Pushover（仅推送）：https://pushover.net 注册获取 User Key 并创建 Application Token
+pushover:
+  user: "uKey123..."
+  token: "appToken456..."
+  device: "iphone"
+  sound: "gamelan"
+```
+
+> ⚠️ **安全提示**：`allowed_users` 为空表示接受该平台能识别的任何用户发来的命令，本地测试方便，但暴露到公网的 Bot 建议务必配置白名单。日志中的 Bot 相关输出不会打印任何 token/密钥。
 
 ***
 
@@ -1361,7 +1489,7 @@ start-server.bat
 start-server.bat -port 8080
 ```
 
-> 脚本行为：自动查找同目录下的 `tmdp.exe` 并以 `-server` 模式启动，额外参数会透传给 tmdp。
+> 脚本行为：自动查找同目录下的可执行文件并以 `-server` 模式启动，额外参数会透传给 tmdp。查找顺序：`tmdp-Windows-amd64.exe` → `tmdp.exe` → `tmdp` → `tmd-Windows-amd64.exe` → `tmd.exe` → `tmd`；若均不存在但本机装有 Go，会自动编译 `tmdp-test.exe` 后启动。设置 `TMD_DEV=1` 时直接 `go run . -server`，前端走本地文件（`internal/api/web/web1/`、`web2/`）支持热刷新。
 
 ***
 
@@ -1369,21 +1497,28 @@ start-server.bat -port 8080
 
 ### 日志位置
 
-| 平台              | 主日志路径                      | CLI 输出日志                     |
+程序维护两个独立的日志文件，均位于 app root 下：
+
+| 平台              | 主日志（全量）                  | HTTP 客户端日志                    |
 | --------------- | -------------------------- | ---------------------------- |
 | **Windows**     | `%APPDATA%\.tmd2\tmd2.log` | `%APPDATA%\.tmd2\client.log` |
 | **macOS/Linux** | `~/.tmd2/tmd2.log`         | `~/.tmd2/client.log`         |
 
+- **`tmd2.log`（主日志）**：logrus 全量日志（所有 `[api]`/`[download]`/`[twitter]` 等域，级别随 `-dbg` 在 Info/Debug 间切换），同时是 Web UI 日志查看与 SSE 日志流的数据源
+- **`client.log`（HTTP 客户端日志）**：Twitter API 客户端的全量请求/响应记录——每个请求输出方法、URL、状态码、耗时、请求/响应 headers 与 body，**与 `-dbg` 无关，始终全量记录**；媒体下载客户端（`internal/downloader`）不走此文件，其日志在主日志中
+
 ### 日志轮转配置
 
-程序使用 [lumberjack](https://github.com/natefinch/lumberjack) 进行日志轮转：
+两个日志文件均使用同一套 [lumberjack](https://github.com/natefinch/lumberjack) 配置（`main.go` 中两个 `lumberjack.Logger` 参数一致），各自独立轮转（任一文件达到上限时仅滚动自身）：
 
 | 配置项   | 当前值      | 说明             |
 | ----- | -------- | -------------- |
 | 单文件最大 | **2 MB** | 防止单个日志文件过大     |
 | 保留份数  | **2**    | 最多保留 2 个历史日志文件 |
 | 保留天数  | **14 天** | 自动清理 14 天前的日志  |
-| 压缩    | ❌ 关闭     | 不压缩历史日志（便于查看）  |
+| 压缩    | ✅ 开启     | 历史日志自动 gzip 压缩（lumberjack `Compress: true`） |
+
+> **client.log 脱敏说明**：全量请求/响应日志中的敏感头（`Authorization`、`Cookie`、`X-Csrf-Token`、`Set-Cookie` 等）不会明文落盘，值被替换为稳定指纹（如 `[redacted:xxxx]`）；单个请求/响应 body 超过 **1 MB** 的部分截断不写入（防超大响应打爆日志）。查询参数保持原样——Twitter GraphQL URL 不携带凭据参数。
 
 ### 日志级别
 
@@ -1397,13 +1532,13 @@ tmdp -user elonmusk -dbg
 
 **Debug 模式额外输出：**
 
-- 每个 Twitter API 请求的 URL 和响应时间
+- 各 Twitter 端点的请求计数（`twitter.ReportRequestCount()`，退出时输出 `[rate-limit] Request count endpoint=... count=...`）
 
-- 总请求数统计（`twitter.ReportRequestCount()`）
+- 限流等待细节（`[rate-limit] Sleeping/Would block/Updated ...`）
 
-- 数据库查询详情
+- 文件原子写入日志（`[downloader] Atomic write complete path=... bytes=...`）
 
-- 文件写入操作日志
+- 哈希校验失败等诊断（`[downloader] Hash check failed ...`）
 
 
 
@@ -1442,16 +1577,16 @@ tmdp -user elonmusk -dbg
 
 ## 输出结果格式
 
+> CLI 模式下所有结果通过日志输出（logrus TextFormatter）。推文/Profile/JSON 导入完成时输出 `[task] Result summary=...`；标记、重试等无媒体统计的操作输出 `[task] Result message=...`。阶段进度（`syncing`/`marking`/`preparing`）输出为 `[task] Progress stage=...`，而 `downloading`/`retrying`/`profile` 高频阶段不会刷日志（仅进 SSE/任务状态）。
+
 ### 推文下载结果
 
 CLI 模式下，下载完成后的输出示例：
 
 ```
-users: 3
-    - Elon Musk(elonmusk)
-    - NASA(NASA)
-    - SpaceX(SpaceX)
-[cli] Completed (main(downloaded=164, Failedtweet=2), profile(downloaded=3, failed=0, versionedfile=0))
+[task] Progress stage=syncing current="Elon Musk(elonmusk)"
+[task] Progress stage=preparing
+[task] Result summary="main(downloaded=164, Failedtweet=2), profile(downloaded=3, failed=0, versionedfile=0)"
 ```
 
 字段说明：
@@ -1465,7 +1600,13 @@ users: 3
 CLI 模式下，Profile 下载结果通过日志输出，例如：
 
 ```
-[cli] Completed (profile(downloaded=2, failed=1, versionedfile=3))
+[task] Result summary="profile(downloaded=2, failed=1, versionedfile=3)"
+```
+
+当没有 Profile 任务执行时输出：
+
+```
+[task] Result message="No profile downloads performed"
 ```
 
 API 模式下，Profile 结果可通过任务详情查看（`GET /api/v1/tasks/{task_id}`），包含 `profile.downloaded`、`profile.failed`、`profile.versioned` 字段。
@@ -1478,28 +1619,48 @@ API 模式下，Profile 结果可通过任务详情查看（`GET /api/v1/tasks/{
 
 - 文件级 `versioned` — 旧文件已备份到 `.versions/`
 
+### JSON 导入结果
+
+CLI 模式下，JSON 文件/文件夹导入的完成输出（summary 优先，message 不重复输出）：
+
+```
+[task] Result summary="main(downloaded=8, Failedtweet=2)"
+```
+
+服务端日志（logrus）中另有 `[jsonfile]` / `[jsonfolder]` 域的阶段汇总（推文/媒体数、失败数、耗时）。
+
 ### 标记结果
 
 CLI 模式下，标记结果通过日志输出，例如：
 
 ```
-[cli] Completed: Marked 3 users as downloaded
+[task] Result message="Marked 3 users as downloaded"
 ```
 
 API 模式下，标记结果可以通过任务详情查看（`GET /api/v1/tasks/{task_id}`），包含 `message` 和统计信息。
 
 ### 重试结果
 
-重试过程中输出进度：
-
-```
-[cli] Retrying failed tweets (3/10, Failedtweet=1)
-```
+重试过程不输出逐条进度日志（`retrying` 阶段被抑制）；失败推文会持久化到 `errors.json`/`json_errors.json`。
 
 重试完成后输出（无剩余失败项）：
 
 ```
-[cli] Completed: completed
+[task] Result message="completed"
+```
+
+无待重试项时（服务端日志）：
+
+```
+[download] Retry all skipped reason=no_pending_errors
+```
+
+### 任务失败
+
+任务失败时输出（错误信息经脱敏处理）：
+
+```
+[task] Failed task_id=task_xxx error="..."
 ```
 
 ### 调试模式输出
@@ -1507,12 +1668,14 @@ API 模式下，标记结果可以通过任务详情查看（`GET /api/v1/tasks/
 使用 `-dbg` 模式时可看到详细的下载进度：
 
 ```
-[download] Skip non-retriable media: https://... - 403 Forbidden
-[download] Failed to download media: https://... - connection reset
-[batch] Protected users not followed (1, cannot download content):
-[batch]   - Name(@screen_name)
-[batch] User depth exceeds limit: user - depth: 1500
-[twitter] GET https://api.twitter.com/... - 200 OK (1.2s)
+[download] Skip non-retriable media tweet_id=1234567890 url=https://... error="403 Forbidden"
+[downloader] Download failed with non-2xx status status_code=403 url=https://...
+[downloader] Download failed, retrying... attempt=1 max_retries=2 url=https://... error="connection reset"
+[batch] Protected users skipped count=1 users=["Name(@screen_name)"]
+[batch] User depth exceeds limit entity="user" depth=1500
+[rate-limit] Sleeping endpoint=... wake_at=... remaining=... limit=...
+[rate-limit] Request count endpoint=... count=...
+[twitter] Account unavailable account=... error=...
 ```
 
 ***
@@ -1580,11 +1743,11 @@ tmdp 内置多项性能优化机制：
 
 #### 2. 增量下载
 
-基于 `latest_release_time` 时间戳的智能增量拉取：
+基于 `user_entities.latest_release_time` 时间戳的智能增量拉取（逻辑示意，实际由实体时间戳控制，非 SQL 查询）：
 
-```sql
--- 仅获取比上次更新的推文
-WHERE created_at > '2024-01-15 10:30:00'
+```text
+首次运行：无 latest_release_time → 全量拉取
+后续运行：仅拉取发布时间晚于 latest_release_time 的推文，完成后更新时间戳
 ```
 
 **效果：**
@@ -1597,13 +1760,12 @@ WHERE created_at > '2024-01-15 10:30:00'
 
 #### 3. MD5 去重
 
-相同内容的文件自动跳过：
+相同内容的文件自动跳过。写入时开启 `SkipUnchanged` 选项：先比对目标文件的大小 + MD5（大小不同直接写入，大小相同再比 MD5），内容未变更则静默跳过，不产生日志：
 
 ```go
-// 文件写入前计算 MD5
-if fileWriter.Exists(md5Hash) {
-    log.Info("File already exists, skipping...")
-    return nil  // 跳过重复下载
+// fileWriter 写入时比对大小 + MD5，内容一致则跳过
+if req.Options.SkipUnchanged && sameSize && sameMD5 {
+    return nil // 跳过重复下载
 }
 ```
 
@@ -1642,15 +1804,13 @@ lists/新闻/users/   -> ../../users/Elon Musk(elonmusk)/
 ### 监控与诊断
 
 ```bash
-# 启用调试模式查看详细性能指标
+# 启用调试模式查看详细请求统计（-dbg 退出时输出各端点请求计数）
 tmdp -user elonmusk -dbg
 
-# 输出示例：
-# [INFO] Download routine count: 35
-# [INFO] Total requests: 150
-# [INFO] Success rate: 98.5%
-# [INFO] Average download speed: 2.3 MB/s
-# [INFO] Total time: 5m 23s
+# 输出示例（真实日志行）：
+# [download] Media batch start task_id=cli users=1 lists=0 workers=35
+# [batch] Preprocess start users=1 workers=35 auto_follow=false
+# [rate-limit] Request count endpoint=... count=150
 ```
 
 ***
@@ -1725,7 +1885,7 @@ tmdp -user elonmusk -dbg
 **症状：**
 
 ```
-[ERROR] failed to login: invalid cookie or token
+[startup] Login failed error="..."
 ```
 
 **排查步骤：**
@@ -1742,7 +1902,8 @@ tmdp -user elonmusk -dbg
 **症状：**
 
 ```
-[WARN] rate limit approaching, sleeping for 5m0s...
+[rate-limit] Sleeping endpoint=... wake_at=... remaining=... limit=...
+[rate-limit] Would block endpoint=... remaining=... limit=...
 ```
 
 **原因：** 触发 Twitter API 速率限制（每 15 分钟 500 次请求）
@@ -1762,7 +1923,8 @@ tmdp -user elonmusk -dbg
 **症状：**
 
 ```
-[ERROR] failed to create symlink: A required privilege is not held by the client
+[batch] Symlink permission denied suppressed=5 hint=run_as_admin
+[batch] Symlink create failed user="..." reason=permission_denied suppressing=true
 ```
 
 **原因：** Windows 需要管理员权限才能创建符号链接
@@ -1783,8 +1945,8 @@ tmdp -user elonmusk -dbg
 **症状：**
 
 ```
-[ERROR] download failed: context deadline exceeded
-[WARN] retrying tweet 1234567890 with 3 media(s)
+[downloader] Download failed, retrying... attempt=1 max_retries=2 url=https://... error="context deadline exceeded"
+[download] Retry remaining tweet_id=1234567890 media=3
 ```
 
 **原因：** 大视频文件下载超时或网络不稳定

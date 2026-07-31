@@ -118,6 +118,10 @@ GET      /api/v1/db/stats
 
 Two independent frontend themes in `internal/api/web/`:
 
+web1 additionally surfaces backend features with no dedicated UI elsewhere: a failed-records panel on the tasks page (`/api/v1/errors` list/retry-all/clear), a queue-depth card on the overview page (`/api/v1/queue/status`), single-target mark buttons on the user/list/following task forms, related-entity drilldown from data rows (user → entities/links, list → entities, with filter banner + clear), and a per-table record-count bar on the data page (`/api/v1/db/stats`). Task form input and the active task tab survive page switches via `_taskFormState`/`_taskFormTab`.
+
+web2 covers the same backend surface with a lighter UI: tasks page with quick download + failed-records panel, data console with 6 tables + stats + search + sortable headers + row-level view/edit/delete, schedules with form create/edit (all 4 types + download options) and a raw YAML editor, system console with config/cookies/security tabs + queue status, and a logs viewer with level/domain/q filters, pause, export (fetch+blob), and SSE streaming. JSON download forms support multipart file upload as well as server paths; mark actions accept an optional timestamp. Both themes guard against stale responses with request sequence counters and reset SSE reconnect counters on successful events.
+
 ```
 internal/api/web/
 ├── web1/          # Classic theme
