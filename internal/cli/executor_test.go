@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-resty/resty/v2"
@@ -570,4 +571,36 @@ func TestSetClientLogger_FullLogging(t *testing.T) {
 	assert.NotContains(t, out, "supersecret-ct0")
 	assert.NotContains(t, out, "supersecret-csrf")
 	assert.Contains(t, out, "[redacted:")
+}
+
+// TestSetClientLogger_LargeResponseStaysUnderLumberjackLimit 回归测试：
+// resty 的截断检查在 JSON indent 美化之前，原始 <1MB 的响应经 indent 膨胀后
+// 单次 debug 块可达 2-6MB，超过 lumberjack 2MB 单次写入上限导致日志丢弃
+// （commit 73bb05a 引入的问题）。256KB 截断线必须保证块整体 < 2MB。
+func TestSetClientLogger_LargeResponseStaysUnderLumberjackLimit(t *testing.T) {
+	// 模拟 Twitter 时间线响应：原始约 700KB（< 旧 1MB 截断线，> 新 256KB 线）
+	big := strings.Repeat(`"field":"value",`, 40000)
+	body := `{"data":{"user":{"timeline":{` + big + `}}}}`
+	if len(body) < 600*1024 {
+		t.Fatalf("test body too small: %d bytes", len(body))
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+
+	client := resty.New()
+	var buf bytes.Buffer
+	SetClientLogger(client, &buf)
+
+	resp, err := client.R().Get(server.URL)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode())
+
+	out := buf.String()
+	// 单次 debug 块（logrus 前缀 + REQUEST + RESPONSE）必须低于 lumberjack 2MB 上限
+	assert.Less(t, len(out), 2*1024*1024, "debug block must stay under lumberjack MaxSize or the write is dropped")
+	// 大响应必须被截断为占位文本，而不是全量 indent 输出
+	assert.Contains(t, out, "TOO LARGE")
 }
