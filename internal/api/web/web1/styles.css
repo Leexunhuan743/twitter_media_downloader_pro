@@ -556,6 +556,11 @@ ul, ol {
   border-color: var(--accent-primary);
 }
 
+.form-checkbox input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
 .form-checkbox input[type="checkbox"]:checked::after {
   content: '✓';
   position: absolute;
@@ -1614,6 +1619,13 @@ ul, ol {
     padding: 0 var(--space-4);
   }
   
+  /* 固定底导航（64px）未计入高度计算时底部内容被遮挡，覆盖三处 calc */
+  .tasks-layout,
+  .page-container,
+  .card-page {
+    height: calc(100vh - var(--header-height) - var(--mobile-nav-height) - var(--space-4) * 2);
+  }
+  
   .page-title {
     font-size: var(--text-lg);
   }
@@ -1734,16 +1746,6 @@ ul, ol {
     min-width: min-content;
   }
 
-  .config-editor {
-    max-height: 300px;
-    min-height: 200px;
-  }
-
-  .log-container {
-    max-height: 50vh;
-    font-size: 11px;
-  }
-
   .log-level-filters {
     flex-wrap: wrap;
   }
@@ -1819,26 +1821,6 @@ ul, ol {
   animation: fadeIn 0.2s ease;
 }
 
-.config-editor {
-  min-height: 300px;
-  max-height: 500px;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-primary);
-  background: var(--bg-primary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  resize: vertical;
-  tab-size: 2;
-}
-
-.config-editor:focus {
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 3px rgba(47, 129, 247, 0.1);
-  outline: none;
-}
-
 .config-hint {
   background: rgba(240, 136, 62, 0.08);
   border-radius: var(--radius-md);
@@ -1878,7 +1860,7 @@ ul, ol {
   display: flex;
   gap: 4px;
   opacity: 0;
-  transition: opacity var(--transition-fast);
+  transition: opacity var(--duration-fast);
 }
 
 .log-entry:hover .log-entry-actions,
@@ -2414,3 +2396,33 @@ ul, ol {
   }
 }
 
+
+/* ---- DB stats bar (F5) ---- */
+.db-stats-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 20px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-primary);
+}
+.db-stat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.db-stat-chip::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--info);
+  opacity: .8;
+}

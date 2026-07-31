@@ -4,6 +4,10 @@
 let _initComplete = false;
 let _initPromise = null;
 let _jwtRefreshInterval = null;
+let _logGen = 0; // 日志分页代际：refresh/筛选变化时递增，丢弃过期 loadMore 响应
+let _tasksEpoch = 0; // 任务快照代际：SSE 应用新快照时递增，丢弃在途 GET /tasks 旧响应
+let _logBatch = []; // 日志流批量追加缓冲（rAF 合并）
+let _logFlushRAF = null;
 
 // ============================================
 // Utility Functions
@@ -78,6 +82,8 @@ function restoreSearchValue(inputId, stateKey, subKey = null) {
 function deepMerge(target, source) {
   const result = { ...target };
   for (const key of Object.keys(source)) {
+    // 原型污染防护：__proto__/constructor 键不进入状态树
+    if (key === '__proto__' || key === 'constructor') continue;
     if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key]) &&
         target[key] && typeof target[key] === 'object' && !Array.isArray(target[key])) {
       result[key] = deepMerge(target[key], source[key]);
@@ -139,6 +145,8 @@ const store = {
     dbLoading: {},
     dbError: {},
     _prevNameUserIdFilter: '',
+    _relUserIdFilter: '',
+    _relListIdFilter: '',
     configRaw: null,
     configExists: false,
     configSaving: false,
@@ -169,6 +177,7 @@ const store = {
     _scheduleFormItems: [],
     _scheduleFormDirty: false,
     _scheduleUndoDelete: null,
+    _scheduleUndoStack: [],
     _schedulerRunning: false,
   },
 
@@ -315,9 +324,10 @@ const api = {
         if (haveJWT && tokenType !== 'invalid' && tokenType !== 'missing') {
           // 有 JWT 但 401，说明 JWT 过期/失效 → 尝试 refresh
           const refreshed = await this._tryRefreshJWT();
-          if (refreshed) {
+          if (refreshed && !extra._retried) {
             // refresh 成功 → 重试原请求（不跳过 auth 注入，重新从 localStorage 读取新 JWT）
-            return this.request(method, path, body, extra);
+            // _retried 标志：刷新后仍 401 时不再递归，直接进入认证流程，防无限重试
+            return this.request(method, path, body, { ...extra, _retried: true });
           }
         }
         const authErr = makeUnauthorizedError(tokenType);
@@ -427,7 +437,6 @@ const api = {
   },
   
   // Config
-  getConfig() { return this.get('/api/v1/config'); },
   getConfigRaw() { return this.get('/api/v1/config/raw'); },
   updateConfigRaw(content) { return this.request('PUT', '/api/v1/config/raw', { content }); },
   getConfigFields() { return this.get('/api/v1/config/fields'); },
@@ -455,6 +464,11 @@ const api = {
 
   // Queue
   getQueueStatus() { return this.get('/api/v1/queue/status'); },
+
+  // Errors
+  getErrors() { return this.get('/api/v1/errors'); },
+  retryAllErrors() { return this.post('/api/v1/errors/retry', {}); },
+  clearErrors() { return this.request('DELETE', '/api/v1/errors'); },
 
   // Database CRUD with pagination
   getDBUsers(params = '') { return this.get(`/api/v1/db/users${params ? '?' + params : ''}`); },
@@ -512,21 +526,39 @@ const DB_TYPE_CONFIG = {
     get: id => api.getDBUserEntity(id),
     update: (id, data) => api.updateDBUserEntity(id, data),
     delete: id => api.deleteDBUserEntity(id),
-    list: params => api.getDBUserEntities(params),
+    list: params => {
+      // 关联钻取：从用户行跳转过来时按 userId 过滤
+      if (store.state._relUserIdFilter) {
+        params.append('userId', store.state._relUserIdFilter);
+      }
+      return api.getDBUserEntities(params);
+    },
   },
   listEntities: {
     title: 'List Entities',
     get: id => api.getDBListEntity(id),
     update: (id, data) => api.updateDBListEntity(id, data),
     delete: id => api.deleteDBListEntity(id),
-    list: params => api.getDBListEntities(params),
+    list: params => {
+      // 关联钻取：从列表行跳转过来时按 listId 过滤
+      if (store.state._relListIdFilter) {
+        params.append('listId', store.state._relListIdFilter);
+      }
+      return api.getDBListEntities(params);
+    },
   },
   userLinks: {
     title: 'User Links',
     get: id => api.getDBUserLink(id),
     update: (id, data) => api.updateDBUserLink(id, data),
     delete: id => api.deleteDBUserLink(id),
-    list: params => api.getDBUserLinks(params),
+    list: params => {
+      // 关联钻取：从用户行跳转过来时按 userId 过滤
+      if (store.state._relUserIdFilter) {
+        params.append('userId', store.state._relUserIdFilter);
+      }
+      return api.getDBUserLinks(params);
+    },
   },
   previousNames: {
     title: 'Previous Names',
@@ -576,6 +608,7 @@ const sseManager = {
     };
 
     const debouncedTasksUpdate = debounce((tasks) => {
+      _tasksEpoch++; // 新快照生效，使在途的 GET /tasks 旧响应失效
       store.setState({ tasks });
       updateOpenTaskDrawerFromTasks(tasks);
     }, 100);
@@ -622,7 +655,7 @@ const sseManager = {
           const type = notif.type === 'task_completed' ? 'success' :
                        notif.type === 'task_failed' ? 'error' :
                        notif.type === 'task_cancelled' ? 'warning' :
-                       notif.type === 'schedule_warning' ? 'warning' : 'success';
+                       notif.type === 'schedule_warning' ? 'warning' : 'info'; // 未知类型默认中性提示，不误导为成功
           toast.show(notif.message, type);
         }, 100);
       } catch (err) {
@@ -707,7 +740,7 @@ const sseManager = {
       return;
     }
     if (page === 'tasks') {
-      this._safeRefresh(() => refreshTasks(), page);
+      this._safeRefresh(() => refreshTasks({ silent: true }), page); // 重连自动刷新不弹提示
       return;
     }
     if (page === 'data') {
@@ -777,7 +810,14 @@ const toast = {
     // Dedup: skip if same message already visible
     for (const existing of existingToasts) {
       const msgEl = existing.querySelector('.toast-message');
-      if (msgEl && msgEl.textContent === message) return;
+      if (msgEl && msgEl.textContent === message) {
+        // 同文案已显示超过 3s：替换刷新（保留新事件上下文）；否则忽略重复
+        if (Date.now() - (existing._shownAt || 0) > 3000) {
+          existing.remove();
+          break;
+        }
+        return;
+      }
     }
     
     if (existingToasts.length >= this.maxToasts) {
@@ -803,6 +843,7 @@ const toast = {
     `;
     
     el.querySelector('.toast-close').onclick = () => el.remove();
+    el._shownAt = Date.now();
     this.container.appendChild(el);
     
     setTimeout(() => el.remove(), 5000);
@@ -845,6 +886,7 @@ const pages = {
   // Overview Page
   overview() {
     const { health, tasks } = store.state;
+    const queue = _state._queueStatus || {};
     
     const taskStats = { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 };
     tasks.forEach(t => { if (taskStats[t.status] !== undefined) taskStats[t.status]++; });
@@ -858,7 +900,7 @@ const pages = {
           <div class="stat-icon" style="color: var(--success);">●</div>
           <div class="stat-content">
             <div class="stat-value" data-overview-stat="health">${health ? (health.status === 'ok' ? '健康' : '异常') : '检查中'}</div>
-            <div class="stat-label">系统状态 ${health ? health.version : ''}</div>
+            <div class="stat-label">系统状态 ${health ? escapeHtml(health.version) : ''}</div>
           </div>
         </div>
         <div class="stat-card">
@@ -873,6 +915,13 @@ const pages = {
           <div class="stat-content">
             <div class="stat-value" data-overview-stat="completed">${taskStats.completed}</div>
             <div class="stat-label">已完成任务</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="color: var(--warning);">🎯</div>
+          <div class="stat-content">
+            <div class="stat-value" data-overview-stat="queueDepth">${queue.queue_depth ?? '—'}</div>
+            <div class="stat-label">队列深度（活跃 ${queue.active_jobs ?? 0} / 排队 ${queue.pending_jobs ?? 0} / 分离 ${queue.detached_jobs ?? 0}）</div>
           </div>
         </div>
       </div>
@@ -923,6 +972,8 @@ const pages = {
   // Tasks Page
   tasks() {
     const { tasks } = store.state;
+    const activeTaskTab = _state._taskFormTab || 'user';
+    const taskTabCls = (t) => t === activeTaskTab ? 'tab active' : 'tab';
     
     return `
       <div class="tasks-layout">
@@ -936,17 +987,32 @@ const pages = {
             </div>
             <div class="card-body card-body-fill">
               <div class="tabs">
-                <div class="tab active" data-task-tab="user">用户</div>
-                <div class="tab" data-task-tab="list">列表</div>
-                <div class="tab" data-task-tab="following">关注</div>
-                <div class="tab" data-task-tab="batch">批量</div>
-                <div class="tab" data-task-tab="jsonfile"><span>JSON</span><span>文件</span></div>
-                <div class="tab" data-task-tab="jsonfolder"><span>JSON</span><span>文件夹</span></div>
-                <div class="tab" data-task-tab="mark">标记</div>
+                <div class="${taskTabCls('user')}" data-task-tab="user">用户</div>
+                <div class="${taskTabCls('list')}" data-task-tab="list">列表</div>
+                <div class="${taskTabCls('following')}" data-task-tab="following">关注</div>
+                <div class="${taskTabCls('batch')}" data-task-tab="batch">批量</div>
+                <div class="${taskTabCls('jsonfile')}" data-task-tab="jsonfile"><span>JSON</span><span>文件</span></div>
+                <div class="${taskTabCls('jsonfolder')}" data-task-tab="jsonfolder"><span>JSON</span><span>文件夹</span></div>
+                <div class="${taskTabCls('mark')}" data-task-tab="mark">标记</div>
               </div>
 
               <div id="taskFormContainer">
-                ${renderTaskForm('user')}
+                ${renderTaskForm(activeTaskTab)}
+              </div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top: var(--space-6);">
+            <div class="card-header">
+              <div>
+                <div class="card-title">⚠️ 失败记录</div>
+                <div class="card-subtitle">errors.json / json_errors.json 中的失败项，可一键重试或清空</div>
+              </div>
+            </div>
+            <div class="card-body" id="errorsPanelContent">
+              <div class="empty-state" style="padding: 24px;">
+                <div class="empty-icon" style="width: 40px; height: 40px; font-size: 16px; margin-bottom: 8px;">📋</div>
+                <div class="empty-desc">暂无失败记录</div>
               </div>
             </div>
           </div>
@@ -1048,6 +1114,14 @@ const pages = {
           </div>
 
         ${filterBanner}
+        <div class="db-stats-bar" id="dbStatsBar">
+          <span class="db-stat-chip" data-db-stat="users">Users —</span>
+          <span class="db-stat-chip" data-db-stat="lsts">Lists —</span>
+          <span class="db-stat-chip" data-db-stat="user_entities">User Entities —</span>
+          <span class="db-stat-chip" data-db-stat="lst_entities">List Entities —</span>
+          <span class="db-stat-chip" data-db-stat="user_links">User Links —</span>
+          <span class="db-stat-chip" data-db-stat="user_previous_names">Previous Names —</span>
+        </div>
         <div class="card-body card-body-scroll">
           ${dataBody}
         </div>
@@ -1150,7 +1224,11 @@ const _state = {
   _configRawLoadError: false,
   _cookiesRawLoading: false,
   _scheduleRawLoading: false,
-  _logsPageLoaded: false
+  _logsPageLoaded: false,
+  _errorsData: null,
+  _errorsLoading: false,
+  _queueStatus: null,
+  _dbStats: null
 };
 
 // 变化检测器：消除手动维护 _state.lastXxx 的重复模式
@@ -1159,6 +1237,9 @@ const _state = {
 function makeChangeDetector(keys) {
   const snapshots = {};
   keys.forEach(k => { snapshots[k] = undefined; });
+  const capture = (k, cur) => {
+    snapshots[k] = (typeof cur === 'object' && cur !== null) ? JSON.parse(JSON.stringify(cur)) : cur;
+  };
   return {
     detect(state) {
       const changed = {};
@@ -1174,9 +1255,15 @@ function makeChangeDetector(keys) {
         }
         changed[k] = isDiff;
         if (isDiff) hasAny = true;
-        snapshots[k] = (typeof cur === 'object' && cur !== null) ? JSON.parse(JSON.stringify(cur)) : cur;
+        capture(k, cur);
       });
       return { hasAny, changed };
+    },
+    // 同步快照：render() 全量重建后调用，标记当前状态已渲染。
+    // 不比较、不触发通知；防止 render 绕过 detect 导致快照过期，
+    // 使后续真实变化被误判为"无变化"而漏渲染。
+    sync(state) {
+      keys.forEach(k => capture(k, state[k]));
     }
   };
 }
@@ -1202,6 +1289,12 @@ function createDualModeEditor(opts) {
   return {
     // 模式切换：统一三处 setMode 逻辑
     setMode(mode) {
+      // form → raw 切换前检查未保存编辑（dirtyCheck 由各编辑器传入）
+      if (mode === 'raw' && store.state[modeKey] === 'form' && opts.dirtyCheck) {
+        if (opts.dirtyCheck() && !confirm('简易模式有未保存的修改，切换后这些修改将丢失。确定继续？')) {
+          return;
+        }
+      }
       if (mode !== 'raw' && _state[editorAttr]) {
         _state[editorAttr] = null;
       }
@@ -1262,7 +1355,9 @@ function saveTaskFormState() {
   // 找到当前激活的 tab
   const activeTab = document.querySelector('[data-task-tab].active');
   if (activeTab) {
-    _state._taskFormState[activeTab.dataset.taskTab] = state;
+    const tab = activeTab.dataset.taskTab;
+    _state._taskFormState[tab] = state;
+    _state._taskFormTab = tab;
   }
 }
 
@@ -1415,7 +1510,7 @@ function renderTaskItem(task) {
         <div class="task-meta">
           <span class="tag ${status.tag}">${escapeHtml(status.text)}</span>
           <span class="task-short-id" title="${escapeAttr(fullTaskId)}">ID: ${escapeHtml(shortId)}</span>
-          <span>${task.created_at ? new Date(task.created_at).toLocaleString() : '-'}</span>
+          <span>${formatDate(task.created_at)}</span>
         </div>
       </div>
       <div class="task-progress">
@@ -1442,9 +1537,10 @@ function renderTaskForm(type) {
         <input type="text" class="form-input" id="userScreenName" placeholder="例如: elonmusk">
       </div>
       ${renderCheckboxes('user')}
-      <div class="flex gap-3">
+      <div class="flex gap-3" style="flex-wrap: wrap;">
         <button class="btn btn-primary" data-action="createUserTask">创建下载任务</button>
         <button class="btn btn-secondary" data-action="createProfileTask">仅下载 Profile</button>
+        <button class="btn btn-ghost" data-action="markUserTask">标记已下载</button>
       </div>
     `,
     list: `
@@ -1453,9 +1549,10 @@ function renderTaskForm(type) {
         <input type="text" inputmode="numeric" pattern="[0-9]*" class="form-input" id="listId" placeholder="例如: 123456789">
       </div>
       ${renderCheckboxes('list')}
-      <div class="flex gap-3">
+      <div class="flex gap-3" style="flex-wrap: wrap;">
         <button class="btn btn-primary" data-action="createListTask">创建下载任务</button>
         <button class="btn btn-secondary" data-action="createListProfileTask">仅下载 Profile</button>
+        <button class="btn btn-ghost" data-action="markListTask">标记已下载</button>
       </div>
     `,
     following: `
@@ -1464,8 +1561,9 @@ function renderTaskForm(type) {
         <input type="text" class="form-input" id="followingScreenName" placeholder="例如: elonmusk">
       </div>
       ${renderCheckboxes('following')}
-      <div class="flex gap-3">
+      <div class="flex gap-3" style="flex-wrap: wrap;">
         <button class="btn btn-primary" data-action="createFollowingTask">创建关注下载任务</button>
+        <button class="btn btn-ghost" data-action="markFollowingTask">标记已下载</button>
       </div>
     `,
     mark: `
@@ -1575,12 +1673,28 @@ function renderCheckboxes(prefix) {
 }
 
 function renderDBFilterBanner(type) {
-  if (type !== 'previousNames' || !store.state._prevNameUserIdFilter) return '';
-  return `
-    <div class="db-filter-banner">
-      <span>正在查看用户 ${escapeHtml(store.state._prevNameUserIdFilter)} 的历史名称</span>
-      <button class="btn btn-ghost btn-sm" data-action="clearPreviousNamesFilter">清除筛选</button>
-    </div>`;
+  if (type === 'previousNames' && store.state._prevNameUserIdFilter) {
+    return `
+      <div class="db-filter-banner">
+        <span>正在查看用户 ${escapeHtml(store.state._prevNameUserIdFilter)} 的历史名称</span>
+        <button class="btn btn-ghost btn-sm" data-action="clearPreviousNamesFilter">清除筛选</button>
+      </div>`;
+  }
+  if ((type === 'entities' || type === 'userLinks') && store.state._relUserIdFilter) {
+    return `
+      <div class="db-filter-banner">
+        <span>正在查看用户 <strong>#${escapeHtml(store.state._relUserIdFilter)}</strong> 的${type === 'entities' ? '下载实体' : '关联链接'}</span>
+        <button class="btn btn-ghost btn-sm" data-action="clearRelFilter">清除筛选</button>
+      </div>`;
+  }
+  if (type === 'listEntities' && store.state._relListIdFilter) {
+    return `
+      <div class="db-filter-banner">
+        <span>正在查看列表 <strong>#${escapeHtml(store.state._relListIdFilter)}</strong> 的下载实体</span>
+        <button class="btn btn-ghost btn-sm" data-action="clearRelFilter">清除筛选</button>
+      </div>`;
+  }
+  return '';
 }
 
 function renderDBDataBody(type, data, sort, loading, error) {
@@ -1630,8 +1744,14 @@ function renderDBCell(col, item) {
 
 function renderActionButtons(type, item) {
   const idStr = String(item.id);
+  const relationBtn = (type === 'users')
+    ? `<button class="btn btn-ghost btn-sm" title="查看关联（实体/链接/历史名称）" data-db-type="${escapeAttr(type)}" data-db-id="${escapeAttr(idStr)}" data-action="viewUserRelations">🔗</button>`
+    : (type === 'lists')
+      ? `<button class="btn btn-ghost btn-sm" title="查看列表下载实体" data-db-type="${escapeAttr(type)}" data-db-id="${escapeAttr(idStr)}" data-action="viewListRelations">🔗</button>`
+      : '';
   return `
     <div class="flex gap-2">
+      ${relationBtn}
       <button class="btn btn-ghost btn-sm" data-db-type="${escapeAttr(type)}" data-db-id="${escapeAttr(idStr)}" data-action="editDBItem">✏️</button>
       <button class="btn btn-danger btn-sm" data-db-type="${escapeAttr(type)}" data-db-id="${escapeAttr(idStr)}" data-action="deleteDBItem">🗑️</button>
     </div>
@@ -1709,34 +1829,6 @@ function renderTable(columns, data, sort) {
   return `<table class="data-table"><thead><tr>${thead}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
-function renderDBUsersTable(type, data, sort) {
-  return renderTable(getDBColumns(type), data, sort);
-}
-
-function renderDBListsTable(type, data, sort) {
-  return renderTable(getDBColumns(type), data, sort);
-}
-
-function renderDBEntitiesTable(type, data, sort) {
-  return renderTable(getDBColumns(type), data, sort);
-}
-
-function renderDBListEntitiesTable(type, data, sort) {
-  return renderTable(getDBColumns(type), data, sort);
-}
-
-function renderDBPreviousNamesTable(type, data, sort) {
-  return renderTable(getDBColumns(type), data, sort);
-}
-
-function renderDBUserLinksTable(type, data, sort) {
-  return renderTable(getDBColumns(type), data, sort);
-}
-
-function renderDBDefaultTable(type, data, sort) {
-  return renderTable(getDBColumns(type), data, sort);
-}
-
 // Database Table Renderer with sorting and actions
 function renderDBTable(type, data, sort) {
   if (!data || data.length === 0) {
@@ -1748,17 +1840,7 @@ function renderDBTable(type, data, sort) {
       </div>
     `;
   }
-
-  const tableRenderers = {
-    users: renderDBUsersTable,
-    lists: renderDBListsTable,
-    entities: renderDBEntitiesTable,
-    listEntities: renderDBListEntitiesTable,
-    userLinks: renderDBUserLinksTable,
-    previousNames: renderDBPreviousNamesTable,
-  };
-  const fn = tableRenderers[type] || renderDBDefaultTable;
-  return fn(type, data, sort);
+  return renderTable(getDBColumns(type), data, sort);
 }
 
 function renderDBMobileCards(type, data) {
@@ -1819,6 +1901,9 @@ async function refreshDBData() {
   const search = dbSearch[dataSubPage];
   const requestSeq = ++_state._dbRequestSeq;
 
+  const config = DB_TYPE_CONFIG[dataSubPage];
+  if (!config?.list) return;
+
   const params = new URLSearchParams();
   params.append('page', pagination.page);
   params.append('pageSize', pagination.pageSize);
@@ -1826,15 +1911,26 @@ async function refreshDBData() {
   params.append('sortOrder', sort.sortOrder);
   if (search) params.append('q', search);
 
+  // 加载兜底：15s 未完成自动转错误态（SQLite 锁/慢查询时防止永久 loading）
+  const loadingGuard = setTimeout(() => {
+    if (requestSeq !== _state._dbRequestSeq) return;
+    store.setState({
+      dbLoading: { ...store.state.dbLoading, [dataSubPage]: false },
+      dbError: { ...store.state.dbError, [dataSubPage]: '加载超时，请重试' }
+    });
+  }, 15000);
+
   try {
-    const config = DB_TYPE_CONFIG[dataSubPage];
-    if (!config?.list) return;
     store.setState({
       dbLoading: { ...store.state.dbLoading, [dataSubPage]: true },
       dbError: { ...store.state.dbError, [dataSubPage]: '' }
     });
     const response = await config.list(params);
-    if (requestSeq !== _state._dbRequestSeq || dataSubPage !== store.state.dataSubPage) return;
+    if (requestSeq !== _state._dbRequestSeq || dataSubPage !== store.state.dataSubPage) {
+      clearTimeout(loadingGuard);
+      return;
+    }
+    clearTimeout(loadingGuard);
 
     if (response) {
       const data = response || {};
@@ -1867,7 +1963,15 @@ async function refreshDBData() {
       toast.show('获取数据失败', 'error');
     }
   } catch (err) {
+    clearTimeout(loadingGuard);
     if (requestSeq !== _state._dbRequestSeq || dataSubPage !== store.state.dataSubPage) return;
+    if (err.name === 'AbortError') {
+      // 导航中止在途请求：不弹虚假错误，但必须重置 loading（页面可能仍停留在数据页）
+      store.setState({
+        dbLoading: { ...store.state.dbLoading, [dataSubPage]: false }
+      });
+      return;
+    }
     store.setState({
       dbLoading: { ...store.state.dbLoading, [dataSubPage]: false },
       dbError: { ...store.state.dbError, [dataSubPage]: err.message }
@@ -1920,6 +2024,11 @@ function sortDB(field) {
     dbSort: {
       ...dbSort,
       [dataSubPage]: { sortBy: field, sortOrder: newOrder }
+    },
+    // 排序改变数据顺序，页码必须回到第 1 页，否则可能落在空页/错位页
+    dbPagination: {
+      ...store.state.dbPagination,
+      [dataSubPage]: { ...store.state.dbPagination[dataSubPage], page: 1 }
     }
   });
   refreshDBData();
@@ -1955,6 +2064,63 @@ function clearPreviousNamesFilter() {
     dbPagination: {
       ...store.state.dbPagination,
       previousNames: { ...store.state.dbPagination.previousNames, page: 1 }
+    }
+  });
+  refreshDBData();
+}
+
+// 关联钻取：从用户行查看其实体/链接，从列表行查看其下载实体
+function viewUserRelations(el) {
+  const userId = el.dataset.dbId;
+  if (!userId) return;
+  store.setState({
+    dataSubPage: 'entities',
+    _relUserIdFilter: userId,
+    _relListIdFilter: '',
+    dbPagination: {
+      ...store.state.dbPagination,
+      entities: { ...store.state.dbPagination.entities, page: 1 },
+      userLinks: { ...store.state.dbPagination.userLinks, page: 1 }
+    },
+    dbSearch: {
+      ...store.state.dbSearch,
+      entities: '',
+      userLinks: ''
+    }
+  });
+  updateURL('data', 'entities');
+  refreshDBData();
+}
+
+function viewListRelations(el) {
+  const listId = el.dataset.dbId;
+  if (!listId) return;
+  store.setState({
+    dataSubPage: 'listEntities',
+    _relListIdFilter: listId,
+    _relUserIdFilter: '',
+    dbPagination: {
+      ...store.state.dbPagination,
+      listEntities: { ...store.state.dbPagination.listEntities, page: 1 }
+    },
+    dbSearch: {
+      ...store.state.dbSearch,
+      listEntities: ''
+    }
+  });
+  updateURL('data', 'listEntities');
+  refreshDBData();
+}
+
+function clearRelFilter() {
+  store.setState({
+    _relUserIdFilter: '',
+    _relListIdFilter: '',
+    dbPagination: {
+      ...store.state.dbPagination,
+      entities: { ...store.state.dbPagination.entities, page: 1 },
+      userLinks: { ...store.state.dbPagination.userLinks, page: 1 },
+      listEntities: { ...store.state.dbPagination.listEntities, page: 1 }
     }
   });
   refreshDBData();
@@ -2160,6 +2326,131 @@ async function deleteDBItem(type, id) {
 // ============================================
 // Actions
 // ============================================
+
+// ---- 失败记录（errors.json / json_errors.json）----
+
+async function loadDBStats() {
+  try {
+    _state._dbStats = await api.getDBStats();
+  } catch (err) {
+    return;
+  }
+  // 数据页已渲染时局部更新统计条
+  const stats = _state._dbStats || {};
+  document.querySelectorAll('[data-db-stat]').forEach(el => {
+    const v = stats[el.dataset.dbStat];
+    if (v !== undefined) el.textContent = el.textContent.replace(/—$/, v);
+  });
+}
+
+async function loadQueueStatus() {
+  try {
+    _state._queueStatus = await api.getQueueStatus();
+  } catch (err) {
+    _state._queueStatus = null;
+    return;
+  }
+  // 概览页已渲染时局部更新队列卡（避免整页重建）
+  const q = _state._queueStatus || {};
+  const valEl = document.querySelector('[data-overview-stat="queueDepth"]');
+  if (valEl) valEl.textContent = q.queue_depth ?? '—';
+  const labelEl = valEl && valEl.nextElementSibling;
+  if (labelEl) {
+    labelEl.textContent = `队列深度（活跃 ${q.active_jobs ?? 0} / 排队 ${q.pending_jobs ?? 0} / 分离 ${q.detached_jobs ?? 0}）`;
+  }
+}
+
+async function loadErrors(force = false) {
+  if (_state._errorsLoading) return;
+  if (!force && _state._errorsData !== null) return;
+  _state._errorsLoading = true;
+  try {
+    _state._errorsData = await api.getErrors();
+    renderErrorsPanel();
+  } catch (err) {
+    // 静默：任务页主体不因错误面板失败而报错；下拉刷新可重试
+  } finally {
+    _state._errorsLoading = false;
+  }
+}
+
+function renderErrorsPanel() {
+  const container = document.getElementById('errorsPanelContent');
+  if (!container) return;
+  const data = _state._errorsData || {};
+  const regular = data.regular || {};
+  const json = data.json || [];
+  const regKeys = Object.keys(regular);
+  const total = regKeys.length + json.length;
+
+  if (total === 0) {
+    container.innerHTML = `
+      <div class="empty-state" style="padding: 24px;">
+        <div class="empty-icon" style="width: 40px; height: 40px; font-size: 16px; margin-bottom: 8px;">✅</div>
+        <div class="empty-desc">暂无失败记录</div>
+      </div>
+    `;
+    return;
+  }
+
+  const regRows = regKeys.length ? regKeys.map(k => `
+    <tr><td class="mono">#${escapeHtml(k)}</td><td class="text-right">${escapeHtml(String(regular[k]))}</td></tr>
+  `).join('') : '';
+  const jsonRows = json.length ? json.map(j => `
+    <tr><td class="mono" title="${escapeAttr(j.source_path || '')}">${escapeHtml((j.source_path || '').split(/[\\/]/).pop())}</td><td class="text-right">${escapeHtml(String(j.count || 0))}</td></tr>
+  `).join('') : '';
+
+  container.innerHTML = `
+    <div class="flex gap-2" style="margin-bottom: 12px; flex-wrap: wrap;">
+      <button class="btn btn-primary btn-sm" data-action="retryAllErrors">重试全部失败</button>
+      <button class="btn btn-danger btn-sm" data-action="clearErrors">清空失败记录</button>
+    </div>
+    ${regKeys.length ? `
+      <div class="text-sm text-secondary" style="margin-bottom: 6px;">常规失败（${regKeys.length} 个实体）</div>
+      <div class="table-scroll-container" style="max-height: 180px;">
+        <table class="data-table">
+          <thead><tr><th>实体 ID</th><th class="text-right">失败推文数</th></tr></thead>
+          <tbody>${regRows}</tbody>
+        </table>
+      </div>
+    ` : ''}
+    ${json.length ? `
+      <div class="text-sm text-secondary" style="margin-top: 12px; margin-bottom: 6px;">JSON 导入失败（${json.length} 个来源）</div>
+      <div class="table-scroll-container" style="max-height: 180px;">
+        <table class="data-table">
+          <thead><tr><th>来源</th><th class="text-right">失败数</th></tr></thead>
+          <tbody>${jsonRows}</tbody>
+        </table>
+      </div>
+    ` : ''}
+  `;
+}
+
+async function retryAllErrors() {
+  if (_state._pendingTaskActions.has('retry-all-errors')) return;
+  _state._pendingTaskActions.add('retry-all-errors');
+  try {
+    const res = await api.retryAllErrors();
+    toast.show('已创建重试任务 ' + (res.task_id || ''), 'success');
+  } catch (err) {
+    toast.show(err.message, 'error');
+  } finally {
+    _state._pendingTaskActions.delete('retry-all-errors');
+  }
+}
+
+async function clearErrors() {
+  if (!confirm('确定清空所有失败记录？此操作不可撤销。')) return;
+  try {
+    await api.clearErrors();
+    _state._errorsData = null;
+    await loadErrors(true);
+    toast.show('失败记录已清空', 'success');
+  } catch (err) {
+    toast.show(err.message, 'error');
+  }
+}
+
 async function handleQuickDownload(button = null) {
   const input = document.getElementById('quickDownloadInput');
   let value = input.value.trim();
@@ -2188,7 +2479,8 @@ async function handleQuickDownload(button = null) {
 
   let username = value;
   // 从粘贴文本中提取第一个 URL（支持行内混合粘贴），无 URL 时用原始输入
-  const firstUrl = (value.match(/https?:\/\/[^\s]+/) || [value])[0];
+  // 排除常见尾随标点，避免 "twitter.com/elonmusk," 提取出带逗号的用户名
+  const firstUrl = (value.match(/https?:\/\/[^\s,，。;；、]+/) || [value])[0];
   const listMatch = firstUrl.match(/https?:\/\/(?:twitter\.com|x\.com)\/i\/lists\/(\d+)/);
   if (listMatch) {
     await runTaskButtonAction(button, `create:quick:list:${listMatch[1]}`, async () => {
@@ -2240,6 +2532,37 @@ async function createProfileTask(button = null) {
     'Profile 下载任务已创建'
   ));
   if (ok) document.getElementById('userScreenName').value = '';
+}
+
+async function markUserTask(button = null) {
+  const name = document.getElementById('userScreenName').value.trim();
+  if (!name) return toast.show('请输入 Screen Name', 'error');
+  const ok = await runTaskButtonAction(button, `mark:user:${name}`, () => apiTask(
+    () => api.createUserMark(name),
+    '标记任务已创建'
+  ));
+  if (ok) document.getElementById('userScreenName').value = '';
+}
+
+async function markFollowingTask(button = null) {
+  const name = document.getElementById('followingScreenName').value.trim();
+  if (!name) return toast.show('请输入 Screen Name', 'error');
+  const ok = await runTaskButtonAction(button, `mark:following:${name}`, () => apiTask(
+    () => api.createFollowingMark(name),
+    '标记任务已创建'
+  ));
+  if (ok) document.getElementById('followingScreenName').value = '';
+}
+
+async function markListTask(button = null) {
+  const id = document.getElementById('listId').value.trim();
+  if (!id) return toast.show('请输入 List ID', 'error');
+  if (!/^\d+$/.test(id)) return toast.show('List ID 必须为数字', 'error');
+  const ok = await runTaskButtonAction(button, `mark:list:${id}`, () => apiTask(
+    () => api.createListMark(id),
+    '标记任务已创建'
+  ));
+  if (ok) document.getElementById('listId').value = '';
 }
 
 async function apiTask(apiCall, successMsg) {
@@ -2570,9 +2893,9 @@ function renderTaskDetail(task, options = {}) {
   }
 
   // Build time timeline
-  const createdTime = task.created_at ? new Date(task.created_at).toLocaleString() : '-';
-  const startedTime = task.started_at ? new Date(task.started_at).toLocaleString() : null;
-  const endedTime = task.ended_at ? new Date(task.ended_at).toLocaleString() : null;
+  const createdTime = formatDate(task.created_at);
+  const startedTime = task.started_at ? formatDate(task.started_at) : null;
+  const endedTime = task.ended_at ? formatDate(task.ended_at) : null;
 
   let durationText = '';
   if (task.started_at && task.ended_at) {
@@ -2724,25 +3047,39 @@ function renderTaskDetail(task, options = {}) {
   }
 }
 
+let _drawerRAF = null;
+let _drawerPendingTasks = null;
 function updateOpenTaskDrawerFromTasks(tasks) {
-  if (!drawer._taskId || !drawer.el?.classList.contains('open')) return;
-  const task = (tasks || []).find(t => t.task_id === drawer._taskId);
-  if (!task) {
-    drawer.body.innerHTML = '<div class="task-detail-error">该任务已不在任务列表中</div>';
-    drawer.footer.innerHTML = '<button class="btn btn-secondary" data-action="closeDrawer">关闭</button>';
-    return;
-  }
-  renderTaskDetail(task, { preserveScroll: true });
+  // rAF 节流：同帧内多次任务快照只重建一次抽屉详情
+  _drawerPendingTasks = tasks;
+  if (_drawerRAF) return;
+  _drawerRAF = requestAnimationFrame(() => {
+    _drawerRAF = null;
+    const latest = _drawerPendingTasks;
+    _drawerPendingTasks = null;
+    if (!drawer._taskId || !drawer.el?.classList.contains('open')) return;
+    const task = (latest || []).find(t => t.task_id === drawer._taskId);
+    if (!task) {
+      drawer.body.innerHTML = '<div class="task-detail-error">该任务已不在任务列表中</div>';
+      drawer.footer.innerHTML = '<button class="btn btn-secondary" data-action="closeDrawer">关闭</button>';
+      return;
+    }
+    renderTaskDetail(task, { preserveScroll: true });
+  });
 }
 
 async function refreshTasks(options = {}) {
+  const epoch = _tasksEpoch;
   try {
     const data = await api.getTasks();
+    // 期间 SSE 已推送更新的任务快照 → 丢弃迟到的旧 GET 响应，避免列表回滚
+    if (epoch !== _tasksEpoch) return;
     const tasks = data.tasks || [];
     store.setState({ tasks });
     updateOpenTaskDrawerFromTasks(tasks);
     if (!options.silent) toast.show('任务列表已刷新');
   } catch (err) {
+    if (err.name === 'AbortError') return; // 导航中止在途请求，不弹虚假错误
     toast.show(err.message, 'error');
   }
 }
@@ -2764,6 +3101,13 @@ async function refreshOverviewData() {
   return data;
 }
 
+// 安全的日期格式化：无效/缺失值显示 '-'（避免 "Invalid Date" 文案）
+function formatDate(value) {
+  if (!value) return '-';
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? '-' : d.toLocaleString();
+}
+
 function escapeHtml(str) {
   if (str == null) return '';
   const d = document.createElement('div');
@@ -2775,7 +3119,13 @@ function escapeAttr(str) {
   return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/`/g, '&#96;');
 }
 
-function stripAnsi(str) { return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, ''); }
+// 剥离 ANSI：CSI 序列 + OSC 序列（\x1b]...\x07/\x1b\\）+ 孤立 ESC 字符
+function stripAnsi(str) {
+  return String(str)
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+    .replace(/\x1b/g, '');
+}
 
 const LOG_STREAM_MAX_LINES = 5000;
 const LOG_DOMAIN_OPTIONS = [
@@ -2847,7 +3197,8 @@ function renderLogField(key, value) {
 }
 
 function highlightLogFields(line) {
-  const fieldRegex = /\b([A-Za-z_][A-Za-z0-9_-]*)=("(?:[^"\\]|\\.)*"|\S+)/g;
+  // 字段值排除尾部标点：\S+ 会吞掉 status=200, 的逗号、error="x". 的句号
+  const fieldRegex = /\b([A-Za-z_][A-Za-z0-9_-]*)=("(?:[^"\\]|\\.)*"|[^\s,;.)\]}]+)/g;
   let html = '';
   let lastIndex = 0;
   let match;
@@ -2863,11 +3214,17 @@ function highlightLogFields(line) {
 function highlightLogLine(line) {
   let html = highlightLogFields(line);
   // 当前 logrus TextFormatter 格式: LEVEL[TIMESTAMP]
-  html = html.replace(
-    /^(FATA|ERRO|WARN|INFO|DEBU)\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[-+]\d{2}:\d{2})\]/,
-    '<span class="log-level">$1</span>[<span class="log-timestamp">$2</span>]'
-  );
-  html = html.replace(/(\]\s+)(\[[a-z0-9_-]+\])/i, '$1<span class="log-domain">$2</span>');
+  const levelRegex = /^(FATA|ERRO|WARN|INFO|DEBU)\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[-+]\d{2}:\d{2})\]/;
+  const levelMatch = levelRegex.exec(html);
+  if (levelMatch) {
+    html = html.slice(0, levelMatch[0].length).replace(
+      levelRegex,
+      '<span class="log-level">$1</span>[<span class="log-timestamp">$2</span>]'
+    ) + html.slice(levelMatch[0].length);
+    // domain 高亮仅在标准 logrus 行执行（有 LEVEL[TIMESTAMP] 前缀），
+    // 避免裸日志行中用户文本首次出现的 "] [" 被误包
+    html = html.replace(/(\]\s+)(\[[a-z0-9_-]+\])/i, '$1<span class="log-domain">$2</span>');
+  }
   return html;
 }
 
@@ -3245,11 +3602,33 @@ function toggleLogAutoScroll() {
   }
 }
 
-function exportLogs() {
-  const params = new URLSearchParams();
-  appendJWTToken(params);
-  const qs = params.toString();
-  window.open('/api/v1/logs/export' + (qs ? '?' + qs : ''));
+async function exportLogs() {
+  // 用 fetch + Authorization 头 + blob 下载，避免 JWT 进入 URL（浏览器历史/扩展可见）
+  try {
+    const res = await fetch('/api/v1/logs/export', {
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('tmd_jwt_token') || '') }
+    });
+    if (!res.ok) {
+      if (res.status === 401) {
+        const authErr = makeUnauthorizedError(res.headers.get('X-Token-Type') || '');
+        requireAuthentication(authErr);
+        throw authErr;
+      }
+      throw new Error('导出失败 (HTTP ' + res.status + ')');
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'tmd2.log';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    toast.show(err.message, 'error');
+  }
 }
 
 async function setLogLevel(level) {
@@ -3306,8 +3685,11 @@ function scrollLogToBottom() {
 let _logLoadingMore = false;
 
 async function refreshLogs() {
+  _logGen++;
   store.setState({ logPage: 1 });
   await loadLogsReplace();
+  // 实时流断开（自动重连耗尽/未连接）时通过刷新按钮复活
+  if (!logSSESource) connectLogSSE();
 }
 
 async function loadLogsReplace() {
@@ -3337,6 +3719,7 @@ async function loadMoreLogs() {
   const { logPage, logTotalPages } = store.state;
   if (logPage >= logTotalPages) return; // 没有更多了
   _logLoadingMore = true;
+  const gen = _logGen; // 捕获发起时的代际
   const stream = document.getElementById('log-stream');
   if (!stream) { _logLoadingMore = false; return; }
   const nextPage = logPage + 1;
@@ -3350,6 +3733,11 @@ async function loadMoreLogs() {
     if (logDomain !== 'all') p.append('domain', logDomain);
     if (logSearch) p.append('q', logSearch);
     const d = await api.getLogs('?' + p.toString());
+    // 代际过期：期间发生了刷新/筛选变化，丢弃本次响应（防止旧筛选条件下的老页混入）
+    if (gen !== _logGen) {
+      store.setState({ logPage: logPage });
+      return;
+    }
     const lines = (d.logs || []).reverse();
     const oldHeight = stream.scrollHeight;
     stream.innerHTML = renderLogLines(lines) + stream.innerHTML;
@@ -3361,6 +3749,8 @@ async function loadMoreLogs() {
     store.setState({ logPage: logPage });
   } finally {
     _logLoadingMore = false;
+    // 暂停/翻页路径同样受 5000 行上限约束，防止 DOM 无界增长
+    trimLogStream();
   }
 }
 
@@ -3378,6 +3768,10 @@ async function loadLogStats() {
     });
   } catch(e) {
     console.warn('loadLogStats 失败:', e);
+    if (!_state._logStatsWarned) {
+      _state._logStatsWarned = true;
+      toast.show('日志统计加载失败，级别计数可能不准确', 'warning');
+    }
   }
 }
 
@@ -3565,7 +3959,9 @@ function renderScheduleFormField(item, idx) {
 }
 
 function renderScheduleForm(items, saving, exists, loading = false) {
-  const undo = store.state._scheduleUndoDelete;
+  // 撤销横幅显示栈顶最近删除项
+  const undoStack = store.state._scheduleUndoStack || [];
+  const undo = undoStack[undoStack.length - 1];
   const undoBanner = undo ? `
     <div class="schedule-undo-banner">
       <span>已删除规则 #${undo.index + 1}${undo.item?.name ? ` · ${escapeHtml(undo.item.name)}` : ''}</span>
@@ -3665,7 +4061,7 @@ function taskStatusTag(task) {
 }
 
 function fmtTime(t) {
-  return t ? new Date(t).toLocaleString() : '-';
+  return t ? formatDate(t) : '-';
 }
 
 function renderScheduleItem(s) {
@@ -3814,6 +4210,7 @@ async function loadSchedules(options = {}) {
       update._scheduleFormItems = entries.map(s => scheduleStatusToFormItem(s));
       update._scheduleFormDirty = false;
       update._scheduleUndoDelete = null;
+      update._scheduleUndoStack = [];
     }
     store.setState(update);
   } catch (e) {
@@ -3904,13 +4301,15 @@ async function saveScheduleRaw() {
     }
     await api.updateSchedulesRaw(content);
     toast.show('调度配置已保存并重载');
-    await loadSchedules({ updateFormItems: false });
+    // form 无未保存编辑时同步重载表单数据，避免切回简易模式显示旧快照后再保存覆盖刚改的 raw 配置
+    await loadSchedules({ updateFormItems: !store.state._scheduleFormDirty });
     const rawData = await api.getSchedulesRaw();
     store.setState({
       _scheduleRaw: rawData.content || '',
       _scheduleExists: rawData.exists || false,
       _scheduleSaving: false,
       _scheduleUndoDelete: null,
+      _scheduleUndoStack: [],
     });
     setEditorValue(_state.scheduleEditor, store.state._scheduleRaw || '');
   } catch (e) {
@@ -3981,6 +4380,7 @@ const configEditor = createDualModeEditor({
   render: renderConfigEditor,
   initEditor: initConfigEditor,
   loadRaw: loadConfigRaw,
+  dirtyCheck: () => isConfigFormDirty(),
   // config 没有 form 模式预加载（由 syncConfigTabView 负责），不传 onAfterSetState
 });
 
@@ -3993,6 +4393,7 @@ const cookiesEditor = createDualModeEditor({
   render: renderCookiesEditor,
   initEditor: initCookiesEditor,
   loadRaw: loadCookiesRaw,
+  dirtyCheck: () => isCookiesFormDirty(),
   // cookies 没有 form 模式预加载（由 syncCookiesTabView 负责），不传 onAfterSetState
 });
 
@@ -4005,6 +4406,7 @@ const scheduleEditor = createDualModeEditor({
   render: renderScheduleViewer,
   initEditor: initScheduleEditor,
   loadRaw: loadScheduleRaw,
+  dirtyCheck: () => store.state._scheduleFormDirty,
   // 保留原 setScheduleTab L3500 的行为：form 模式且数据为空时调 loadSchedules
   onAfterSetState: (mode) => {
     if (mode === 'form' && store.state._scheduleFormItems.length === 0 && (store.state._schedules || []).length === 0) {
@@ -4082,15 +4484,21 @@ function removeScheduleItem(index) {
   const removed = currentItems[index];
   if (!removed) return;
   const items = currentItems.filter((_, i) => i !== index);
+  // 撤销栈：保留最近删除的条目与其原位置，多次删除可连续撤销
+  const undoStack = [...(store.state._scheduleUndoStack || [])];
+  undoStack.push({ item: removed, index });
+  if (undoStack.length > 5) undoStack.shift(); // 最多保留 5 步
   store.setState({
     _scheduleFormItems: items,
     _scheduleFormDirty: true,
-    _scheduleUndoDelete: { item: removed, index }
+    _scheduleUndoStack: undoStack,
+    _scheduleUndoDelete: null
   });
 }
 
 function undoRemoveScheduleItem() {
-  const undo = store.state._scheduleUndoDelete;
+  const undoStack = store.state._scheduleUndoStack || [];
+  const undo = undoStack[undoStack.length - 1];
   if (!undo?.item) return;
   const items = readScheduleFormItemsFromDOM();
   const index = Math.max(0, Math.min(undo.index, items.length));
@@ -4098,6 +4506,7 @@ function undoRemoveScheduleItem() {
   store.setState({
     _scheduleFormItems: items,
     _scheduleFormDirty: true,
+    _scheduleUndoStack: undoStack.slice(0, -1),
     _scheduleUndoDelete: null
   });
   requestAnimationFrame(() => {
@@ -4319,6 +4728,7 @@ function failScheduleRule(index, message) {
 }
 
 async function saveScheduleForm() {
+  if (store.state._scheduleSaving) return; // 防重入：双击/重复点击不并发提交
   const items = readScheduleFormItemsFromDOM();
 
   for (let i = 0; i < items.length; i++) {
@@ -4468,6 +4878,10 @@ async function saveConfig() {
       configSaving: false,
       configRaw: data.yaml_preview || content
     });
+    // raw 保存成功后同步 form 数据：form 无未保存编辑时重拉 fields，避免切回简易模式时旧快照覆盖新值
+    if (!isConfigFormDirty()) {
+      loadConfigFields();
+    }
     showManualRestartNotice('配置');
     // 比较新旧 api_key 值，仅在实际变更时清除 JWT（避免每次 raw 保存都重新登录）
     if (newKey !== oldKey) {
@@ -4697,23 +5111,39 @@ function connectLogSSE() {
       updateLogPauseButton();
       return;
     }
-    stream.insertAdjacentHTML('beforeend', renderLogEntry(clean));
-    // 移除 loading 占位
-    const hint = document.getElementById('log-empty-hint');
-    if (hint) hint.style.display = 'none';
-    if (logAutoScroll) {
-      // Auto-scroll is checked → always scroll to show new log
-      stream.scrollTop = stream.scrollHeight;
-    } else {
-      // 仅在用户不在底部时显示按钮
-      const userAtBottom = stream.scrollTop + stream.clientHeight >= stream.scrollHeight - 10;
-      if (!userAtBottom) {
-        const btn = document.getElementById('log-new-arrived-btn');
-        if (btn) btn.style.display = 'flex';
+    // 批量追加：同帧内的多条日志合并为一次 DOM 插入，避免逐行 insertAdjacentHTML + scrollTop 强制布局
+    _logBatch.push(clean);
+    if (_logFlushRAF) return;
+    _logFlushRAF = requestAnimationFrame(() => {
+      _logFlushRAF = null;
+      const stream = document.getElementById('log-stream');
+      if (!stream || _logBatch.length === 0) { _logBatch = []; return; }
+      const lines = _logBatch;
+      _logBatch = [];
+      const frag = document.createDocumentFragment();
+      for (const line of lines) {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = renderLogEntry(line);
+        while (tmp.firstChild) frag.appendChild(tmp.firstChild);
       }
-    }
-    // Keep last N lines
-    while (stream.children.length > LOG_STREAM_MAX_LINES) stream.removeChild(stream.firstChild);
+      stream.appendChild(frag);
+      // 移除 loading 占位
+      const hint = document.getElementById('log-empty-hint');
+      if (hint) hint.style.display = 'none';
+      if (logAutoScroll) {
+        // Auto-scroll is checked → scroll to bottom（延迟到下一帧，合并强制布局）
+        requestAnimationFrame(() => { stream.scrollTop = stream.scrollHeight; });
+      } else {
+        // 仅在用户不在底部时显示按钮
+        const userAtBottom = stream.scrollTop + stream.clientHeight >= stream.scrollHeight - 10;
+        if (!userAtBottom) {
+          const btn = document.getElementById('log-new-arrived-btn');
+          if (btn) btn.style.display = 'flex';
+        }
+      }
+      // Keep last N lines
+      trimLogStream();
+    });
   });
 
   logSSESource.onerror = () => {
@@ -4724,11 +5154,20 @@ function connectLogSSE() {
     _logReconnectAttempts++;
     if (_logReconnectAttempts > 60) {
       _logReconnectAttempts = 0;
-      return; // 放弃重连
+      // 放弃自动重连：提示用户手动点「刷新」复活实时流（refreshLogs 会重建连接）
+      toast.show('日志实时流已断开，点击「刷新」可重新连接', 'warning');
+      return;
     }
     const delay = Math.min(2000 * Math.pow(1.5, _logReconnectAttempts - 1), 30000);
-    tryRefreshJWT('LogSSE', () => { _logSSETimer = setTimeout(connectLogSSE, delay); });
+    // 无条件尝试刷新 JWT（无 2 分钟窗口限制），并保证无论刷新结果都继续重连
+    api._tryRefreshJWT().finally(() => { _logSSETimer = setTimeout(connectLogSSE, delay); });
   };
+}
+
+function trimLogStream() {
+  const stream = document.getElementById('log-stream');
+  if (!stream) return;
+  while (stream.children.length > LOG_STREAM_MAX_LINES) stream.removeChild(stream.firstChild);
 }
 
 function disconnectLogSSE() {
@@ -4781,6 +5220,8 @@ function syncCookiesTabView() {
 }
 
 function syncLogsPageView() {
+  // 先断开旧 SSE，避免事件在 refreshLogs 的 innerHTML 重置前插入被清掉（丢行窗口）
+  if (logSSESource) disconnectLogSSE();
   if (!_state._logsPageLoaded) {
     _state._logsPageLoaded = true;
     refreshLogs();
@@ -4891,6 +5332,8 @@ function navigateTo(page) {
     cleanupSystemTimers();
     destroyAllEditors();
   }
+  // 导航进入数据页时刷新当前子页数据（避免显示 bootstrap 时的旧快照）
+  if (page === 'data') refreshDBData();
   store.setState({ currentPage: page });
   
   // Update URL
@@ -4925,6 +5368,9 @@ window.onpopstate = (event) => {
     store.setState({ currentPage: page });
   }
   
+  // 后退/前进进入数据页时刷新当前子页数据
+  if (page === 'data') refreshDBData();
+  
   // Update sidebar, mobile nav, and title
   updateNavigationUI(page);
 };
@@ -4955,6 +5401,11 @@ function render() {
   const page = store.state.currentPage;
 
   if (pages[page]) {
+    // 任务页重建前保存表单输入（切页/重建不丢已输入内容）
+    if (page === 'tasks' && container.querySelector('#taskFormContainer')) {
+      saveTaskFormState();
+    }
+
     container.innerHTML = pages[page]();
 
     if (page === 'system') {
@@ -4962,6 +5413,8 @@ function render() {
       setTimeout(() => syncSystemTabView(), 0);
     } else if (page === 'logs') {
       syncLogsPageView();
+    } else if (page === 'tasks') {
+      restoreTaskFormState(_state._taskFormTab || 'user');
     }
     
     // Restore filter and search values
@@ -4977,6 +5430,25 @@ function render() {
     if (page === 'schedules') {
       if (store.state._schedules === null) loadSchedules();
     }
+
+    if (page === 'tasks') {
+      loadErrors();
+    }
+
+    if (page === 'overview') {
+      loadQueueStatus();
+    }
+
+    if (page === 'data') {
+      loadDBStats();
+    }
+
+    // 全量重建后同步各变化检测器快照：render() 绕过 detect 时快照过期，
+    // 不同步会让下一次真实变化被误判为"无变化"（如 dbLoading 恢复后表格不渲染）
+    dataDetector.sync(store.state);
+    scheduleDetector.sync(store.state);
+    overviewDetector.sync(store.state);
+    systemDetector.sync(store.state);
   }
 }
 
@@ -5165,7 +5637,7 @@ window.addEventListener('resize', () => {
 });
 
 // Subscribe to state changes
-const dataDetector = makeChangeDetector(['dataSubPage', 'dbData', 'dbPagination', 'dbSort', 'dbLoading', 'dbError', '_prevNameUserIdFilter']);
+const dataDetector = makeChangeDetector(['dataSubPage', 'dbData', 'dbPagination', 'dbSort', 'dbLoading', 'dbError', '_prevNameUserIdFilter', '_relUserIdFilter', '_relListIdFilter']);
 const scheduleDetector = makeChangeDetector(['_schedules', '_scheduleRaw', '_scheduleExists', '_scheduleSaving', '_scheduleTab', '_scheduleFormItems', '_schedulerRunning']);
 const overviewDetector = makeChangeDetector(['tasks', 'health']);
 // system 页变化检测器：取代原 syncSystemPage 中 18 行手写 lastXxx 比较
@@ -5186,7 +5658,7 @@ function syncDataPage(state) {
   if (!hasAny) return;
 
   // 子页面、加载/错误态、筛选横幅变化：全量重建（这些区域不只影响表格主体）
-  if (changed.dataSubPage || changed.dbLoading || changed.dbError || changed._prevNameUserIdFilter) { render(); return; }
+  if (changed.dataSubPage || changed.dbLoading || changed.dbError || changed._prevNameUserIdFilter || changed._relUserIdFilter || changed._relListIdFilter) { render(); return; }
 
   // 仅数据/排序/分页变化：局部更新表格 + 分页栏，保留标签页和搜索状态
   const subPage = state.dataSubPage;
@@ -5383,6 +5855,8 @@ store.subscribe((state) => {
   if (state.currentPage === null) return;
 
   if (state.currentPage !== _state.lastPage) {
+    // 离开任务页前保存表单输入（render 重建时旧表单已不在 DOM 中）
+    if (_state.lastPage === 'tasks') saveTaskFormState();
     _state.lastPage = state.currentPage;
     render();
     return;
@@ -5508,6 +5982,9 @@ document.getElementById('app').addEventListener('keydown', (e) => {
   if (e.target.id === 'authDialogKey') submitAuthKey();
 });
 
+// 防抖任务搜索：每次击键不立即全量重建列表
+const debouncedFilterTasks = debounce(filterTasks, 200);
+
 // Delegated input/change/blur for data-binding elements (replaces inline on* handlers)
 document.getElementById('contentContainer').addEventListener('input', (e) => {
   const el = e.target.closest('[data-binding]');
@@ -5516,7 +5993,7 @@ document.getElementById('contentContainer').addEventListener('input', (e) => {
   const idx = el.dataset.idx;
   if (binding === 'taskSearch') {
     updateSearchState('taskSearch', null, el.value);
-    filterTasks();
+    debouncedFilterTasks();
   } else if (binding === 'dbSearch') {
     updateSearchState('dbSearch', store.state.dataSubPage, el.value);
   } else if (binding === 'sf_field' && idx !== undefined) {
@@ -5559,6 +6036,8 @@ document.getElementById('contentContainer').addEventListener('click', (e) => {
   const tab = e.target.closest('[data-task-tab]');
   if (tab) {
     saveTaskFormState();
+    // 记录新激活 tab（saveTaskFormState 保存的是切换前的 active tab，需在此更新）
+    _state._taskFormTab = tab.dataset.taskTab;
     document.querySelectorAll('[data-task-tab]').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     document.getElementById('taskFormContainer').innerHTML = renderTaskForm(tab.dataset.taskTab);
@@ -5595,6 +6074,9 @@ document.addEventListener('click', (e) => {
     // Task creation
     case 'createUserTask':        createUserTask(el); break;
     case 'createProfileTask':     createProfileTask(el); break;
+    case 'markUserTask':          markUserTask(el); break;
+    case 'markFollowingTask':     markFollowingTask(el); break;
+    case 'markListTask':          markListTask(el); break;
     case 'createListTask':        createListTask(el); break;
     case 'createListProfileTask': createListProfileTask(el); break;
     case 'createFollowingTask':   createFollowingTask(el); break;
@@ -5642,6 +6124,9 @@ document.addEventListener('click', (e) => {
     case 'saveDBItem':            saveDBItem(el.dataset.dbType, el.dataset.dbId); break;
     case 'filterPreviousNamesByUser': filterPreviousNamesByUser(el.dataset.userId); break;
     case 'clearPreviousNamesFilter': clearPreviousNamesFilter(); break;
+    case 'viewUserRelations':      viewUserRelations(el); break;
+    case 'viewListRelations':      viewListRelations(el); break;
+    case 'clearRelFilter':         clearRelFilter(); break;
 
     // Logs
     case 'logSetLevel':       setLogLevel(el.dataset.level); break;
@@ -5656,6 +6141,10 @@ document.addEventListener('click', (e) => {
 
     // Server
     case 'shutdownServer':        shutdownServer(); break;
+
+    // Errors
+    case 'retryAllErrors':        retryAllErrors(); break;
+    case 'clearErrors':           clearErrors(); break;
 
     // Drawer
     case 'closeDrawer':           drawer.close(); return;
