@@ -276,7 +276,13 @@ function toast(msg, type) {
   el.innerHTML = '<span class="toast-icon">' + icons[type] + '</span><span class="toast-msg">' + esc(msg) + '</span><button class="toast-close" aria-label="Dismiss">✕</button>';
   el.querySelector('.toast-close').onclick = () => el.remove();
   container.appendChild(el);
-  setTimeout(() => { const e = document.getElementById('toast-'+id); if (e) e.remove(); }, 5000);
+  let timer = setTimeout(() => { const e = document.getElementById('toast-'+id); if (e) e.remove(); }, 5000);
+  // 悬停暂停自动消失，移出后重新计时
+  el.addEventListener('mouseenter', () => { clearTimeout(timer); });
+  el.addEventListener('mouseleave', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { const e = document.getElementById('toast-'+id); if (e) e.remove(); }, 5000);
+  });
 }
 
 /* ---- Modal ---- */
@@ -683,8 +689,9 @@ function connectSSE() {
       }
       const jwt = localStorage.getItem('tmd_jwt_token');
       if (!jwt) {
-        // 无 token：登录前静默重连，避免反复弹框
-        sseReconnectTimer = setTimeout(connectSSE, sseReconnectDelay);
+        // 无 token：停止重连（认证框打开期间避免后台 1-30s 反复请求）。
+        // 登录成功后 submitAuthKey 会 reload，checkAuth 重新建立 SSE。
+        sseReconnectTimer = null;
         return;
       }
       // auth/check 带旧 token 探测：网络错误 = 服务器暂时不可达 → 静默重连；401 = 会话失效 → 弹框
@@ -2656,7 +2663,7 @@ async function testSecKey() {
     // Use raw fetch instead of API._fetch() to test authentication explicitly:
     // API._fetch would already attach the same Bearer header and 401 handling,
     // making it impossible to distinguish "key works" from "server not responding".
-    const res = await fetchWithTimeout(apiBase() + '/api/v1/tasks?limit=1', {
+    const res = await fetchWithTimeout(apiBase() + '/api/v1/tasks', {
       headers: { 'Authorization': 'Bearer ' + key }
     });
     if (res.ok) { updateSecStatus('✅ Connection successful! API Key is valid', 'green'); }
@@ -2695,8 +2702,11 @@ function renderLogsPage(container) {
               <option value="twitter">twitter</option><option value="sse">sse</option><option value="consolelog">consolelog</option>
             </select>
             <input type="text" id="log-search-input" placeholder="search text..." style="width:130px" onkeydown="if(event.key==='Enter')doLogSearch()">
+            <input type="datetime-local" id="log-start-time" title="From time" style="width:160px">
+            <input type="datetime-local" id="log-end-time" title="To time" style="width:160px">
             <button class="btn btn-primary btn-sm" onclick="setLogLevel()">Filter</button>
             <button class="btn btn-ghost btn-sm" onclick="doLogSearch()">Search</button>
+            <button class="btn btn-ghost btn-sm" onclick="setLogTimeFilter()">Time</button>
             <button class="btn btn-ghost btn-sm" id="log-pause-btn" onclick="toggleLogPause()">Pause</button>
             <span id="log-stats-inline" class="text-sm text-muted" style="margin-left:8px"></span>
           </div>
@@ -2761,6 +2771,22 @@ let logPaused = false;   // 暂停实时插入
 let logPausedCount = 0;  // 暂停期间跳过的行数
 let _logBatch = [];      // 日志流批量追加缓冲（rAF 合并）
 let _logFlushRAF = null;
+let _logStartTime = '';  // 时间过滤：RFC3339（空 = 不限）
+let _logEndTime = '';
+
+// 应用日志时间过滤（datetime-local 值需补秒转 RFC3339，后端 parseFilterTime 接受该格式）
+function setLogTimeFilter() {
+  const startEl = document.getElementById('log-start-time');
+  const endEl = document.getElementById('log-end-time');
+  const startRaw = startEl ? startEl.value : '';
+  const endRaw = endEl ? endEl.value : '';
+  _logStartTime = startRaw ? new Date(startRaw).toISOString() : '';
+  _logEndTime = endRaw ? new Date(endRaw).toISOString() : '';
+  _logPage = 1;
+  _logGen++; // 代际递增：丢弃在途 loadMore 旧响应
+  disconnectLogSSE();
+  refreshLogs().then(() => connectLogSSE());
+}
 
 function toggleLogAutoScroll() {
   logAutoScroll = document.getElementById('log-auto-scroll-toggle').checked;
@@ -2873,7 +2899,7 @@ async function loadLogsReplace() {
   const level = document.getElementById('log-level') ? document.getElementById('log-level').value.trim() : '';
   const q = document.getElementById('log-search-input') ? document.getElementById('log-search-input').value.trim() : '';
   try {
-    const r = await ENDPOINTS.logs({ page: _logPage, pageSize: 200, level: level || undefined, domain: logDomain || undefined, q: q || undefined });
+    const r = await ENDPOINTS.logs({ page: _logPage, pageSize: 200, level: level || undefined, domain: logDomain || undefined, q: q || undefined, start_time: _logStartTime || undefined, end_time: _logEndTime || undefined });
     _logTotalPages = r.totalPages || 1;
     const lines = (r.logs || []).reverse();
     stream.innerHTML = lines.map(l => {
@@ -2901,7 +2927,7 @@ async function loadMoreLogs() {
   const level = document.getElementById('log-level') ? document.getElementById('log-level').value.trim() : '';
   const q = document.getElementById('log-search-input') ? document.getElementById('log-search-input').value.trim() : '';
   try {
-    const r = await ENDPOINTS.logs({ page: nextPage, pageSize: 200, level: level || undefined, domain: logDomain || undefined, q: q || undefined });
+    const r = await ENDPOINTS.logs({ page: nextPage, pageSize: 200, level: level || undefined, domain: logDomain || undefined, q: q || undefined, start_time: _logStartTime || undefined, end_time: _logEndTime || undefined });
     if (gen !== _logGen) {
       // 期间发生了筛选/刷新：丢弃旧响应并回退页码
       _logPage--;
@@ -2947,6 +2973,8 @@ function connectLogSSE() {
   if (level) params.append('level', level);
   if (logDomain) params.append('domain', logDomain);
   if (q) params.append('q', q);
+  if (_logStartTime) params.append('start_time', _logStartTime);
+  if (_logEndTime) params.append('end_time', _logEndTime);
   const key = sseJWT();
   if (key) params.append('token', key);
   const qs = params.toString();
@@ -3052,6 +3080,8 @@ function toggleErrorsPanel() {
   const isOpen = !body.classList.contains('hidden');
   body.classList.toggle('hidden', isOpen);
   if (arrow) arrow.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(90deg)';
+  const toggle = document.getElementById('errors-panel-toggle');
+  if (toggle) toggle.setAttribute('aria-expanded', String(!isOpen));
   if (!isOpen && _errorsData) updateErrorsPanel();
 }
 
