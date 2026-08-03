@@ -1,6 +1,6 @@
 # Twitter Media Downloader Pro
 
-> **版本**: 3.7.0 | **状态**: 活跃维护 | **许可证**: GPL-3.0
+> **版本**: 3.7.2 | **状态**: 活跃维护 | **许可证**: GPL-3.0
 
 Twitter Media Downloader Pro（简称 `tmdp`）的代码基于 [unkmonster/tmd](https://github.com/unkmonster/tmd) 项目，修改了部分代码，添加了新的功能特性。新增的功能见 [CHANGELOG.md文件](CHANGELOG.md)
 

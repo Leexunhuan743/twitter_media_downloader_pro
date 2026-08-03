@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ***
 
+## [v3.7.2] - 2026-08-03
+
+### Added
+
+#### web3 主题（深色玻璃拟态，第三套前端）
+- `internal/api/web/web3/`：全新深色玻璃拟态主题（原生 JS 零构建，hash 路由）
+- 完整覆盖后端 API：Dashboard / Tasks / Data / Schedules / Settings / Logs 六页
+- 主题切换器自动发现（`listThemes()` + `//go:embed web/*`，零后端改动）
+
+#### web1 / web2 完善
+- **web1**：Security 认证页（JWT 状态 + API Key 登录/测试/刷新/清除）、调度 diff CRUD 保存（POST/PUT/DELETE 逐条 + 基线防覆盖）、任务列表 keyed 增量渲染、日志前置分页保护（`_prependedCount`）、无障碍体系（键盘导航/Tab 陷阱/aria/WCAG 对比度）、概览统计卡精简
+- **web2**：Dashboard 概览页、任务 keyed 增量、实体/链接详情编辑（PATCH 契约白名单）、Failed Records 面板重设计（移至页底 + 计数徽章 + 自动展开）、日志时间过滤（RFC3339 毫秒剥离 + SSE 前端时间窗口）、日期选择器样式统一
+- 浏览器 E2E 回归套件：`tools/web1-e2e/`（9 个测试，可见性断言 + 重新查询模式，隔离实例 9/9 通过）
+
+#### 其它
+- Settings 主题切换（web3）、Profile 下载入口（web3）、Lists 表钻取（web3）、日志级别统计条（web3）
+- 三个主题的 logo/favicon 统一为内联 T 形图标（`handleFavicon` 同步）
+
+### Fixed
+
+- **web3 契约修复**（审核发现的 4 个 P0）：配置字段保存请求体对齐 `{fields:{name:value}}`、following 下载改真实端点、JSON 文件/文件夹下载路由与载荷（`{paths:[...]}`）
+- **web2 契约修复**：配置保存未定义变量崩溃、mark 时间戳 RFC3339、cookies `__KEEP_OLD__` 哨兵、mixed 调度编辑 id 冲突、实体编辑 `parent_dir` 只读 + 时间戳毫秒剥离
+- **web1 修复**：security tab 面板不可见（syncSystemPage 漏 panel 切换）、调度无变化保存 dirty 标志、日志 SSE 重连计数
+- **SSE 可靠性**：任务/日志 SSE 重连退避与认证探测（auth/check 区分网络故障与会话失效）、无 JWT 暂停重连、`_logGen` 代际守卫
+- **认证**：401 刷新失败清 token + 探测弹框、`api_key` 留空不再误关认证（显式 Clear 复选框）
+- 登录/配置保存等路径均经全新会话浏览器实测
+
+### Security
+
+- API Key 不再以明文落浏览器存储（web1/web2/web3 security 页统一为 JWT 会话 + `type=password` 输入）
+- 密码掩码值拒绝回传（`__KEEP_OLD__`/`__CLEAR__` 哨兵契约）、XSS 内插转义补全、日志导出 fetch+blob（JWT 不落 URL）
+
+## [v3.7.1] - 2026-07-31
+
+### Changed
+
+- 细化日志输出格式（download 相关字段顺序稳定化）
+- 发布构建启用 `-trimpath`（可复现构建）
+- 依赖版本更新（sqlite / ants / discordgo 等）
+
 ## [v3.7.0] - 2026-07-29
 
 ### Changed
