@@ -2534,54 +2534,62 @@ async function handleQuickDownload(button = null) {
 }
 
 async function createUserTask(button = null) {
-  const name = document.getElementById('userScreenName').value.trim();
-  if (!name) return toast.show('请输入 Screen Name', 'error');
-  const ok = await runTaskButtonAction(button, `create:user:${name}`, () => apiTask(
-    () => api.createUserDownload(name, getCheckedOptions('user')),
-    '用户下载任务已创建'
-  ));
-  if (ok) document.getElementById('userScreenName').value = '';
+  return createTaskFromInput(button, {
+    inputId: 'userScreenName', emptyMsg: '请输入 Screen Name',
+    actionKeyPrefix: 'create:user',
+    makeApi: v => api.createUserDownload(v, getCheckedOptions('user')),
+    successMsg: '用户下载任务已创建',
+  });
 }
 
 async function createProfileTask(button = null) {
-  const name = document.getElementById('userScreenName').value.trim();
-  if (!name) return toast.show('请输入 Screen Name', 'error');
-  const ok = await runTaskButtonAction(button, `create:profile:${name}`, () => apiTask(
-    () => api.createProfileDownload(name),
-    'Profile 下载任务已创建'
-  ));
-  if (ok) document.getElementById('userScreenName').value = '';
+  return createTaskFromInput(button, {
+    inputId: 'userScreenName', emptyMsg: '请输入 Screen Name',
+    actionKeyPrefix: 'create:profile',
+    makeApi: v => api.createProfileDownload(v),
+    successMsg: 'Profile 下载任务已创建',
+  });
 }
 
 async function markUserTask(button = null) {
-  const name = document.getElementById('userScreenName').value.trim();
-  if (!name) return toast.show('请输入 Screen Name', 'error');
-  const ok = await runTaskButtonAction(button, `mark:user:${name}`, () => apiTask(
-    () => api.createUserMark(name),
-    '标记任务已创建'
-  ));
-  if (ok) document.getElementById('userScreenName').value = '';
+  return createTaskFromInput(button, {
+    inputId: 'userScreenName', emptyMsg: '请输入 Screen Name',
+    actionKeyPrefix: 'mark:user',
+    makeApi: v => api.createUserMark(v),
+    successMsg: '标记任务已创建',
+  });
 }
 
 async function markFollowingTask(button = null) {
-  const name = document.getElementById('followingScreenName').value.trim();
-  if (!name) return toast.show('请输入 Screen Name', 'error');
-  const ok = await runTaskButtonAction(button, `mark:following:${name}`, () => apiTask(
-    () => api.createFollowingMark(name),
-    '标记任务已创建'
-  ));
-  if (ok) document.getElementById('followingScreenName').value = '';
+  return createTaskFromInput(button, {
+    inputId: 'followingScreenName', emptyMsg: '请输入 Screen Name',
+    actionKeyPrefix: 'mark:following',
+    makeApi: v => api.createFollowingMark(v),
+    successMsg: '标记任务已创建',
+  });
 }
 
 async function markListTask(button = null) {
-  const id = document.getElementById('listId').value.trim();
-  if (!id) return toast.show('请输入 List ID', 'error');
-  if (!/^\d+$/.test(id)) return toast.show('List ID 必须为数字', 'error');
-  const ok = await runTaskButtonAction(button, `mark:list:${id}`, () => apiTask(
-    () => api.createListMark(id),
-    '标记任务已创建'
-  ));
-  if (ok) document.getElementById('listId').value = '';
+  return createTaskFromInput(button, {
+    inputId: 'listId', emptyMsg: '请输入 List ID', numericOnly: true,
+    actionKeyPrefix: 'mark:list',
+    makeApi: v => api.createListMark(v),
+    successMsg: '标记任务已创建',
+  });
+}
+
+// 单输入任务创建模板：读输入 → 空/格式校验 → 防重入执行 → 成功清空输入。
+// 统一了 user/list/following 三组创建/Profile/标记 handler 的重复骨架，
+// 并把 List ID 数字校验（此前仅 markListTask 有）统一到所有 list 入口。
+async function createTaskFromInput(button, { inputId, emptyMsg, numericOnly = false, actionKeyPrefix, makeApi, successMsg }) {
+  const input = document.getElementById(inputId);
+  if (!input) return false;
+  const value = input.value.trim();
+  if (!value) return toast.show(emptyMsg, 'error');
+  if (numericOnly && !/^\d+$/.test(value)) return toast.show('List ID 必须为数字', 'error');
+  const ok = await runTaskButtonAction(button, `${actionKeyPrefix}:${value}`, () => apiTask(makeApi(value), successMsg));
+  if (ok) input.value = '';
+  return ok;
 }
 
 async function apiTask(apiCall, successMsg) {
@@ -2633,33 +2641,30 @@ function getCheckedOptions(prefix) {
 }
 
 async function createListTask(button = null) {
-  const id = document.getElementById('listId').value.trim();
-  if (!id) return toast.show('请输入 List ID', 'error');
-  const ok = await runTaskButtonAction(button, `create:list:${id}`, () => apiTask(
-    () => api.createListDownload(id, getCheckedOptions('list')),
-    '列表下载任务已创建'
-  ));
-  if (ok) document.getElementById('listId').value = '';
+  return createTaskFromInput(button, {
+    inputId: 'listId', emptyMsg: '请输入 List ID', numericOnly: true,
+    actionKeyPrefix: 'create:list',
+    makeApi: v => api.createListDownload(v, getCheckedOptions('list')),
+    successMsg: '列表下载任务已创建',
+  });
 }
 
 async function createListProfileTask(button = null) {
-  const id = document.getElementById('listId').value.trim();
-  if (!id) return toast.show('请输入 List ID', 'error');
-  const ok = await runTaskButtonAction(button, `create:list-profile:${id}`, () => apiTask(
-    () => api.createListProfile(id),
-    '列表 Profile 任务已创建'
-  ));
-  if (ok) document.getElementById('listId').value = '';
+  return createTaskFromInput(button, {
+    inputId: 'listId', emptyMsg: '请输入 List ID', numericOnly: true,
+    actionKeyPrefix: 'create:list-profile',
+    makeApi: v => api.createListProfile(v),
+    successMsg: '列表 Profile 任务已创建',
+  });
 }
 
 async function createFollowingTask(button = null) {
-  const name = document.getElementById('followingScreenName').value.trim();
-  if (!name) return toast.show('请输入 Screen Name', 'error');
-  const ok = await runTaskButtonAction(button, `create:following:${name}`, () => apiTask(
-    () => api.createFollowingDownload(name, getCheckedOptions('following')),
-    '关注下载任务已创建'
-  ));
-  if (ok) document.getElementById('followingScreenName').value = '';
+  return createTaskFromInput(button, {
+    inputId: 'followingScreenName', emptyMsg: '请输入 Screen Name',
+    actionKeyPrefix: 'create:following',
+    makeApi: v => api.createFollowingDownload(v, getCheckedOptions('following')),
+    successMsg: '关注下载任务已创建',
+  });
 }
 
 async function createMarkTask(button = null) {
@@ -3852,17 +3857,25 @@ async function refreshLogs() {
   if (!logSSESource) connectLogSSE();
 }
 
+// 构建日志查询参数（loadLogsReplace / loadMoreLogs / connectLogSSE 共用）：
+// page 可选（SSE 流不需要分页），level/domain 非 all 才追加，q 非空才追加
+function buildLogQuery({ page = null, pageSize = 200, level = 'all', domain = 'all', q = '' } = {}) {
+  const p = new URLSearchParams();
+  if (page != null) p.append('page', String(page));
+  p.append('pageSize', String(pageSize));
+  if (level !== 'all') p.append('level', level);
+  if (domain !== 'all') p.append('domain', domain);
+  if (q) p.append('q', q);
+  return p;
+}
+
 async function loadLogsReplace() {
   const stream = document.getElementById('log-stream');
   if (!stream) return;
   const { logLevel, logSearch, logPage, logDomain } = store.state;
   try {
-    const p = new URLSearchParams();
-    p.append('page', String(logPage));
-    p.append('pageSize', '200');
-    if (logLevel !== 'all') p.append('level', logLevel);
-    if (logDomain !== 'all') p.append('domain', logDomain);
-    if (logSearch) p.append('q', logSearch);
+    const { logLevel, logSearch, logPage, logDomain } = store.state;
+    const p = buildLogQuery({ page: logPage, level: logLevel, domain: logDomain, q: logSearch });
     const d = await api.getLogs('?' + p.toString());
     const lines = (d.logs || []).reverse();
     stream.innerHTML = lines.length ? renderLogLines(lines) : renderLogEmptyHint('没有匹配日志', '调整级别或搜索条件后重试');
@@ -3887,12 +3900,7 @@ async function loadMoreLogs() {
   store.setState({ logPage: nextPage });
   const { logLevel, logSearch, logDomain } = store.state;
   try {
-    const p = new URLSearchParams();
-    p.append('page', String(nextPage));
-    p.append('pageSize', '200');
-    if (logLevel !== 'all') p.append('level', logLevel);
-    if (logDomain !== 'all') p.append('domain', logDomain);
-    if (logSearch) p.append('q', logSearch);
+    const p = buildLogQuery({ page: nextPage, level: logLevel, domain: logDomain, q: logSearch });
     const d = await api.getLogs('?' + p.toString());
     // 代际过期：期间发生了刷新/筛选变化，丢弃本次响应（防止旧筛选条件下的老页混入）
     if (gen !== _logGen) {
@@ -4915,10 +4923,10 @@ function failScheduleRule(index, message) {
   return false;
 }
 
-// 规范化调度条目用于 diff 保存：固定字段顺序的 JSON 字符串（id 不参与比较），
-// 返回 { entry, key } —— entry 可直接作为 POST/PUT body
-function normalizeSchedForDiff(item) {
-  const entry = {
+// form item → 服务器 entry 的单一转换（saveScheduleForm 兜底全量、diff 保存共用），
+// enabled 统一 !== false 语义，文本字段带空保护
+function scheduleFormItemToEntry(item) {
+  return {
     type: item.type,
     target: item.type === 'mixed' ? '' : (item.target || '').trim(),
     users: item.type === 'mixed' ? (item.users || []) : [],
@@ -4933,6 +4941,12 @@ function normalizeSchedForDiff(item) {
     skip_profile: !!item.skip_profile,
     no_retry: !!item.no_retry,
   };
+}
+
+// 规范化调度条目用于 diff 保存：固定字段顺序的 JSON 字符串（id 不参与比较），
+// 返回 { entry, key } —— entry 可直接作为 POST/PUT body
+function normalizeSchedForDiff(item) {
+  const entry = scheduleFormItemToEntry(item);
   return { entry, key: JSON.stringify(entry) };
 }
 
@@ -4955,22 +4969,7 @@ async function saveScheduleForm() {
 
   if (!(await validateScheduleForm())) return;
 
-  const schedules = items.map(item => ({
-    id: item.id || '',
-    type: item.type,
-    target: item.type === 'mixed' ? '' : item.target.trim(),
-    users: item.type === 'mixed' ? (item.users || []) : [],
-    lists: item.type === 'mixed' ? (item.lists || []) : [],
-    following_names: item.type === 'mixed' ? (item.following_names || []) : [],
-    name: item.name.trim(),
-    schedule: `${item.scheduleMode}:${item.scheduleValue.trim()}`,
-    enabled: item.enabled,
-    run_on_start: item.run_on_start,
-    auto_follow: item.auto_follow,
-    follow_members: item.follow_members,
-    skip_profile: item.skip_profile,
-    no_retry: item.no_retry,
-  }));
+  const schedules = items.map(item => ({ id: item.id || '', ...scheduleFormItemToEntry(item) }));
 
   store.setState({ _scheduleFormItems: items, _scheduleSaving: true });
   try {
@@ -5000,14 +4999,22 @@ async function saveScheduleForm() {
       }
 
       if (!creates.length && !updates.length && !deletes.length) {
-        // 无任何变化：直接同步表单与 raw 状态后退出
-        store.setState({ _scheduleSaving: false });
-        toast.show('调度配置无变化');
-        const rawData = await api.getSchedulesRaw();
+        // 无任何变化：与保存成功路径一致地清理 dirty/undo 状态，
+        // 否则 _scheduleFormDirty 保持 true 会让 SSE 调度同步与重连刷新永久跳过表单更新
         store.setState({
-          _scheduleRaw: rawData.content || '',
-          _scheduleExists: rawData.exists || false,
+          _scheduleSaving: false,
+          _scheduleFormDirty: false,
+          _scheduleUndoDelete: null,
+          _scheduleUndoStack: [],
         });
+        // raw 快照同步 fire-and-forget：无变化时失败不打扰用户（不是保存失败）
+        api.getSchedulesRaw().then(rawData => {
+          store.setState({
+            _scheduleRaw: rawData.content || '',
+            _scheduleExists: rawData.exists || false,
+          });
+        }).catch(() => {});
+        toast.show('调度配置无变化');
         return;
       }
 
@@ -5366,10 +5373,7 @@ function connectLogSSE() {
   if (_logSSETimer) { clearTimeout(_logSSETimer); _logSSETimer = null; }
   _logIntentionalDisconnect = false;
   const { logLevel, logSearch, logDomain } = store.state;
-  const params = new URLSearchParams();
-  if (logLevel !== 'all') params.append('level', logLevel);
-  if (logDomain !== 'all') params.append('domain', logDomain);
-  if (logSearch) params.append('q', logSearch);
+  const params = buildLogQuery({ level: logLevel, domain: logDomain, q: logSearch }); // SSE 流不分页
   appendJWTToken(params);
   const qs = params.toString();
   const url = '/api/v1/logs/stream' + (qs ? '?' + qs : '');
@@ -6344,14 +6348,28 @@ document.getElementById('contentContainer').addEventListener('keydown', (e) => {
 });
 
 // Esc 关闭：抽屉优先，其次认证弹窗（键盘可达性）
+// Tab 焦点陷阱：抽屉/认证弹窗打开时 Tab/Shift+Tab 循环约束在容器内，不落到遮罩后的页面
 document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
-  if (drawer.el.classList.contains('open')) {
-    drawer.close();
+  if (e.key === 'Escape') {
+    if (drawer.el.classList.contains('open')) {
+      drawer.close();
+      return;
+    }
+    const authOverlayEl = document.getElementById('authOverlay');
+    if (authOverlayEl && authOverlayEl.classList.contains('open')) hideAuthDialog();
     return;
   }
+  if (e.key !== 'Tab') return;
   const authOverlayEl = document.getElementById('authOverlay');
-  if (authOverlayEl && authOverlayEl.classList.contains('open')) hideAuthDialog();
+  const openModal = drawer.el.classList.contains('open') ? drawer.el
+    : (authOverlayEl && authOverlayEl.classList.contains('open') ? authOverlayEl : null);
+  if (!openModal) return;
+  const focusables = openModal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+  if (!focusables.length) { e.preventDefault(); return; }
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 });
 
 // 导航项键盘可达性：role=link 的 div 用 Enter/Space 触发导航（与点击行为一致）

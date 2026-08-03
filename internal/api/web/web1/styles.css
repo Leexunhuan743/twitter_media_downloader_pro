@@ -317,7 +317,7 @@ ul, ol {
   padding: 4px 8px;
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background var(--duration-fast);
 }
 .sse-indicator:hover {
   background: var(--bg-tertiary);
@@ -327,7 +327,7 @@ ul, ol {
   height: 8px;
   border-radius: 50%;
   background: var(--danger);
-  transition: background 0.3s;
+  transition: background var(--duration-normal);
 }
 .sse-indicator.connected .sse-dot {
   background: var(--success);
@@ -397,7 +397,7 @@ ul, ol {
   border-radius: var(--radius-md);
   font-size: var(--text-base);
   font-weight: var(--font-medium);
-  transition: background var(--duration-fast), color var(--duration-fast), border-color var(--duration-fast), box-shadow var(--duration-fast), transform .1s;
+  transition: background var(--duration-fast), color var(--duration-fast), border-color var(--duration-fast), box-shadow var(--duration-fast), transform var(--duration-fast);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -664,7 +664,7 @@ ul, ol {
   height: 100%;
   background: linear-gradient(90deg, var(--accent-primary), var(--success));
   border-radius: 3px;
-  transition: width 0.3s var(--ease-out);
+  transition: width var(--duration-normal) var(--ease-out);
 }
 
 /* Tables */
@@ -877,7 +877,7 @@ ul, ol {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
-  animation: slideInLeft 0.3s var(--ease-out);
+  animation: slideInLeft var(--duration-normal) var(--ease-out);
 }
 
 .toast-success {
@@ -1507,22 +1507,6 @@ ul, ol {
 }
 
 /* Animations */
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-@keyframes slideInRight {
-  from {
-    opacity: 0;
-    transform: translateX(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
 @keyframes slideInLeft {
   from {
     opacity: 0;
@@ -1820,7 +1804,7 @@ ul, ol {
 }
 
 .system-panel {
-  animation: fadeIn 0.2s ease;
+  animation: fadeIn var(--duration-fast) ease;
 }
 
 .config-hint {
@@ -2090,7 +2074,7 @@ ul, ol {
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   animation: log-scroll-btn-pulse 2s ease-in-out infinite;
-  transition: opacity 0.2s;
+  transition: opacity var(--duration-fast);
   white-space: nowrap;
 }
 .log-scroll-to-top-btn:hover {
@@ -2381,21 +2365,6 @@ ul, ol {
 
 .auth-modal-footer .btn {
   min-width: 80px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .auth-overlay,
-  .auth-modal,
-  .sidebar-overlay,
-  .drawer-overlay,
-  .drawer {
-    transition-duration: 0s !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-  }
-  .auth-modal {
-    transform: none !important;
-  }
 }
 
 
