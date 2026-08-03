@@ -116,7 +116,7 @@ GET      /api/v1/db/stats
 
 ## Web UI
 
-Two independent frontend themes in `internal/api/web/`:
+Three independent frontend themes in `internal/api/web/`:
 
 web1 additionally surfaces backend features with no dedicated UI elsewhere: a failed-records panel on the tasks page (`/api/v1/errors` list/retry-all/clear), a queue-depth card on the overview page (`/api/v1/queue/status`), single-target mark buttons on the user/list/following task forms, related-entity drilldown from data rows (user → entities/links, list → entities, with filter banner + clear), and a per-table record-count bar on the data page (`/api/v1/db/stats`, rendered inside the page header next to the table tabs). Task form input and the active task tab survive page switches via `_taskFormState`/`_taskFormTab`. The system page has a security tab (JWT session status with expiry, API Key login/test/refresh/clear without persisting the key to localStorage), and the schedules page offers a reload button (`POST /schedules/reload`) for external `schedules.yaml` edits.
 
@@ -132,20 +132,24 @@ web2 covers the same backend surface with a lighter UI: a dashboard landing page
 internal/api/web/
 ├── web1/          # Classic theme
 │   ├── index.html
-│   ├── app.js     (~204KB)
-│   └── styles.css (~40KB)
-└── web2/          # New streamlined theme
+│   ├── app.js     (~260KB)
+│   └── styles.css (~48KB)
+├── web2/          # New streamlined theme
+│   ├── index.html
+│   ├── app.js     (~161KB)
+│   ├── styles.css (~26KB)
+│   └── favicon.svg
+└── web3/          # Dark glassmorphism theme
     ├── index.html
-    ├── app.js     (~104KB)
-    ├── styles.css (~20KB)
-    └── favicon.svg
+    ├── app.js     (~109KB)
+    └── styles.css (~23KB)
 ```
 
 - **No build step** — pure HTML/CSS/JS, embedded via Go `//go:embed`
 - **Runtime hot-switch** — `GET/POST /api/v1/config/theme` + `GET /api/v1/config/themes`
 - **Theme switcher** — floating 🎨 button injected by Go handler (`themeSwitcherHTML()`)
 - **Security** — validates target directory exists and contains index.html
-- **Shared backend** — both themes call same REST API + EventSource SSE
+- **Shared backend** — all three themes call same REST API + EventSource SSE
 
 ## Web1 Console Architecture
 
@@ -155,7 +159,7 @@ internal/api/web/
 
 The Web1 task console renders task state from REST snapshots and SSE task broadcasts without inventing extra task states.
 
-Task list status filters use the task `status` field, while stage filters use `progress.stage` values such as `downloading`, `retrying`, `profile`, and `marking`. Task IDs are shortened only for display; full IDs remain in `data-task-id`, tooltips, detail views, and search matching.
+Task list status filters use the task `status` field, while stage filters use `progress.stage` values such as `downloading`, `retrying`, `profile`, and `marking`. Task IDs are shortened only for display; full IDs remain in `data-task-id`, tooltips, and detail views.
 
 Task creation and task mutation buttons use a client-side pending-action guard so repeated clicks do not submit duplicate requests. The task detail drawer tracks the open task ID and refreshes its content from each SSE task snapshot when that task is present.
 
@@ -189,9 +193,9 @@ The Web1 log viewer renders backend TextFormatter lines directly, then applies d
 
 Historical log pages and live log SSE events share the same rendering helpers for ANSI stripping, timestamp/domain highlighting, field highlighting, and tweet-id click-to-copy. Log export appends the JWT token as a query parameter because `window.open` cannot send the API client's Authorization header.
 
-The log API and live stream both accept `level`, `q`, and `domain` filters, so the Web1 domain selector has the same pagination and realtime semantics as level and text search. Domain values match bracketed prefixes such as `[download]` and `[api]`.
+The log API and live stream both accept `level`, `q`, and `domain` filters, so the Web1 domain selector has the same pagination and realtime semantics as the level filter. The `q` text filter remains available at the API level for other clients. Domain values match bracketed prefixes such as `[download]` and `[api]`.
 
-The Web1 log view supports pausing visual insertion of live lines without closing the SSE connection. While paused, matching lines are counted; resuming refreshes history so skipped live lines are loaded through the same paginated API path.
+The Web1 log viewer renders backend TextFormatter lines directly with display-only highlighting; controls are level filter, domain filter, auto-scroll, and export.
 
 Rendered log rows keep the stripped raw line in `data-log-line`, expose explicit copy buttons for the whole line and tweet id, and cap the live DOM stream at 5000 rows to avoid unbounded browser memory growth.
 
