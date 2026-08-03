@@ -849,6 +849,54 @@ pre { font-family: var(--font-mono); font-size: 12px; background: var(--sidebar-
 .modal-body .table-wrap { overflow-x: auto; }
 .modal-body table { display: block; overflow-x: auto; max-width: 100%; }
 
+/* ---- Failed Records Panel ---- */
+.errors-panel.has-errors { border-left: 3px solid var(--red); }
+.errors-panel-header { display: flex; align-items: center; gap: 10px; }
+.errors-panel-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+  background: var(--red-bg);
+  color: var(--red);
+}
+.errors-panel-title { font-weight: 600; font-size: 14px; }
+.errors-panel-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  margin-left: auto;
+  border-radius: 999px;
+  background: var(--red);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.errors-panel-arrow { font-size: 11px; color: var(--text-secondary); transition: transform var(--duration-normal) ease; }
+.errors-empty { padding: 16px; text-align: center; color: var(--text-secondary); font-size: 13px; }
+.errors-actions { display: flex; gap: 8px; margin-bottom: 12px; }
+.errors-summary {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background: var(--bg-hover);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.errors-summary-item strong { color: var(--text); font-weight: 600; }
+
 /* ---- Reduced Motion ---- */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

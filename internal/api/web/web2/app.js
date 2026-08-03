@@ -766,16 +766,6 @@ function renderTasksPage(container) {
         </div>
       </div>
     </div>
-    <div class="card mb-4" id="errors-panel">
-      <div class="card-header" onclick="toggleErrorsPanel()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleErrorsPanel()}" tabindex="0" role="button" aria-expanded="false" id="errors-panel-toggle" style="cursor:pointer;user-select:none">
-        <span id="errors-panel-title">Failed Records</span>
-        <span id="errors-panel-badge" style="margin-left:auto"></span>
-        <span id="errors-panel-arrow" style="margin-left:8px;transition:transform .2s">▶</span>
-      </div>
-      <div class="card-body hidden" id="errors-panel-body">
-        <div id="errors-panel-content"><div class="loading"><div class="spinner"></div> Loading...</div></div>
-      </div>
-    </div>
     <div class="section">
       <div class="section-header">
         <h2>Tasks</h2>
@@ -820,6 +810,19 @@ function renderTasksPage(container) {
             <p>No tasks yet. Start a download to see tasks here.</p>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- Failed Records（任务页底端） -->
+    <div class="card mb-4 errors-panel" id="errors-panel">
+      <div class="card-header errors-panel-header" onclick="toggleErrorsPanel()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleErrorsPanel()}" tabindex="0" role="button" aria-expanded="false" id="errors-panel-toggle" style="cursor:pointer;user-select:none">
+        <span class="errors-panel-icon" id="errors-panel-icon" aria-hidden="true">⚠</span>
+        <span class="errors-panel-title" id="errors-panel-title">Failed Records</span>
+        <span class="errors-panel-badge" id="errors-panel-badge"></span>
+        <span class="errors-panel-arrow" id="errors-panel-arrow" aria-hidden="true">▶</span>
+      </div>
+      <div class="card-body hidden" id="errors-panel-body">
+        <div id="errors-panel-content"><div class="loading"><div class="spinner"></div> Loading...</div></div>
       </div>
     </div>`;
 
@@ -3136,41 +3139,68 @@ async function loadErrors() {
 function updateErrorsPanel() {
   const title = document.getElementById('errors-panel-title');
   const badge = document.getElementById('errors-panel-badge');
+  const icon = document.getElementById('errors-panel-icon');
   const arrow = document.getElementById('errors-panel-arrow');
   const body = document.getElementById('errors-panel-body');
   const content = document.getElementById('errors-panel-content');
+  const panel = document.getElementById('errors-panel');
   if (!content) return;
 
   const r = _errorsData || {};
   const regular = r.regular || {};
   const json = r.json || [];
   const regKeys = Object.keys(regular);
+  const regTotal = regKeys.reduce((s, k) => s + (regular[k] || 0), 0);
+  const jsonTotal = json.reduce((s, j) => s + (j.count || 0), 0);
   const total = regKeys.length + json.length;
 
-  if (title) title.textContent = 'Failed Records' + (total ? ' (' + total + ')' : '');
+  if (title) title.textContent = 'Failed Records';
+  if (panel) panel.classList.toggle('has-errors', total > 0);
+  if (icon) {
+    icon.style.display = total > 0 ? '' : 'none';
+    icon.style.background = total > 0 ? 'var(--red-bg)' : 'transparent';
+    icon.style.color = 'var(--red)';
+  }
   if (badge) {
-    badge.textContent = total > 0 ? '\u26A0\uFE0F' : '';
+    badge.textContent = total > 0 ? String(total) : '';
     badge.style.display = total > 0 ? '' : 'none';
-	}
-	if (!total) {
-		if (body) body.classList.add('hidden');
-		content.innerHTML = '';
-		return;
-	}
+  }
+
+  // 无错误：折叠面板，显示轻量空态（默认收起，避免页面噪音）
+  if (!total) {
+    body.classList.add('hidden');
+    if (arrow) arrow.style.transform = 'rotate(0deg)';
+    const toggle = document.getElementById('errors-panel-toggle');
+    if (toggle) toggle.setAttribute('aria-expanded', 'false');
+    content.innerHTML = '<div class="errors-empty">No failed records — everything looks good.</div>';
+    return;
+  }
+
+  // 有错误：自动展开，方便用户第一时间发现
+  if (body.classList.contains('hidden')) {
+    body.classList.remove('hidden');
+    if (arrow) arrow.style.transform = 'rotate(90deg)';
+    const toggle = document.getElementById('errors-panel-toggle');
+    if (toggle) toggle.setAttribute('aria-expanded', 'true');
+  }
 
   content.innerHTML = `
-    <div style="margin-bottom:10px;display:flex;gap:8px">
+    <div class="errors-actions">
       <button class="btn btn-primary btn-sm" onclick="retryAllErrors()">Retry All Failed</button>
       <button class="btn btn-danger btn-sm" onclick="clearAllErrors()">Clear Errors</button>
     </div>
-    ${regKeys.length ? `<div class="section-header mt-2"><h3>Regular errors (${regKeys.length} entities)</h3></div>
-    <table><thead><tr><th>Entity ID</th><th>Failed Tweets</th></tr></thead><tbody>${regKeys.map(k => `<tr><td>${esc(k)}</td><td>${regular[k]}</td></tr>`).join('')}</tbody></table>` : ''}
-    ${json.length ? `<div class="section-header mt-2"><h3>JSON errors (${json.length} sources)</h3></div>
-    <table><thead><tr><th>Source</th><th>Count</th></tr></thead><tbody>${json.map(j => `<tr><td class="mono">${esc(j.source_path||'')}</td><td>${j.count||0}</td></tr>`).join('')}</tbody></table>` : ''}`;
+    <div class="errors-summary">
+      <span class="errors-summary-item"><strong>${regKeys.length}</strong> entit${regKeys.length === 1 ? 'y' : 'ies'} &middot; ${regTotal} failed tweet${regTotal === 1 ? '' : 's'}</span>
+      ${json.length ? `<span class="errors-summary-item"><strong>${json.length}</strong> JSON source${json.length === 1 ? '' : 's'} &middot; ${jsonTotal} failed tweet${jsonTotal === 1 ? '' : 's'}</span>` : ''}
+    </div>
+    ${regKeys.length ? `<div class="section-header mt-2"><h3>Regular errors</h3></div>
+    <div class="table-wrap"><table><thead><tr><th>Entity ID</th><th>Failed Tweets</th></tr></thead><tbody>${regKeys.map(k => `<tr><td class="mono">${esc(k)}</td><td>${regular[k]}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${json.length ? `<div class="section-header mt-2"><h3>JSON errors</h3></div>
+    <div class="table-wrap"><table><thead><tr><th>Source</th><th>Count</th></tr></thead><tbody>${json.map(j => `<tr><td class="mono">${esc(j.source_path||'')}</td><td>${j.count||0}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
 }
 
 async function retryAllErrors() {
-  try { const r = await ENDPOINTS.retryErrors(); toast('Retry task: ' + r.task_id, 'success'); }
+  try { const r = await ENDPOINTS.retryErrors(); toast('Retry task: ' + r.task_id, 'success'); loadErrors(); }
   catch(e) { toast(e.message, 'error'); }
 }
 
