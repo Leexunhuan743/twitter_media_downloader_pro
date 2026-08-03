@@ -51,10 +51,13 @@ const API = {
             const r2 = await fetchWithTimeout(url, retryOpts);
             if (r2.status !== 401) return r2;
           }
-          // 刷新失败：清理失效 token 并引导重新登录（避免各处只报 unauthorized）
-          localStorage.removeItem('tmd_jwt_token');
-          localStorage.removeItem('tmd_jwt_expiry');
-          showAuthDialog();
+          // 刷新失败：用 auth/check 区分「会话确实失效（401 → 清 token 引导重登）」与「网络抖动（保留 token）」
+          const probe = await fetchWithTimeout(apiBase() + '/api/v1/auth/check', { headers: { 'Authorization': 'Bearer ' + jwt } }).catch(() => null);
+          if (probe && probe.status === 401) {
+            localStorage.removeItem('tmd_jwt_token');
+            localStorage.removeItem('tmd_jwt_expiry');
+            showAuthDialog('Session expired - please re-authenticate');
+          }
         }
         const authErr = new Error('unauthorized');
         authErr.status = 401;
@@ -305,6 +308,7 @@ function openModal(html) {
 function closeModal() {
   if (currentModal) {
     const opener = currentModal._lastFocused;
+    if (currentModal.querySelector('#authDialogKey')) _authDialogOpen = false;
     currentModal.remove();
     currentModal = null;
     if (opener && opener.isConnected) opener.focus();
@@ -470,38 +474,42 @@ function renderDashboard(container) {
     </div>`;
   updateDashboard();
   checkHealth();
-  // 队列深度
+  // 队列深度（就地更新 dash-queue-depth，updateDashboard 不再重建卡片）
   ENDPOINTS.queueStatus().then(q => {
     const el = document.getElementById('dash-queue-depth');
     if (el) el.textContent = q.queue_depth || 0;
-    const labels = document.querySelectorAll('#dash-stats .stat-card[data-dash]');
-    labels.forEach(l => {
-      const k = l.dataset.dash;
-      if (k === 'active') l.querySelector('.stat-value').textContent = q.active_jobs || 0;
-      if (k === 'pending') l.querySelector('.stat-value').textContent = q.pending_jobs || 0;
-      if (k === 'detached') l.querySelector('.stat-value').textContent = q.detached_jobs || 0;
-    });
   }).catch(() => {});
 }
 
-// 更新概览页统计与最近任务（SSE 快照到达时调用）
+// 更新概览页统计与最近任务（SSE 快照到达时调用；就地更新避免重建清掉动态值）
 function updateDashboard() {
   const tasks = pageTasks;
   const stats = {queued:0, running:0, completed:0, failed:0, cancelled:0, total:tasks.length};
   tasks.forEach(t => { if (stats[t.status] !== undefined) stats[t.status]++; });
   const statsEl = document.getElementById('dash-stats');
   if (statsEl) {
-    statsEl.innerHTML = `
-      <div class="stat-card completed"><div class="stat-value" id="dash-health-text">${document.getElementById('health-text') ? document.getElementById('health-text').textContent : 'OK'}</div><div class="stat-label">Status</div></div>
-      <div class="stat-card running"><div class="stat-value">${stats.running}</div><div class="stat-label">Running</div></div>
-      <div class="stat-card queued"><div class="stat-value">${stats.queued}</div><div class="stat-label">Queued</div></div>
-      <div class="stat-card completed"><div class="stat-value">${stats.completed}</div><div class="stat-label">Completed</div></div>
-      <div class="stat-card total"><div class="stat-value" id="dash-queue-depth">-</div><div class="stat-label">Queue Depth</div></div>
-    `;
+    // 首次渲染建卡；之后只更新数值（重建会清掉 queue_depth 等动态值）
+    if (!statsEl.dataset.built) {
+      statsEl.dataset.built = '1';
+      statsEl.innerHTML = `
+        <div class="stat-card completed"><div class="stat-value" data-dash-stat="health" id="dash-health-text">${document.getElementById('health-text') ? document.getElementById('health-text').textContent : 'OK'}</div><div class="stat-label">Status</div></div>
+        <div class="stat-card running"><div class="stat-value" data-dash-stat="running">${stats.running}</div><div class="stat-label">Running</div></div>
+        <div class="stat-card queued"><div class="stat-value" data-dash-stat="queued">${stats.queued}</div><div class="stat-label">Queued</div></div>
+        <div class="stat-card completed"><div class="stat-value" data-dash-stat="completed">${stats.completed}</div><div class="stat-label">Completed</div></div>
+        <div class="stat-card total"><div class="stat-value" data-dash-stat="queue" id="dash-queue-depth">-</div><div class="stat-label">Queue Depth</div></div>
+      `;
+    } else {
+      const setVal = (key, v) => { const el = statsEl.querySelector('[data-dash-stat="' + key + '"]'); if (el && el.textContent !== String(v)) el.textContent = v; };
+      setVal('running', stats.running);
+      setVal('queued', stats.queued);
+      setVal('completed', stats.completed);
+    }
   }
   const tbody = document.getElementById('dash-task-body');
   if (!tbody) return;
-  const recent = tasks.slice(0, 5);
+  // 后端快照遍历 Go map 顺序随机，按 created_at 降序取真正的最近 5 条
+  const sorted = [...tasks].sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+  const recent = sorted.slice(0, 5);
   if (!recent.length) {
     tbody.innerHTML = '<tr><td colspan="5" class="text-muted">No tasks yet. Start a download to see tasks here.</td></tr>';
     return;
@@ -689,13 +697,17 @@ function connectSSE() {
       }
       const jwt = localStorage.getItem('tmd_jwt_token');
       if (!jwt) {
-        // 无 token：停止重连（认证框打开期间避免后台 1-30s 反复请求）。
-        // 登录成功后 submitAuthKey 会 reload，checkAuth 重新建立 SSE。
-        sseReconnectTimer = null;
+        // 无 token：仅在认证框打开时暂停重连（避免后台噪音）；免认证部署（无 JWT 常态）继续退避重连
+        if (_authDialogOpen) {
+          sseReconnectTimer = null;
+          return;
+        }
+        sseReconnectDelay = Math.min(sseReconnectDelay * 2, 30000);
+        sseReconnectTimer = setTimeout(connectSSE, sseReconnectDelay);
         return;
       }
       // auth/check 带旧 token 探测：网络错误 = 服务器暂时不可达 → 静默重连；401 = 会话失效 → 弹框
-      fetch(apiBase() + '/api/v1/auth/check', { headers: { 'Authorization': 'Bearer ' + jwt } })
+      fetchWithTimeout(apiBase() + '/api/v1/auth/check', { headers: { 'Authorization': 'Bearer ' + jwt } })
         .then(res => {
           if (res.status === 401) {
             showAuthDialog('Session expired - please re-authenticate');
@@ -718,8 +730,12 @@ async function checkHealth() {
     const h = await ENDPOINTS.health();
     const dot = document.getElementById('health-dot');
     const text = document.getElementById('health-text');
+    const status = h.status || 'OK';
     if (dot) dot.className = 'health-dot';
-    if (text) text.textContent = h.status || 'OK';
+    if (text) text.textContent = status;
+    // 同步概览页 Status 卡（若在展示中）
+    const dashHealth = document.getElementById('dash-health-text');
+    if (dashHealth && dashHealth.textContent !== status) dashHealth.textContent = status;
     const vi = document.getElementById('version-info');
     if (vi) vi.innerHTML = '<a href="https://github.com/Leexunhuan743/twitter_media_downloader_pro" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">' + esc(h.version || 'v2') + ' &middot; Go + SQLite</a>';
   } catch(e) {
@@ -727,7 +743,10 @@ async function checkHealth() {
     if (dot) dot.className = 'health-dot error';
     const text = document.getElementById('health-text');
     // 401 = 认证问题而非服务器故障，避免误导用户
-    if (text) text.textContent = (e.status === 401) ? 'Auth required' : 'Offline';
+    const status = (e.status === 401) ? 'Auth required' : 'Offline';
+    if (text) text.textContent = status;
+    const dashHealth = document.getElementById('dash-health-text');
+    if (dashHealth && dashHealth.textContent !== status) dashHealth.textContent = status;
   }
 }
 
@@ -1237,15 +1256,18 @@ async function doBatchDownload() {
 }
 
 async function doBatchMark() {
+  if (_actionBusy) { toast('A download is already in progress, please wait', 'warning'); return; }
   const users = document.getElementById('dl-batch-users').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
   const lists = document.getElementById('dl-batch-lists').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
   const foll = document.getElementById('dl-batch-foll').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
   if (!users.length && !lists.length && !foll.length) return toast('Enter at least one target', 'warning');
+  _actionBusy = true;
   closeModal();
   try {
     const r = await ENDPOINTS.batchMark({ users, lists, following_names: foll });
     toast('Batch mark: ' + r.task_id, 'success');
   } catch(e) { toast(e.message, 'error'); }
+  finally { _actionBusy = false; }
 }
 
 async function doJSONFileDownload() {
@@ -1405,10 +1427,11 @@ async function handleQuickDownload() {
   if (!value) return toast('Enter a Twitter username or URL', 'warning');
 
   // Parse list link: twitter.com/i/lists/123 or x.com/i/lists/123
-  if (value.match(/https?:\/\/(?:twitter\.com|x\.com)\/i\/lists\/(\d+)/)) {
+  const listMatch = value.match(/https?:\/\/(?:twitter\.com|x\.com)\/i\/lists\/(\d+)/);
+  if (listMatch) {
     _actionBusy = true;
     try {
-      await ENDPOINTS.listDownload(value.match(/https?:\/\/(?:twitter\.com|x\.com)\/i\/lists\/(\d+)/)[1], { auto_follow: true });
+      await ENDPOINTS.listDownload(listMatch[1], { auto_follow: true });
       toast('List download task created', 'success');
       input.value = '';
     } catch(e) { toast(e.message, 'error'); }
@@ -1639,6 +1662,22 @@ async function renderDBEntities(content, page, search, ep, label, sort) {
     ${renderPagination(page, totalPages, total, ep)}`;
 }
 
+// 实体/链接的可编辑字段与 PATCH 后端契约（唯一事实源，viewEntityDetail 与 saveEntityEdit 共用）
+// 注意：parent_dir 后端明确拒绝修改（PATCH 400 "Modifying parent_dir is not allowed"），只能展示
+const ENTITY_EDIT_FIELDS = {
+  'user-entities': [
+    { key: 'name', label: 'Name' },
+    { key: 'media_count', label: 'Media Count', numeric: true },
+    { key: 'latest_release_time', label: 'Latest Release Time' }
+  ],
+  'list-entities': [
+    { key: 'name', label: 'Name' }
+  ],
+  'user-links': [
+    { key: 'name', label: 'Name' }
+  ]
+};
+
 // 实体/链接详情 + 编辑 + 删除（user-entities / list-entities / user-links）
 async function viewEntityDetail(ep, id) {
   const getters = {
@@ -1651,35 +1690,15 @@ async function viewEntityDetail(ep, id) {
     'list-entities': 'List Entity',
     'user-links': 'User Link'
   };
-  // 各类型的可编辑字段（对齐后端 PATCH 契约）
-  const editFields = {
-    'user-entities': [
-      { key: 'name', label: 'Name' },
-      { key: 'parent_dir', label: 'Parent Dir' },
-      { key: 'media_count', label: 'Media Count', numeric: true },
-      { key: 'latest_release_time', label: 'Latest Release Time' }
-    ],
-    'list-entities': [
-      { key: 'name', label: 'Name' },
-      { key: 'parent_dir', label: 'Parent Dir' }
-    ],
-    'user-links': [
-      { key: 'name', label: 'Name' }
-    ]
-  };
-  const updaters = {
-    'user-entities': ENDPOINTS.dbUserEntityUpdate,
-    'list-entities': ENDPOINTS.dbListEntityUpdate,
-    'user-links': ENDPOINTS.dbUserLinkUpdate
-  };
   try {
     const item = await getters[ep](id);
     if (!item) return toast('Not found', 'error');
-    const readonlyFields = Object.entries(item).filter(([k]) => !(editFields[ep] || []).some(f => f.key === k))
+    const editFields = ENTITY_EDIT_FIELDS[ep] || [];
+    const readonlyFields = Object.entries(item).filter(([k]) => !editFields.some(f => f.key === k))
       .map(([k, v]) =>
         `<div class="form-row"><div class="form-group"><label>${esc(k)}</label><code>${esc(v == null ? '-' : String(v))}</code></div></div>`
       ).join('');
-    const inputs = (editFields[ep] || []).map(f =>
+    const inputs = editFields.map(f =>
       `<div class="form-group"><label>${esc(f.label)}</label><input type="${f.numeric ? 'number' : 'text'}" id="ent-edit-${esc(f.key)}" value="${esc(item[f.key] == null ? '' : String(item[f.key]))}"></div>`
     ).join('');
     openModal(`
@@ -1696,23 +1715,31 @@ async function viewEntityDetail(ep, id) {
   } catch(e) { toast(e.message, 'error'); }
 }
 
-// 保存实体/链接编辑（仅提交可编辑字段，PATCH 后端契约）
+// 保存实体/链接编辑（仅提交后端 PATCH 契约允许的字段）
 async function saveEntityEdit(ep, id) {
   const updaters = {
     'user-entities': ENDPOINTS.dbUserEntityUpdate,
     'list-entities': ENDPOINTS.dbListEntityUpdate,
     'user-links': ENDPOINTS.dbUserLinkUpdate
   };
-  const editFields = {
-    'user-entities': ['name', 'parent_dir', 'media_count', 'latest_release_time'],
-    'list-entities': ['name', 'parent_dir'],
-    'user-links': ['name']
-  };
   const data = {};
-  for (const key of (editFields[ep] || [])) {
-    const el = document.getElementById('ent-edit-' + key);
+  for (const f of (ENTITY_EDIT_FIELDS[ep] || [])) {
+    const el = document.getElementById('ent-edit-' + f.key);
     if (!el) continue;
-    data[key] = key === 'media_count' ? (el.value === '' ? undefined : Number(el.value)) : el.value;
+    if (f.numeric) {
+      data[f.key] = el.value === '' ? undefined : Number(el.value);
+    } else if (f.key === 'latest_release_time') {
+      // GET 返回 "2006-01-02 15:04:05"（本地时区），PATCH 要求 RFC3339 且 Go 严格解析不接受毫秒
+      const v = el.value.trim();
+      if (v === '') {
+        data[f.key] = ''; // 空值 = 清除
+      } else {
+        const t = new Date(v);
+        data[f.key] = isNaN(t.getTime()) ? undefined : t.toISOString().replace(/\.\d{3}Z$/, 'Z');
+      }
+    } else {
+      data[f.key] = el.value;
+    }
   }
   closeModal();
   try {
@@ -2279,7 +2306,6 @@ async function saveScheduleEdit(id) {
 function toggleEditSchedTargetFields() {
   const type = document.getElementById('sched-edit-type').value;
   document.getElementById('sched-edit-target-single').style.display = type === 'mixed' ? 'none' : '';
-  document.getElementById('sched-edit-target-mixed').style.display = type !== 'mixed' ? 'none' : '';
   document.getElementById('sched-edit-mixed-users-group').style.display = type !== 'mixed' ? 'none' : '';
   document.getElementById('sched-edit-mixed-lists-group').style.display = type !== 'mixed' ? 'none' : '';
   document.getElementById('sched-edit-mixed-foll-group').style.display = type !== 'mixed' ? 'none' : '';
@@ -2471,8 +2497,8 @@ async function renderCookies(content) {
       ${cArr.length === 0 ? '<p class="text-muted">No additional cookies configured.</p>' : ''}
       ${cArr.map((c, i) => `
         <div class="form-row" style="margin-bottom:8px">
-          <input type="text" id="cookie-at-${i}" value="${esc(c.auth_token||'')}" data-orig-at="${esc(c.auth_token||'')}" placeholder="auth_token (empty = keep current)" style="font-family:var(--font-mono);font-size:12px">
-          <input type="text" id="cookie-ct0-${i}" value="${esc(c.ct0||'')}" data-orig-ct0="${esc(c.ct0||'')}" placeholder="ct0 (empty = keep current)" style="font-family:var(--font-mono);font-size:12px">
+          <input type="text" id="cookie-at-${i}" value="${jsEsc(c.auth_token||'')}" data-orig-at="${jsEsc(c.auth_token||'')}" placeholder="auth_token (empty = clear)" style="font-family:var(--font-mono);font-size:12px">
+          <input type="text" id="cookie-ct0-${i}" value="${jsEsc(c.ct0||'')}" data-orig-ct0="${jsEsc(c.ct0||'')}" placeholder="ct0 (empty = clear)" style="font-family:var(--font-mono);font-size:12px">
         </div>`).join('')}
       <div class="form-actions">
         <button class="btn btn-ghost btn-sm" onclick="addCookieRow()">+ Add Account</button>
@@ -2774,18 +2800,19 @@ let _logFlushRAF = null;
 let _logStartTime = '';  // 时间过滤：RFC3339（空 = 不限）
 let _logEndTime = '';
 
-// 应用日志时间过滤（datetime-local 值需补秒转 RFC3339，后端 parseFilterTime 接受该格式）
+// 应用日志时间过滤（datetime-local 值转 RFC3339；Go time.Parse(RFC3339) 不接受毫秒，需剥 .000Z）
 function setLogTimeFilter() {
   const startEl = document.getElementById('log-start-time');
   const endEl = document.getElementById('log-end-time');
   const startRaw = startEl ? startEl.value : '';
   const endRaw = endEl ? endEl.value : '';
-  _logStartTime = startRaw ? new Date(startRaw).toISOString() : '';
-  _logEndTime = endRaw ? new Date(endRaw).toISOString() : '';
+  const toRFC3339 = (v) => { if (!v) return ''; const t = new Date(v); return isNaN(t.getTime()) ? '' : t.toISOString().replace(/\.\d{3}Z$/, 'Z'); };
+  _logStartTime = toRFC3339(startRaw);
+  _logEndTime = toRFC3339(endRaw);
   _logPage = 1;
   _logGen++; // 代际递增：丢弃在途 loadMore 旧响应
   disconnectLogSSE();
-  refreshLogs().then(() => connectLogSSE());
+  refreshLogs();
 }
 
 function toggleLogAutoScroll() {
@@ -2839,10 +2866,10 @@ function copyLogTweetId(btn) {
 function setLogLevel() {
   _logPage = 1;
   _logGen++; // 代际递增：丢弃在途 loadMore 旧响应
-  // 先断开旧 SSE，避免 refresh 前旧流追加的行被 innerHTML 重置清掉（丢行窗口）
+  // 先断开旧 SSE，避免 refresh 前旧流追加的行被 innerHTML 重置清掉（丢行窗口）；
+  // 重连由 refreshLogs 末尾兜底（await REST 重建完成后执行）
   disconnectLogSSE();
   refreshLogs();
-  connectLogSSE();
 }
 
 function setLogDomain() {
@@ -2852,7 +2879,7 @@ function setLogDomain() {
   _logGen++; // 代际递增：丢弃在途 loadMore 旧响应
   // 先断开旧 SSE，避免丢行窗口；await 刷新完成再重连，防止 REST 重建前 SSE 行被清掉
   disconnectLogSSE();
-  refreshLogs().then(() => connectLogSSE());
+  refreshLogs();
 }
 
 function toggleLogPause() {
@@ -2870,7 +2897,7 @@ function doLogSearch() {
   _logGen++; // 代际递增：丢弃在途 loadMore 旧响应
   // 先断开旧 SSE，避免 refresh 前旧流追加的行被 innerHTML 重置清掉（丢行窗口）
   disconnectLogSSE();
-  refreshLogs().then(() => connectLogSSE());
+  refreshLogs();
 }
 
 function scrollLogToBottom() {
@@ -2929,8 +2956,7 @@ async function loadMoreLogs() {
   try {
     const r = await ENDPOINTS.logs({ page: nextPage, pageSize: 200, level: level || undefined, domain: logDomain || undefined, q: q || undefined, start_time: _logStartTime || undefined, end_time: _logEndTime || undefined });
     if (gen !== _logGen) {
-      // 期间发生了筛选/刷新：丢弃旧响应并回退页码
-      _logPage--;
+      // 代际过期：期间发生了筛选/刷新（必然已重置 _logPage=1），丢弃响应且不回退页码
       return;
     }
     const lines = (r.logs || []).reverse();
@@ -2963,6 +2989,18 @@ async function loadLogStats() {
   } catch(e) { /* optional stat, ignore silently */ }
 }
 
+// 日志行是否在时间过滤窗口内（SSE 实时流前端过滤，与 REST 后端 filterLogLinesReverse 语义一致）
+function logLineInTimeWindow(clean) {
+  if (!_logStartTime && !_logEndTime) return true;
+  const m = clean.match(/\[(\d{4}-\d{2}-\d{2}T[^\]]+)\]/);
+  if (!m) return true; // 无时间戳的行不参与过滤
+  const t = new Date(m[1]).getTime();
+  if (isNaN(t)) return true;
+  if (_logStartTime && t < new Date(_logStartTime).getTime()) return false;
+  if (_logEndTime && t > new Date(_logEndTime).getTime()) return false;
+  return true;
+}
+
 function connectLogSSE() {
   if (logSSESource) { logSSESource.close(); logSSESource = null; }
   if (_logSSETimer) { clearTimeout(_logSSETimer); _logSSETimer = null; }
@@ -2984,6 +3022,8 @@ function connectLogSSE() {
     _logReconnectAttempts = 0; // 成功收到事件 → 连接正常，重置计数（防累计 60 次后永久断流）
     const stream = document.getElementById('log-stream');
     if (!stream) return;
+    // 时间过滤窗口外的实时行直接丢弃（后端 SSE 流不认 start_time/end_time，前端补过滤）
+    if (!logLineInTimeWindow(stripAnsi(e.data))) return;
     // 暂停时只计数不插入（恢复时刷新历史补齐）
     if (logPaused) {
       logPausedCount++;
@@ -3141,14 +3181,18 @@ async function clearAllErrors() {
 }
 
 /* ---- Auth Dialog ---- */
-function showAuthDialog() {
+let _authDialogOpen = false; // SSE 重连判断用：认证框打开时暂停重连
+function showAuthDialog(message) {
+  // 去重：认证框已打开时不重建（避免并发 401 清空用户输入与焦点）
+  if (currentModal && currentModal.querySelector('#authDialogKey')) return;
+  _authDialogOpen = true;
   openModal(`
       <div class="modal-header">
         <h2>Authentication Required</h2>
       </div>
       <div class="modal-body">
         <p class="text-muted" style="font-size:13px;line-height:1.5;margin-bottom:14px">
-          This server requires an API Key. Enter your key below, or configure one in System settings.
+          ${message ? esc(message) : 'This server requires an API Key. Enter your key below, or configure one in System settings.'}
         </p>
         <input type="password" id="authDialogKey" style="width:100%;padding:9px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;outline:none;box-sizing:border-box"
           placeholder="Enter API Key" autocomplete="off" />
@@ -3210,6 +3254,8 @@ async function checkAuth() {
   try {
     await ENDPOINTS.tasks();
     // 无需认证或 JWT 有效，建立推迟的 SSE 连接
+    // connectSSE 的 _sseAuthChecked guard 会拦截首次无 JWT 调用，需先复位使本次调用真正建立连接
+    _sseAuthChecked = false;
     connectSSE();
   } catch(e) {
     if (e.status === 401 || e.message === 'unauthorized') {
