@@ -131,9 +131,12 @@ const ENDPOINTS = {
   // Downloads
   userDownload: (name, opts) => API.post(apiBase() + '/api/v1/users/' + encodeURIComponent(name) + '/download', opts || {}),
   userProfile: (name) => API.post(apiBase() + '/api/v1/users/' + encodeURIComponent(name) + '/profile'),
+  userMark: (name, ts) => API.post(apiBase() + '/api/v1/users/' + encodeURIComponent(name) + '/mark', ts ? { timestamp: ts } : {}),
+  userFollowingMark: (name, ts) => API.post(apiBase() + '/api/v1/users/' + encodeURIComponent(name) + '/following/mark', ts ? { timestamp: ts } : {}),
   userFollowingDownload: (name, opts) => API.post(apiBase() + '/api/v1/users/' + encodeURIComponent(name) + '/following/download', opts || {}),
   listDownload: (id, opts) => API.post(apiBase() + '/api/v1/lists/' + encodeURIComponent(id) + '/download', opts || {}),
   listProfile: (id) => API.post(apiBase() + '/api/v1/lists/' + encodeURIComponent(id) + '/profile'),
+  listMark: (id, ts) => API.post(apiBase() + '/api/v1/lists/' + encodeURIComponent(id) + '/mark', ts ? { timestamp: ts } : {}),
   followingDownload: (name, opts) => API.post(apiBase() + '/api/v1/users/' + encodeURIComponent(name) + '/following/download', opts || {}),
   batchDownload: (body) => API.post(apiBase() + '/api/v1/batch/download', body),
   batchMark: (body) => API.post(apiBase() + '/api/v1/batch/mark', body),
@@ -326,10 +329,9 @@ function getTaskPct(t) {
 const TASK_TYPE_NAMES = {
   user: 'User', list: 'List', following: 'Following', json_file: 'JSON File',
   json_folder: 'JSON Folder', batch: 'Batch', mark_downloaded: 'Mark', profile_downloaded: 'Profile',
+  profile_download: 'Profile', mark: 'Mark',
 };
 function taskTypeName(t) {
-  if (t.profile_downloaded) return 'Profile';
-  if (t.mark_downloaded) return 'Mark';
   return TASK_TYPE_NAMES[t.type] || t.type || 'Task';
 }
 function taskTarget(t) {
@@ -513,12 +515,11 @@ async function deleteTask(id) { if (!confirm('Delete task ' + id + '?')) return;
 async function cancelAllQueued() { try { await ENDPOINTS.cancelAllQueued(); toast('Queued tasks cancelled', 'ok'); } catch (e) { toast(e.message, 'err'); } }
 
 /* ---------- 任务表单（inline，页面顶部直连） ---------- */
-const TASK_FORM_LABELS = { user: 'User', profile: 'Profile', list: 'List', following: 'Following', batch: 'Batch', jsonFile: 'JSON File', jsonFolder: 'JSON Folder', mark: 'Mark' };
+const TASK_FORM_LABELS = { user: 'User', list: 'List', following: 'Following', batch: 'Batch', jsonFile: 'JSON File', jsonFolder: 'JSON Folder', mark: 'Mark' };
 let taskFormType = 'user';
 
 const TASK_FORM_HTML = {
   user: `<div class="form-row"><div class="form-group"><label>Screen Name</label><input type="text" id="tf-target" placeholder="@username" style="max-width:420px"></div></div>`,
-  profile: `<div class="form-row"><div class="form-group"><label>Screen Name</label><input type="text" id="tf-target" placeholder="@username" style="max-width:420px"></div></div>`,
   list: `<div class="form-row"><div class="form-group"><label>List ID</label><input type="text" id="tf-listid" placeholder="List ID (numeric)" style="max-width:420px"></div></div>`,
   following: `<div class="form-row"><div class="form-group"><label>Screen Name</label><input type="text" id="tf-target" placeholder="@username" style="max-width:420px"></div></div>`,
   batch: `<div class="form-row">
@@ -526,8 +527,10 @@ const TASK_FORM_HTML = {
     <div class="form-group"><label>Lists (one per line)</label><textarea id="tf-lists"></textarea></div>
     <div class="form-group"><label>Following (one per line)</label><textarea id="tf-following"></textarea></div>
   </div>`,
-  jsonFile: `<div class="form-row"><div class="form-group"><label>JSON files</label><input type="file" id="tf-files" multiple></div></div>`,
-  jsonFolder: `<div class="form-row"><div class="form-group"><label>Server path to JSON folder</label><input type="text" id="tf-path" placeholder="/data/twitter" style="max-width:420px"></div></div>`,
+  jsonFile: `<div class="form-group"><label>上传第三方工具导出的 JSON 文件</label><input type="file" id="tf-files" accept=".json,application/json" multiple><div class="form-hint">支持多选 .json 文件；未选择文件时可改用下面的服务端路径模式</div></div>
+    <div class="form-group"><label>高级：服务端 JSON 文件路径（每行一个）</label><textarea id="tf-paths" rows="3" placeholder="/path/to/twitter-followers-123.json"></textarea></div>`,
+  jsonFolder: `<div class="form-group"><label>上传 LoongTweet JSON 文件</label><input type="file" id="tf-files" accept=".json,application/json" multiple><div class="form-hint">直接选择一个或多个 .loongtweet 生成的 JSON 文件；未选择文件时可改用下面的服务端路径模式</div></div>
+    <div class="form-group"><label>高级：服务端 .loongtweet 文件夹路径（每行一个）</label><textarea id="tf-paths" rows="3" placeholder="/path/to/.loongtweet"></textarea></div>`,
   mark: `<div class="form-row">
     <div class="form-group"><label>Users (one per line)</label><textarea id="tf-users"></textarea></div>
     <div class="form-group"><label>Lists (one per line)</label><textarea id="tf-lists"></textarea></div>
@@ -542,17 +545,26 @@ const TASK_FORM_OPTS = `<div class="checkbox-grid" id="tf-opts">
     <label class="checkbox-line"><input type="checkbox" id="tf-noretry"> No retry</label>
   </div>`;
 const TASK_FORM_NO_OPTS = new Set(['jsonFile', 'jsonFolder', 'mark']);
+const TASK_FORM_NORETRY_ONLY = new Set(['jsonFile', 'jsonFolder']);
+const TASK_FORM_NORETRY_OPTS = `<div class="checkbox-grid" id="tf-opts">
+    <label class="checkbox-line"><input type="checkbox" id="tf-noretry"> No retry</label>
+  </div>`;
 
 function renderTaskFormInline() {
   const body = document.getElementById('taskFormBody');
   if (!body) return;
-  const hasOpts = !TASK_FORM_NO_OPTS.has(taskFormType);
+  const opts = TASK_FORM_NORETRY_ONLY.has(taskFormType) ? TASK_FORM_NORETRY_OPTS
+    : TASK_FORM_NO_OPTS.has(taskFormType) ? '' : TASK_FORM_OPTS;
   const submitLabel = taskFormType === 'mark' ? 'Mark Downloaded' : 'Create Download';
+  // 并列操作（web1 同款，共享输入框）：user/list 有「仅下载 Profile」，user/list/following 有「标记已下载」
+  const profileBtn = (taskFormType === 'user' || taskFormType === 'list') ? `<button class="btn" onclick="submitTaskForm('${taskFormType}', 'profile')">仅下载 Profile</button>` : '';
+  const markBtn = (taskFormType === 'user' || taskFormType === 'list' || taskFormType === 'following') ? `<button class="btn ghost" onclick="submitTaskForm('${taskFormType}', 'mark')">标记已下载</button>` : '';
   body.innerHTML = `
     ${TASK_FORM_HTML[taskFormType]}
-    ${hasOpts ? TASK_FORM_OPTS : ''}
+    ${opts}
     <div class="flex gap-2" style="margin-top:14px">
       <button class="btn primary" onclick="submitTaskForm('${taskFormType}')">${submitLabel}</button>
+      ${profileBtn}${markBtn}
     </div>`;
 }
 function switchTaskForm(type) {
@@ -571,56 +583,102 @@ function checkedOpts() {
 }
 function areaLines(id) { const v = document.getElementById(id)?.value || ''; return v.split('\n').map(s => s.trim()).filter(Boolean); }
 
-async function submitTaskForm(type) {
-  const submitBtn = document.querySelector('#taskFormBody .btn.primary') || [...document.querySelectorAll('.modal-footer .btn.primary')].find(b => b.textContent === 'Create' || b.textContent === 'Mark');
-  if (submitBtn && submitBtn.disabled) return;
-  if (submitBtn) submitBtn.disabled = true;
+async function submitTaskForm(type, action = 'download') {
+  const buttons = [...document.querySelectorAll('#taskFormBody button')];
+  const submitBtn = buttons.find(b => b.classList.contains('primary')) || null;
+  const busyLocked = buttons.some(b => b.disabled);
+  if (busyLocked) return;
+  buttons.forEach(b => { b.disabled = true; });
   const tsRaw = document.getElementById('tf-marktime')?.value || '';
   const ts = tsRaw ? toRFC3339(tsRaw) : undefined;
   try {
-    switch (type) {
-      case 'user': {
+    if (action === 'profile') {
+      if (type === 'user') {
         const name = document.getElementById('tf-target').value.trim();
         if (!name) return toast('Enter a screen name', 'warn');
-        await ENDPOINTS.userDownload(name, checkedOpts()); break;
-      }
-      case 'profile': {
-        const name = document.getElementById('tf-target').value.trim();
-        if (!name) return toast('Enter a screen name', 'warn');
-        await ENDPOINTS.userProfile(name); break;
-      }
-      case 'list': {
+        await ENDPOINTS.userProfile(name);
+      } else if (type === 'list') {
         const id = document.getElementById('tf-listid').value.trim();
         if (!id) return toast('Enter a list ID', 'warn');
         if (!/^\d+$/.test(id)) return toast('List ID must be numeric', 'warn');
-        await ENDPOINTS.listDownload(id, checkedOpts()); break;
+        await ENDPOINTS.listProfile(id);
+      } else {
+        return toast('Profile not available for this type', 'warn');
       }
-      case 'following': {
+    } else if (action === 'mark') {
+      if (type === 'user') {
         const name = document.getElementById('tf-target').value.trim();
         if (!name) return toast('Enter a screen name', 'warn');
-        await ENDPOINTS.followingDownload(name, checkedOpts()); break;
-      }      case 'batch': {
-        const users = areaLines('tf-users'), lists = areaLines('tf-lists'), following_names = areaLines('tf-following');
-        if (!users.length && !lists.length && !following_names.length) return toast('Enter at least one target', 'warn');
-        await ENDPOINTS.batchDownload({ users, lists, following_names, ...checkedOpts() }); break;
+        await ENDPOINTS.userMark(name, ts);
+      } else if (type === 'list') {
+        const id = document.getElementById('tf-listid').value.trim();
+        if (!id) return toast('Enter a list ID', 'warn');
+        if (!/^\d+$/.test(id)) return toast('List ID must be numeric', 'warn');
+        await ENDPOINTS.listMark(id, ts);
+      } else if (type === 'following') {
+        const name = document.getElementById('tf-target').value.trim();
+        if (!name) return toast('Enter a screen name', 'warn');
+        await ENDPOINTS.userFollowingMark(name, ts);
+      } else {
+        return toast('Mark not available for this type', 'warn');
       }
-      case 'jsonFile': {
-        const files = document.getElementById('tf-files').files;
-        if (!files.length) return toast('Select at least one file', 'warn');
-        const fd = new FormData();
-        for (const f of files) fd.append('files', f);
-        if (document.getElementById('tf-noretry')?.checked) fd.append('no_retry', 'true');
-        await ENDPOINTS.jsonFile(fd); break;
-      }
-      case 'jsonFolder': {
-        const path = document.getElementById('tf-path').value.trim();
-        if (!path) return toast('Enter a folder path', 'warn');
-        await ENDPOINTS.jsonFolder({ paths: [path] }); break;
-      }
-      case 'mark': {
-        const users = areaLines('tf-users'), lists = areaLines('tf-lists'), following_names = areaLines('tf-following');
-        if (!users.length && !lists.length && !following_names.length) return toast('Enter at least one target', 'warn');
-        await ENDPOINTS.batchMark({ users, lists, following_names, timestamp: ts }); break;
+    } else {
+      switch (type) {
+        case 'user': {
+          const name = document.getElementById('tf-target').value.trim();
+          if (!name) return toast('Enter a screen name', 'warn');
+          await ENDPOINTS.userDownload(name, checkedOpts()); break;
+        }
+        case 'list': {
+          const id = document.getElementById('tf-listid').value.trim();
+          if (!id) return toast('Enter a list ID', 'warn');
+          if (!/^\d+$/.test(id)) return toast('List ID must be numeric', 'warn');
+          await ENDPOINTS.listDownload(id, checkedOpts()); break;
+        }
+        case 'following': {
+          const name = document.getElementById('tf-target').value.trim();
+          if (!name) return toast('Enter a screen name', 'warn');
+          await ENDPOINTS.followingDownload(name, checkedOpts()); break;
+        }      case 'batch': {
+          const users = areaLines('tf-users'), lists = areaLines('tf-lists'), following_names = areaLines('tf-following');
+          if (!users.length && !lists.length && !following_names.length) return toast('Enter at least one target', 'warn');
+          await ENDPOINTS.batchDownload({ users, lists, following_names, ...checkedOpts() }); break;
+        }
+        case 'jsonFile': {
+          const files = document.getElementById('tf-files').files;
+          const paths = areaLines('tf-paths');
+          const noRetry = document.getElementById('tf-noretry')?.checked;
+          if (!files.length && !paths.length) return toast('Select files or enter server paths', 'warn');
+          if (files.length) {
+            const fd = new FormData();
+            for (const f of files) fd.append('files', f);
+            if (noRetry) fd.append('no_retry', 'true');
+            await ENDPOINTS.jsonFile(fd);
+          } else {
+            await ENDPOINTS.jsonFile({ paths, no_retry: noRetry });
+          }
+          break;
+        }
+        case 'jsonFolder': {
+          const files = document.getElementById('tf-files').files;
+          const paths = areaLines('tf-paths');
+          const noRetry = document.getElementById('tf-noretry')?.checked;
+          if (!files.length && !paths.length) return toast('Select files or enter server paths', 'warn');
+          if (files.length) {
+            const fd = new FormData();
+            for (const f of files) fd.append('files', f);
+            if (noRetry) fd.append('no_retry', 'true');
+            await ENDPOINTS.jsonFolder(fd);
+          } else {
+            await ENDPOINTS.jsonFolder({ paths, no_retry: noRetry });
+          }
+          break;
+        }
+        case 'mark': {
+          const users = areaLines('tf-users'), lists = areaLines('tf-lists'), following_names = areaLines('tf-following');
+          if (!users.length && !lists.length && !following_names.length) return toast('Enter at least one target', 'warn');
+          await ENDPOINTS.batchMark({ users, lists, following_names, timestamp: ts }); break;
+        }
       }
     }
     closeModal();
@@ -628,9 +686,9 @@ async function submitTaskForm(type) {
     document.querySelectorAll('#taskFormBody input[type="text"], #taskFormBody input[type="password"], #taskFormBody textarea').forEach(el => { if (el.id !== 'tf-marktime') el.value = ''; });
     document.querySelectorAll('#taskFormBody input[type="checkbox"]').forEach(el => { el.checked = false; });
     const fileInput = document.getElementById('tf-files'); if (fileInput) fileInput.value = '';
-    toast(type === 'mark' ? 'Mark task created' : 'Download task created', 'ok');
+    toast(action === 'profile' ? 'Profile task created' : action === 'mark' ? 'Mark task created' : (type === 'mark' ? 'Mark task created' : 'Download task created'), 'ok');
   } catch (e) { toast(e.message, 'err'); }
-  finally { if (submitBtn) submitBtn.disabled = false; }
+  finally { buttons.forEach(b => { b.disabled = false; }); }
 }
 
 /* ---------- 失败记录 ---------- */
