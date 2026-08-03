@@ -2368,7 +2368,15 @@ ul, ol {
 }
 
 
-/* ---- DB stats bar (F5) ---- */
+/* ---- DB stats bar ---- */
+.card-header .db-stats-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0;
+  background: none;
+  border-bottom: none;
+}
 .db-stats-bar {
   display: flex;
   flex-wrap: wrap;

@@ -1109,8 +1109,8 @@ const pages = {
     return `
       <div class="page-container">
         <div class="card card-page">
-          <div class="card-header">
-            <div>
+          <div class="card-header" style="flex-direction:column;align-items:stretch;gap:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
               <div class="tabs" style="margin:0;border:none">
                 <div class="tab ${dataSubPage === 'users' ? 'active' : ''}" data-action="setDataSubPage" data-subpage="users">Users</div>
                 <div class="tab ${dataSubPage === 'lists' ? 'active' : ''}" data-action="setDataSubPage" data-subpage="lists">Lists</div>
@@ -1119,23 +1119,23 @@ const pages = {
                 <div class="tab ${dataSubPage === 'userLinks' ? 'active' : ''}" data-action="setDataSubPage" data-subpage="userLinks">User Links</div>
                 <div class="tab ${dataSubPage === 'previousNames' ? 'active' : ''}" data-action="setDataSubPage" data-subpage="previousNames">Previous Names</div>
               </div>
+              <div class="flex gap-2 items-center">
+                <input type="text" class="form-input search-input" id="dbSearchInput"
+                  placeholder="搜索..." data-binding="dbSearch" value="${escapeAttr(dbSearch[dataSubPage] || '')}">
+                <button class="btn btn-ghost btn-icon" data-action="searchDB">🔍</button>
+              </div>
             </div>
-            <div class="flex gap-2 items-center">
-              <input type="text" class="form-input search-input" id="dbSearchInput"
-                placeholder="搜索..." data-binding="dbSearch" value="${escapeAttr(dbSearch[dataSubPage] || '')}">
-              <button class="btn btn-ghost btn-icon" data-action="searchDB">🔍</button>
+            <div class="db-stats-bar" id="dbStatsBar">
+              <span class="db-stat-chip" data-db-stat="users">Users —</span>
+              <span class="db-stat-chip" data-db-stat="lsts">Lists —</span>
+              <span class="db-stat-chip" data-db-stat="user_entities">User Entities —</span>
+              <span class="db-stat-chip" data-db-stat="lst_entities">List Entities —</span>
+              <span class="db-stat-chip" data-db-stat="user_links">User Links —</span>
+              <span class="db-stat-chip" data-db-stat="user_previous_names">Previous Names —</span>
             </div>
           </div>
 
         ${filterBanner}
-        <div class="db-stats-bar" id="dbStatsBar">
-          <span class="db-stat-chip" data-db-stat="users">Users —</span>
-          <span class="db-stat-chip" data-db-stat="lsts">Lists —</span>
-          <span class="db-stat-chip" data-db-stat="user_entities">User Entities —</span>
-          <span class="db-stat-chip" data-db-stat="lst_entities">List Entities —</span>
-          <span class="db-stat-chip" data-db-stat="user_links">User Links —</span>
-          <span class="db-stat-chip" data-db-stat="user_previous_names">Previous Names —</span>
-        </div>
         <div class="card-body card-body-scroll">
           ${dataBody}
         </div>
