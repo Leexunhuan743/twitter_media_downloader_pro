@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TMD Pro</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024' style='color:%237c8cff'%3E%3Cpath fill='currentColor' d='M582 88c16 0 28 12 28 28v178h192c23 0 34 28 17 45l-76 76c-5 5-12 8-20 8H610v248c0 80 43 129 130 145 25 5 35 35 19 54l-70 82c-8 9-20 14-32 11-122-27-205-122-205-267V423H274c-24 0-35-29-17-46l77-75c5-5 12-8 19-8h99V116c0-16 12-28 28-28h102Zm-74 335v290c0 102 59 177 153 209l42-49c-99-31-149-101-149-202V423h-46Z'/%3E%3C/svg%3E">
+<style>
+/* 防 FOUC 最小变量 + 全量 reduced-motion（与 styles.css 的 :root 必须一致，改配色同步两处） */
+:root{--bg-0:#0b0e1a;--bg-1:#101528;--accent:#7c8cff;--text-1:#e8ebff;--text-2:#9aa3c7;--ok:#34d399;--warn:#fbbf24;--err:#f87171;--info:#38bdf8}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:0s!important;animation-duration:.01ms!important;animation-iteration-count:1!important}}
+</style>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<div id="app" class="app">
+  <!-- 侧边栏 -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-top">
+      <a href="/" class="brand" data-page-link="dashboard" aria-label="TMD Pro home">
+        <span class="brand-mark">
+          <svg width="26" height="26" viewBox="0 0 1024 1024" aria-hidden="true"><path fill="currentColor" d="M582 88c16 0 28 12 28 28v178h192c23 0 34 28 17 45l-76 76c-5 5-12 8-20 8H610v248c0 80 43 129 130 145 25 5 35 35 19 54l-70 82c-8 9-20 14-32 11-122-27-205-122-205-267V423H274c-24 0-35-29-17-46l77-75c5-5 12-8 19-8h99V116c0-16 12-28 28-28h102Zm-74 335v290c0 102 59 177 153 209l42-49c-99-31-149-101-149-202V423h-46Z"/></svg>
+        </span>
+        <span class="brand-text">
+          <strong>TMD Pro</strong>
+          <small>Twitter Media Downloader</small>
+        </span>
+      </a>
+      <button class="icon-btn sidebar-close" id="sidebarClose" aria-label="Close menu">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <nav class="nav" id="nav" aria-label="Primary">
+      <div class="nav-group">
+        <div class="nav-label">Overview</div>
+        <a class="nav-item active" href="#/dashboard" data-page="dashboard">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+          <span>Dashboard</span>
+        </a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Downloads</div>
+        <a class="nav-item" href="#/tasks" data-page="tasks">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>Tasks</span>
+        </a>
+        <a class="nav-item" href="#/schedules" data-page="schedules">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
+          <span>Schedules</span>
+        </a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Management</div>
+        <a class="nav-item" href="#/data" data-page="data">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>
+          <span>Data</span>
+        </a>
+        <a class="nav-item" href="#/settings" data-page="settings">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span>Settings</span>
+        </a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Monitoring</div>
+        <a class="nav-item" href="#/logs" data-page="logs">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          <span>Logs</span>
+        </a>
+      </div>
+    </nav>
+
+    <div class="sidebar-bottom">
+      <div class="health">
+        <span class="health-dot" id="healthDot"></span>
+        <span id="healthText">Checking...</span>
+      </div>
+      <div class="version" id="versionInfo">v0</div>
+    </div>
+  </aside>
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  <!-- 主区域 -->
+  <main class="main">
+    <header class="topbar">
+      <button class="icon-btn" id="menuToggle" aria-label="Open menu">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <h1 class="page-title" id="pageTitle">Dashboard</h1>
+      <div class="topbar-right">
+        <span class="sse-badge" id="sseBadge" title="Live connection">● Live</span>
+      </div>
+    </header>
+    <div class="content" id="content">
+      <div class="loading-block"><div class="spinner"></div></div>
+    </div>
+  </main>
+</div>
+
+<!-- Modal -->
+<div id="modalRoot"></div>
+
+<!-- Toasts -->
+<div class="toast-container" id="toastRoot" role="status" aria-live="polite"></div>
+
+<!-- Auth overlay -->
+<div class="auth-overlay" id="authOverlay">
+  <div class="auth-card glass" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+    <h2 id="authTitle">Authentication Required</h2>
+    <p class="auth-desc" id="authDesc">Enter your API key to continue.</p>
+    <input type="password" id="authKey" placeholder="API Key" autocomplete="off">
+    <div class="auth-error" id="authError"></div>
+    <div class="auth-actions">
+      <button class="btn ghost" id="authCancel">Cancel</button>
+      <button class="btn primary" id="authSubmit">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
