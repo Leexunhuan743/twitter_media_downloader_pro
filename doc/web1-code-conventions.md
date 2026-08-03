@@ -46,7 +46,7 @@ internal/api/web/web1/
 - 模块级函数: `camelCase` — `createUserTask`, `renderTaskForm`
 - 私有前导 `_`: `_initComplete`, `_tasksEpoch`, `_state._scheduleBaselineIds`
 - 对象方法: ES6 简写 `method() { ... }`，不是 `method: function()`
-- data-action: 全小写 kebab-case — `closeDrawer`, `navigateTo`, `saveScheduleForm`, `secLogin`
+- data-action: camelCase（与函数名一致）— `closeDrawer`, `navigateTo`, `saveScheduleForm`, `secLogin`
 - API 方法: 动词 + 资源 — `createUserDownload`, `getDBUsers`, `deleteDBList`
 
 ## 事件系统
@@ -201,7 +201,7 @@ try {
 | `createTaskFromInput` | 单输入任务创建模板（见上） |
 | `renderTable(columns, data, sort)` | 列定义驱动表格渲染 |
 | `renderCheckboxes(prefix)` / `getCheckedOptions(prefix)` | 4 个标准 checkbox（auto_follow/follow_members/skip_profile/no_retry） |
-| `dbGetFns / dbUpdateFns / dbDeleteFns` + `DB_TYPE_CONFIG` | 表类型 → API 方法查表 |
+| `DB_TYPE_CONFIG[type].list/get/update/delete` | 表类型 → API 方法查表（`refreshDBData`/`editDBItem`/`saveDBItem`/`deleteDBItem` 共用） |
 | `tryRefreshJWT` / `appendJWTToken` | JWT 预刷新与 token 参数追加 |
 | `debounce` | 高频输入/SSE 合并 |
 | `toast` / `drawer` | 通知与侧滑详情 |
