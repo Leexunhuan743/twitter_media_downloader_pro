@@ -390,12 +390,17 @@ function renderTasks(root) {
       <div class="page-header">
         <h2>Tasks</h2>
         <div class="page-actions">
-          <button class="btn" onclick="openTaskForm()">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            New Download
-          </button>
           <button class="btn ghost" onclick="cancelAllQueued()">Cancel Queued</button>
         </div>
+      </div>
+      <!-- 创建下载：核心操作内嵌页面顶部，零弹窗 -->
+      <div class="glass card" id="taskFormCard">
+        <div class="filter-bar">
+          <div class="tabs" id="taskFormTabs">
+            ${Object.entries(TASK_FORM_LABELS).map(([id, label]) => `<button class="tab ${taskFormType === id ? 'active' : ''}" onclick="switchTaskForm('${id}')">${esc(label)}</button>`).join('')}
+          </div>
+        </div>
+        <div style="padding:16px 20px" id="taskFormBody"></div>
       </div>
       <div class="stats-grid">
         <div class="stat-card glass info"><div class="stat-value" data-taskstat="queued">—</div><div class="stat-label">Queued</div></div>
@@ -420,6 +425,7 @@ function renderTasks(root) {
         </div>
       </div>
     </div>`;
+  renderTaskFormInline();
   updateTasksUI();
   loadErrors();
 }
@@ -506,61 +512,53 @@ async function retryTask(id) { try { await ENDPOINTS.retryTask(id); toast('Retry
 async function deleteTask(id) { if (!confirm('Delete task ' + id + '?')) return; try { await ENDPOINTS.deleteTask(id); toast('Task deleted', 'ok'); } catch (e) { toast(e.message, 'err'); } }
 async function cancelAllQueued() { try { await ENDPOINTS.cancelAllQueued(); toast('Queued tasks cancelled', 'ok'); } catch (e) { toast(e.message, 'err'); } }
 
-/* ---------- 任务表单 ---------- */
-const TASK_FORM_TABS = [
-  { id: 'user', label: 'User', fields: ['name'] },
-  { id: 'profile', label: 'Profile', fields: ['name'] },
-  { id: 'list', label: 'List', fields: ['listId'] },
-  { id: 'following', label: 'Following', fields: ['name'] },
-  { id: 'batch', label: 'Batch', fields: ['users', 'lists', 'following'] },
-  { id: 'jsonFile', label: 'JSON File', fields: ['files'] },
-  { id: 'jsonFolder', label: 'JSON Folder', fields: ['path'] },
-  { id: 'mark', label: 'Mark', fields: ['name', 'listId', 'following', 'timestamp'] },
-];
+/* ---------- 任务表单（inline，页面顶部直连） ---------- */
+const TASK_FORM_LABELS = { user: 'User', profile: 'Profile', list: 'List', following: 'Following', batch: 'Batch', jsonFile: 'JSON File', jsonFolder: 'JSON Folder', mark: 'Mark' };
+let taskFormType = 'user';
 
-function openTaskForm() {
-  const checked = TASK_FORM_TABS.map(t => `
-    <div class="form-group"><label>${esc(t.label)}</label>
-      <button class="btn ghost" onclick="openTaskTypeForm('${t.id}')">Create ${esc(t.label)} Download</button>
-    </div>`).join('');
-  openModal(`
-    <div class="modal-header"><h2>New Download</h2><button class="icon-btn" onclick="closeModal()" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
-    <div class="modal-body">
-      <div class="checkbox-grid">${checked}</div>
-    </div>`);
+const TASK_FORM_HTML = {
+  user: `<div class="form-row"><div class="form-group"><label>Screen Name</label><input type="text" id="tf-target" placeholder="@username" style="max-width:420px"></div></div>`,
+  profile: `<div class="form-row"><div class="form-group"><label>Screen Name</label><input type="text" id="tf-target" placeholder="@username" style="max-width:420px"></div></div>`,
+  list: `<div class="form-row"><div class="form-group"><label>List ID</label><input type="text" id="tf-listid" placeholder="List ID (numeric)" style="max-width:420px"></div></div>`,
+  following: `<div class="form-row"><div class="form-group"><label>Screen Name</label><input type="text" id="tf-target" placeholder="@username" style="max-width:420px"></div></div>`,
+  batch: `<div class="form-row">
+    <div class="form-group"><label>Users (one per line)</label><textarea id="tf-users"></textarea></div>
+    <div class="form-group"><label>Lists (one per line)</label><textarea id="tf-lists"></textarea></div>
+    <div class="form-group"><label>Following (one per line)</label><textarea id="tf-following"></textarea></div>
+  </div>`,
+  jsonFile: `<div class="form-row"><div class="form-group"><label>JSON files</label><input type="file" id="tf-files" multiple></div></div>`,
+  jsonFolder: `<div class="form-row"><div class="form-group"><label>Server path to JSON folder</label><input type="text" id="tf-path" placeholder="/data/twitter" style="max-width:420px"></div></div>`,
+  mark: `<div class="form-row">
+    <div class="form-group"><label>Users (one per line)</label><textarea id="tf-users"></textarea></div>
+    <div class="form-group"><label>Lists (one per line)</label><textarea id="tf-lists"></textarea></div>
+    <div class="form-group"><label>Following (one per line)</label><textarea id="tf-following"></textarea></div>
+  </div>
+  <div class="form-row"><div class="form-group"><label>Mark timestamp (optional)</label><input type="datetime-local" id="tf-marktime" style="max-width:420px"></div></div>`,
+};
+const TASK_FORM_OPTS = `<div class="checkbox-grid" id="tf-opts">
+    <label class="checkbox-line"><input type="checkbox" id="tf-autofollow"> Auto follow</label>
+    <label class="checkbox-line"><input type="checkbox" id="tf-followmembers"> Follow members</label>
+    <label class="checkbox-line"><input type="checkbox" id="tf-skipprofile"> Skip profile</label>
+    <label class="checkbox-line"><input type="checkbox" id="tf-noretry"> No retry</label>
+  </div>`;
+const TASK_FORM_NO_OPTS = new Set(['jsonFile', 'jsonFolder', 'mark']);
+
+function renderTaskFormInline() {
+  const body = document.getElementById('taskFormBody');
+  if (!body) return;
+  const hasOpts = !TASK_FORM_NO_OPTS.has(taskFormType);
+  const submitLabel = taskFormType === 'mark' ? 'Mark Downloaded' : 'Create Download';
+  body.innerHTML = `
+    ${TASK_FORM_HTML[taskFormType]}
+    ${hasOpts ? TASK_FORM_OPTS : ''}
+    <div class="flex gap-2" style="margin-top:14px">
+      <button class="btn primary" onclick="submitTaskForm('${taskFormType}')">${submitLabel}</button>
+    </div>`;
 }
-
-function openTaskTypeForm(type) {
-  const forms = {
-    user: `<div class="form-group"><label>Screen Name</label><input type="text" id="tf-target" placeholder="@username"></div>`,
-    profile: `<div class="form-group"><label>Screen Name</label><input type="text" id="tf-target" placeholder="@username"></div>`,
-    list: `<div class="form-group"><label>List ID</label><input type="text" id="tf-listid" placeholder="List ID (numeric)"></div>`,
-    following: `<div class="form-group"><label>Screen Name</label><input type="text" id="tf-target" placeholder="@username"></div>`,
-    batch: `<div class="form-group"><label>Users (one per line)</label><textarea id="tf-users"></textarea></div>
-            <div class="form-row"><div class="form-group"><label>Lists (one per line)</label><textarea id="tf-lists"></textarea></div>
-            <div class="form-group"><label>Following (one per line)</label><textarea id="tf-following"></textarea></div></div>`,
-    jsonFile: `<div class="form-group"><label>JSON files</label><input type="file" id="tf-files" multiple></div>`,
-    jsonFolder: `<div class="form-group"><label>Server path to JSON folder</label><input type="text" id="tf-path" placeholder="/data/twitter"></div>`,
-    mark: `<div class="form-group"><label>Users (one per line)</label><textarea id="tf-users"></textarea></div>
-           <div class="form-row"><div class="form-group"><label>Lists (one per line)</label><textarea id="tf-lists"></textarea></div>
-           <div class="form-group"><label>Following (one per line)</label><textarea id="tf-following"></textarea></div></div>
-           <div class="form-group"><label>Mark timestamp (optional)</label><input type="datetime-local" id="tf-marktime"></div>`,
-  };
-  const opts = type !== 'jsonFile' && type !== 'jsonFolder' && type !== 'mark' ? `
-    <div class="checkbox-grid" id="tf-opts">
-      <label class="checkbox-line"><input type="checkbox" id="tf-autofollow"> Auto follow</label>
-      <label class="checkbox-line"><input type="checkbox" id="tf-followmembers"> Follow members</label>
-      <label class="checkbox-line"><input type="checkbox" id="tf-skipprofile"> Skip profile</label>
-      <label class="checkbox-line"><input type="checkbox" id="tf-noretry"> No retry</label>
-    </div>` : '';
-  const submitLabel = type === 'mark' ? 'Mark' : 'Create';
-  openModal(`
-    <div class="modal-header"><h2>${esc(type === 'jsonFile' ? 'JSON File Download' : type === 'jsonFolder' ? 'JSON Folder Download' : type === 'mark' ? 'Mark Downloaded' : TASK_FORM_TABS.find(t => t.id === type)?.label + ' Download')}</h2><button class="icon-btn" onclick="closeModal()" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
-    <div class="modal-body">${forms[type]}${opts}</div>
-    <div class="modal-footer">
-      <button class="btn ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn primary" onclick="submitTaskForm('${type}')">${esc(submitLabel)}</button>
-    </div>`);
+function switchTaskForm(type) {
+  taskFormType = TASK_FORM_HTML[type] ? type : 'user';
+  document.querySelectorAll('#taskFormTabs .tab').forEach(t => t.classList.toggle('active', t.textContent === TASK_FORM_LABELS[taskFormType]));
+  renderTaskFormInline();
 }
 
 function checkedOpts() {
@@ -574,7 +572,7 @@ function checkedOpts() {
 function areaLines(id) { const v = document.getElementById(id)?.value || ''; return v.split('\n').map(s => s.trim()).filter(Boolean); }
 
 async function submitTaskForm(type) {
-  const submitBtn = [...document.querySelectorAll('.modal-footer .btn.primary')].find(b => b.textContent === 'Create' || b.textContent === 'Mark');
+  const submitBtn = document.querySelector('#taskFormBody .btn.primary') || [...document.querySelectorAll('.modal-footer .btn.primary')].find(b => b.textContent === 'Create' || b.textContent === 'Mark');
   if (submitBtn && submitBtn.disabled) return;
   if (submitBtn) submitBtn.disabled = true;
   const tsRaw = document.getElementById('tf-marktime')?.value || '';
@@ -626,6 +624,10 @@ async function submitTaskForm(type) {
       }
     }
     closeModal();
+    // inline 模式（页面顶部表单）：成功后清空输入，便于连续创建
+    document.querySelectorAll('#taskFormBody input[type="text"], #taskFormBody input[type="password"], #taskFormBody textarea').forEach(el => { if (el.id !== 'tf-marktime') el.value = ''; });
+    document.querySelectorAll('#taskFormBody input[type="checkbox"]').forEach(el => { el.checked = false; });
+    const fileInput = document.getElementById('tf-files'); if (fileInput) fileInput.value = '';
     toast(type === 'mark' ? 'Mark task created' : 'Download task created', 'ok');
   } catch (e) { toast(e.message, 'err'); }
   finally { if (submitBtn) submitBtn.disabled = false; }
