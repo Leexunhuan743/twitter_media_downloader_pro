@@ -6090,6 +6090,7 @@ function syncSystemPage(state) {
     document.getElementById('systemConfigPanel').style.display = state._systemTab === 'config' ? '' : 'none';
     document.getElementById('systemCookiesPanel').style.display = state._systemTab === 'cookies' ? '' : 'none';
     document.getElementById('systemSchedulesPanel').style.display = state._systemTab === 'schedules' ? '' : 'none';
+    document.getElementById('systemSecurityPanel').style.display = state._systemTab === 'security' ? '' : 'none';
   }
 
   // 三个面板独立 rebuild（仅当相关状态变化时）
