@@ -47,11 +47,11 @@ F:\twitter_dl
 
 命令入口：
 
-- [C:\Users\leeexxx\Documents\trae_projects\tmd\tools\tmd-db-migrate\main.go](C:\Users\leeexxx\Documents\trae_projects\tmd\tools\tmd-db-migrate\main.go)
+- [tools/tmd-db-migrate/main.go](tools/tmd-db-migrate/main.go)
 
 核心实现：
 
-- [C:\Users\leeexxx\Documents\trae_projects\tmd\internal\database\parent_dir_migration.go](C:\Users\leeexxx\Documents\trae_projects\tmd\internal\database\parent_dir_migration.go)
+- [internal/database/parent_dir_migration.go](internal/database/parent_dir_migration.go)
 
 ## 3. 工具行为
 

@@ -40,7 +40,7 @@ Bot Platform (Telegram/Discord/WeChat/Feishu/etc.)
   internal/service/DownloadService  ← 下载业务编排
 ```
 
-Bot 只调用 `api.TaskManager`、`api.EventBus`、`consolelog.Hub`，不直接接触下载逻辑。
+Bot 只调用 `api.TaskManager`、`api.EventBus`、`consolelog.Hub`，不直接接触下载逻辑。双向 Bot（Telegram/Discord/WeChat/Feishu）还持有注入的 `server.EnqueueTask`（main.go:402/405/414/417），创建任务后经它与 HTTP API 同一条路径入队执行（`download_handlers.go` 的 `EnqueueTask`，58-72 行）。
 
 ### Bot 接口
 
@@ -76,6 +76,7 @@ Server 在 `Start()` 中遍历 `s.bots` 依次调用 `b.Start()`，在 `Graceful
   → handleCommand("/dl elonmusk")
   → parseDLArgs → (type="user", target="elonmusk")
   → taskManager.CreateTask(TaskTypeUserDownload, &UserDownloadTaskData{...})
+  → server.EnqueueTask(task) 入队下载（telegram/commands.go:61-69；不调用则任务永远停留在 queued）
   → 返回 task_id 给用户
   → DownloadQueue 异步执行下载
 ```
@@ -95,7 +96,7 @@ Server 在 `Start()` 中遍历 `s.bots` 依次调用 `b.Start()`，在 `Graceful
 ```
 error/fatal 级别日志
   → consolelog.Hub.Publish(line)
-  → RunBotLogLoop 收到日志行（1条/秒速率限制，筛选 level=error/fatal）
+  → RunBotLogLoop 收到日志行（1条/秒速率限制，筛选以 ERRO[/FATA[ 前缀开头的日志行）
   → sendLogAlert() 推送给用户
 ```
 
@@ -149,7 +150,7 @@ wechat:
 | 参数 | 说明 | 获取方式 |
 |---|---|---|
 | `credential_path` | 凭证文件路径（首次登录后自动生成） | 任意可写路径，相对于工作目录 |
-| `allowed_users` | 允许使用的联系人 ID | 启动后向 Bot 发消息，查看服务端日志中的 `FromUserID` |
+| `allowed_users` | 允许使用的联系人 ID | 留空即允许所有用户；当前版本不打印 `FromUserID`，无法从日志获取 |
 
 **首次使用**：启动后 Bot 在后台等待扫码（登录超时 2 分钟），查看服务端日志中的 QR Code URL，用微信扫码登录。后续自动复用凭证。连接断开后 Bot 会自动重连。
 **可用命令**：`/dl [user|list|foll] <target> [opt=val ...]`、`/status <id>`、`/cancel <id>`、`/tasks`、`/help`
@@ -200,7 +201,7 @@ gotify:
 |---|---|---|
 | `server_url` | Gotify 服务器地址 | 自行部署的 Gotify 服务端地址 |
 | `token` | 应用 Token | Gotify Web UI → Apps → Create Application |
-| `priority` | 通知优先级（可选，默认5） | 5=normal, 8=emergency |
+| `priority` | 通知优先级（可选，默认5） | Gotify 官方语义：2=Default, 5=High, 8=Emergency（bot.go 中未配置时回退 5）|
 
 **触发场景**：任务完成/失败时推送标题和摘要；错误日志（error/fatal 级别）推送完整日志行（限速 1 条/秒）。
 
@@ -270,16 +271,16 @@ internal/api/
 **双向 Bot**（Telegram、Discord、WeChat、Feishu）：
 - 接收用户消息 → 解析命令 → 创建/查询/取消任务 → 回复结果
 - 订阅 EventBus → 任务完成后主动推送通知
-- 依赖：`TaskManager` + `EventBus` + `LogHub`
+- 依赖：`TaskManager` + `EventBus` + `LogHub` + `EnqueueTask`（注入的 `server.EnqueueTask`，与 HTTP API 同路径入队）
 
 **单向推送**（Gotify、Pushover）：
 - 仅订阅 EventBus + LogHub → HTTP POST 推送
 - 不处理用户命令
-- 依赖：`EventBus` + `LogHub`
+- 依赖：`EventBus` + `LogHub`（无 `EnqueueTask`）
 
 ### 通知格式
 
-任务结果通过 `api.FormatTaskResult(task, markdown)` 格式化。`markdown=true` 时任务 ID 用反引号包裹（Telegram/Discord），`markdown=false` 时纯文本（其余平台）。
+任务结果通过 `api.FormatTaskResult(task, markdown)` 格式化。`markdown=true`（任务 ID 用反引号包裹）：Telegram/Discord/Gotify；`markdown=false`（纯文本）：WeChat/Feishu/Pushover。
 
 ```
 ✅ Task `task_abc123` completed
@@ -291,7 +292,7 @@ Error: something went wrong
 
 ### 日志告警推送
 
-所有平台通过 `api.RunBotLogLoop` 接收日志，筛选 `level=error` / `level=fatal`，以 1 条/秒速率限制发送：
+所有平台通过 `api.RunBotLogLoop` 接收日志，筛选以 `ERRO[` / `FATA[` 前缀开头的日志行（`isBotAlertLogLine`，bot_notify.go:70-73），以 1 条/秒速率限制发送：
 
 - **Telegram/Discord**：遍历 `config.AllowedUsers`（配置静态列表）
 - **WeChat**：遍历 `b.userTokens`（运行时收集的已交互用户）
@@ -305,7 +306,7 @@ Error: something went wrong
 | Telegram | 长轮询 `getUpdates`（60s timeout, `AllowedUpdates:["message"]`） | 文本命令 `/cmd` | 独立 Bot 账号 + Token | 库自动处理 |
 | Discord | WebSocket Gateway（discordgo） | Slash Command 结构化 | 独立 Bot 账号 + Token | 库自动（Resume） |
 | WeChat iLink | 长轮询 SDK（`Run` 阻塞 + `runWithReconnect` 外层） | 文本命令 `/cmd` | 个人微信号（QR 扫码登录） | 2min Login timeout + 30s 重试间隔 |
-| 飞书/Lark | HTTP Webhook 回调（`NonBlockingCallback` + 3s 超时） | 文本命令 `/cmd` | 企业自建应用 + AppID/Secret | HTTP（被动） |
+| 飞书/Lark | HTTP Webhook 回调（`NonBlockingCallback` + 10s 超时，feishu/bot.go `lark.WithTimeout`） | 文本命令 `/cmd` | 企业自建应用 + AppID/Secret | HTTP（被动） |
 | Gotify | — | — | 应用 Token | — |
 | Pushover | — | — | 应用 Token | — |
 
@@ -327,7 +328,7 @@ Error: something went wrong
 添加新的 Bot 平台只需三步：
 
 1. **创建实现包** `internal/bot/{name}/`，实现 `Bot` 接口
-2. **添加配置** 在 `internal/config/config.go` 的 `BotConfig` 下加结构体，在 `NormalizeLoadedConf` 中加 trim
+2. **添加配置** 在 `internal/config/config.go` 的 `BotConfig` 下加结构体即可（BotConfig 无 normalize/trim 逻辑，config.go:45-83 仅有纯结构体定义）
 3. **注册到工厂** 在 `main.go` 的 `initBot()` 中加条件分支
 
 如果平台使用 HTTP Webhook 回调（如飞书），还需要调用 `server.RegisterBotCallback(path, handler)` 注册路由。
@@ -418,7 +419,7 @@ wechat:
 2. 重启 TMD，查看服务端日志（控制台或 `tmd2.log`），会输出一个 QR Code URL
 3. 用微信扫描二维码（**只能在微信中打开该 URL**，复制到浏览器无效）
 4. 扫码后 Bot 自动登录，后续重启会自动复用凭证，无需重复扫码
-5. 想限制谁能使用 Bot？向 Bot 发一条消息，然后在日志中找到 `FromUserID`，填入 `allowed_users`：
+5. 想限制谁能使用 Bot？`allowed_users` 留空即允许所有用户（当前版本不打印 `FromUserID`，无法从日志获取）：
 
 ```yaml
   allowed_users: ["wxid_xxxxxxx@im.wechat"]
@@ -446,7 +447,7 @@ feishu:
   allowed_users: ["ou_xxxxxxxxxxxxx"]
 ```
 
-10. `allowed_users`（用户 open_id）的获取方式：让用户向 Bot 发一条消息，查看 TMD 服务端日志中的 `openID`
+10. `allowed_users`（用户 open_id）的获取方式：留空即允许所有用户，或通过[飞书开放平台 API](https://open.feishu.cn/document/server-docs/contact-v3/user/get) 查询（当前版本不打印 openID，feishu/handlers.go 仅用于权限校验）
 11. 重启 TMD
 
 ---
@@ -496,7 +497,7 @@ docker run -d \
   -p 25556:25556 \
   -v /path/to/config:/config \
   -e TMD_HOME=/config \
-  leeexx00/tmd:latest -server
+  leeexx00/tmdp:latest -server
 
 # 编辑宿主机上的配置文件
 vi /path/to/config/bot_config.yaml
@@ -512,15 +513,14 @@ docker restart tmd
 配置完成后重启 TMD，在控制台或 `tmd2.log` 中查找以下日志：
 
 ```
-[bot-telegram] Authorized as @YourBotName
-[bot-discord] Connected as YourBot#1234
-[bot-wechat] Starting (credential: .weixin-token.json)
-[bot-feishu] Started (app_id: cli_xxxxxxxxxxxx)
-[bot-gotify] Started (server: http://gotify.lan:8080)
-[bot-pushover] Started
-[bot] telegram started
-[bot] discord started
-[bot] wechat started
+[bot-telegram] Started account=<BotUsername>          # telegram/bot.go:53
+[bot-discord] Started account=<BotUsername>           # discord/bot.go:58
+[bot-wechat] Starting credential_path=".weixin-token.json"   # wechat/bot.go:83
+[bot-feishu] Started app_id=cli_xxxxxxxxxxxx callback_path=/api/v1/bot/feishu/callback   # feishu/bot.go:76
+[bot-gotify] Started server=http://gotify.lan:8080    # gotify/bot.go:50
+[bot-pushover] Started device="iphone" sound="gamelan"  # pushover/bot.go:48
+[bot] Started provider=telegram                       # server.go:315
+[bot] Stopped provider=telegram                       # server.go:439（GracefulShutdown 时）
 ```
 
 不存在的平台不会有日志。启动后向 Bot 发送 `/help`，返回帮助信息说明 Bot 正常工作。

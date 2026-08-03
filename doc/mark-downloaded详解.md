@@ -73,7 +73,7 @@
                            ↓
 ┌──────────────────────────────────────────────────────────────┐
 │  service.DownloadService.MarkDownloaded                      │
-│  internal/service/download_service.go:552                   │
+│  internal/service/download_service.go:625                   │
 │    ├── resolveUsers / resolveLists / resolveFollowings       │
 │    └── downloading.MarkUsersAsDownloaded()                   │
 └──────────────────────────┬──────────────────────────────────┘
@@ -180,8 +180,10 @@ curl -X POST http://localhost:25556/api/v1/lists/123456789/mark
 # 批量标记（带自定义时间）
 curl -X POST http://localhost:25556/api/v1/batch/mark \
   -H "Content-Type: application/json" \
-  -d '{"users":["elonmusk"],"lists":["123456"],"timestamp":"2024-06-01T00:00:00"}'
+  -d '{"users":["elonmusk"],"lists":["123456"],"timestamp":"2024-06-01T00:00:00+08:00"}'
 ```
+
+> **时区差异**：API 的 `timestamp` 字段是 Go `time.Time`（`MarkDownloadedTaskData.Timestamp`），JSON 反序列化要求 **RFC3339 格式且必须带时区**（如 `2024-06-01T00:00:00+08:00` 或 `2024-06-01T00:00:00Z`），不带时区会反序列化失败返回 400。CLI 的 `-mark-time` 则使用本地时区解析（`time.ParseInLocation("2006-01-02T15:04:05", ...)`），可以省略时区。
 
 ---
 
@@ -201,7 +203,7 @@ API 模式:
     → service.DownloadService.MarkDownloaded(ctx, taskID, ...)
 ```
 
-### Service 层入口 (`internal/service/download_service.go:552`)
+### Service 层入口 (`internal/service/download_service.go:625`)
 
 ```go
 func (s *downloadServiceImpl) MarkDownloaded(ctx context.Context, taskID string,
@@ -231,7 +233,11 @@ func (s *downloadServiceImpl) MarkDownloaded(ctx context.Context, taskID string,
     }
 
     // 3. 委托 downloading 层执行
-    pathHelper, _ := path.NewStorePath(s.deps.Config.RootPath)
+    pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
+    if err != nil {
+        log.Errorf("[download] Store path failed task_id=%s error=%q", taskID, safeDownloadError(err))
+        return err
+    }
     results, err := downloading.MarkUsersAsDownloaded(ctx, s.deps.Client,
         s.deps.DB, lists, users, pathHelper.Users, markTimeStr, s.maxFileNameLen())
 
@@ -337,7 +343,7 @@ func markSingleUserWithInfo(db *sqlx.DB, user *twitter.User,
 }
 ```
 
-### 用户同步 (`internal/downloading/user_sync.go:11`)
+### 用户同步 (`internal/downloading/user_sync.go:13`)
 
 ```go
 func syncUserAndEntity(db *sqlx.DB, user *twitter.User, dir string, maxLen int) (*entity.UserEntity, error) {
@@ -451,7 +457,7 @@ type Entity interface {
 ```go
 func (ue *UserEntity) Rename(title string) error {
     if !ue.created {
-        return fmt.Errorf("user entity was not created")
+        return fmt.Errorf("user entity [%s:%d] was not created", ue.record.ParentDir, ue.record.UserId)
     }
     old, _ := ue.Path()
     newPath := filepath.Join(filepath.Dir(old), title)
@@ -643,10 +649,12 @@ if err := entity.SetLatestReleaseTime(*timestamp); err != nil {
 ```go
 membersResult, err := lst.GetMembers(ctx, client)
 if err != nil {
-    if strings.Contains(err.Error(), "does not exist or is not accessible") {
+    errStr := err.Error()
+    if strings.Contains(errStr, "does not exist or is not accessible") ||
+        strings.Contains(errStr, "unable to get timeline data") {
         return nil, fmt.Errorf("list %s does not exist or is not accessible", lst.Title())
     }
-    log.Warnln("✗", lst.Title(), "-", "failed to get list members:", err)
+    log.Warnf("[download] Mark list members fetch failed list=%q error=%q", lst.Title(), err.Error())
     continue  // 继续处理其他列表
 }
 ```
@@ -655,13 +663,24 @@ if err != nil {
 
 ## 日志输出
 
-CLI 模式下，使用 `LogReporter` 输出日志（不输出 `=== MARK_DOWNLOADED_RESULTS ===` 格式）：
+CLI 模式下，使用 `LogReporter` 输出日志（不输出 `=== MARK_DOWNLOADED_RESULTS ===` 格式）。以 `tmd -user elonmusk -mark-downloaded` 为例，真实输出格式：
 
 ```
-INFO[0000] marking users as downloaded, timestamp: 2024-06-15T10:30:00+08:00
-INFO[0001] ✓ Elon Musk(elonmusk) - marked as downloaded
-INFO[0001] finished marking users as downloaded, success: 3 failed: 0
+[download] Mark start task_id=cli users=1 lists=0 following=0
+[download] Mark downloaded start mode=timestamp timestamp=2024-06-15T10:30:00+08:00 lists=0 users=1
+[task] Progress stage=marking current="1 users, 0 lists"
+[download] Mark user complete user="Elon Musk(elonmusk)" uid=44196397 entity_id=5
+[download] Mark downloaded complete success=1 failed=0
+[task] Result message="Marked 1 users as downloaded"
 ```
+
+对应源码：
+- `[download] Mark start ...` — `internal/service/download_service.go:628`
+- `[download] Mark downloaded start mode=timestamp ...` — `internal/downloading/mark_downloaded.go:28`（`-mark-time "null"/"nil"` 时为 `mode=full`，见 :31）
+- `[task] Progress stage=marking current=...` — `internal/service/progress.go:76-77`
+- `[download] Mark user complete user=... uid=... entity_id=...` — `internal/downloading/mark_downloaded.go:160`（每成功标记一个用户输出一行）
+- `[download] Mark downloaded complete success=... failed=...` — `internal/downloading/mark_downloaded.go:105`
+- `[task] Result message=...` — `internal/service/progress.go:101`（`OnComplete` 无 Main/Profile 统计时输出）
 
 ---
 
@@ -738,7 +757,10 @@ tmd -user elonmusk -mark-downloaded -mark-time "2024-06-01T00:00:00"  # 覆盖
 4. `-user/-list/-foll`（可组合，可与 -profile 组合）
 5. `-profile-user/-profile-list`（可组合）
 
-当 `-mark-downloaded` 生效时，同一命令行中的其他参数会被忽略。
+当 `-mark-downloaded` 生效时（executor.go 的 `cliTaskModeMarkDownloaded` 分支）：
+- `-user/-list/-foll` 是**标记目标**，正常参与执行（作为 screenNames/listIDs/followingNames 传入 `MarkDownloaded`）
+- `-profile-user/-profile-list` 被忽略，并输出警告：`[cli] -mark-downloaded is exclusive; profile download parameters will be ignored`
+- `-jsonfile`/`-jsonfolder` 优先级更高（完全独占），会**取代** mark 模式执行
 
 ### 4. CLI vs API 差异
 
@@ -750,7 +772,7 @@ tmd -user elonmusk -mark-downloaded -mark-time "2024-06-01T00:00:00"  # 覆盖
 | 结果 | 日志输出 | 通过 SSE 推送到前端 |
 | 任务ID | `"cli"` | `task_<uuid>` |
 
-### 5. MongoDB 用户 ID 格式
+### 5. -user 参数格式
 
 `-user` 参数接受 Twitter **screen_name**（例如 `elonmusk`），不是数字 user_id。
 

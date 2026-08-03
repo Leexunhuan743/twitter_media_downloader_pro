@@ -1,7 +1,8 @@
 > **⚠️ 历史文档说明**
-> 本文档描述的功能已被重构。`InaccessibleIDs` 收集机制已在后续版本中移除，
-> `is_accessible` 字段仍保留在数据库模型中以供查询，但不再通过列表下载流程自动标记。
-> 如需了解当前实现，请参考实际代码。
+> 本文档描述的是 v2.8.0 引入 `is_accessible` 字段时的实现，此后已多次重构。
+> **勘误**：初版文档虚构了 `InaccessibleIDs` 收集机制（`MembersResult.InaccessibleIDs`、`parseItemContentToUser` 返回不可访问 ID、列表下载流程遍历 `InaccessibleIDs` 调 `SetUserAccessible`）。该机制在任何版本中都不存在——真实的不可访问检测位于 `internal/twitter/user.go` 的 `parseUserResults()`（`UserUnavailable` 时返回 `rest_id`），由调用方通过 `SetUserAccessible` / `SetUserAccessibleByScreenName` 标记（见 4.2.5、4.3.6、4.6.2）。
+> 当前实现：`is_accessible` 字段仍保留在数据库模型中（`internal/database/model.go`），标记逻辑已改为 `internal/database/user.go` 的 `MarkUserInaccessible` / `MarkListMembersAccessibleByIDs`（由 `internal/downloading/list_download.go`、`internal/service/download_service.go`、`internal/downloading/profile/downloader.go` 调用）。
+> 文中引用的 v2.8.0 时代文件名已变更：`internal/database/crud.go` 拆分至 `user.go`、`lst.go` 等；`internal/downloading/features.go` 拆分至 `list_download.go`、`list_sync.go`、`mark_downloaded.go`、`user_sync.go`；`internal/twitter/twitter_test.go` 已删除；`internal/profile/` 移至 `internal/downloading/profile/`。如需了解当前实现，请参考实际代码。
 
 ***
 
@@ -25,28 +26,34 @@
 │                        调用链路                              │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  main.go (handleProfileDownload)                             │
-│      └── lst.GetMembers() ────────────────┐                 │
-│                                         ↓                   │
-│  downloading/features.go                  │                 │
-│      ├── downloadList()                   │                 │
-│      │       └── lst.GetMembers() ─────→ │                 │
-│      ├── syncLstAndGetMembers()           │                 │
-│      │       └── lst.GetMembers() ─────→ │                 │
-│      ├── MarkUsersAsDownloaded()          │                 │
-│      │       └── lst.GetMembers() ─────→ │                 │
-│      └── syncUser(db, user, true)        │                 │
+│  main.go (userArgs.GetUser) / profile 下载                  │
+│      └── twitter.GetUserById() / GetUserByScreenName()      │
+│                      │                                      │
+│                      ↓                                      │
+│              twitter/user.go                                │
+│                  parseUserResults()                         │
+│                      ├── 正常 → 返回 (*User, rest_id, nil)  │
+│                      └── UserUnavailable → 返回 (nil,       │
+│                            rest_id, error)                 │
 │                                          ↓                  │
-│                              twitter/list.go                │
-│                                  ├── itemContentsToUsers()   │
-│                                  │     └── parseItemContentToUser()
-│                                  │           ├── 可访问 → Users[]
-│                                  │           └── UserUnavailable → InaccessibleIDs[]
-│                                  └── 返回 *MembersResult     │
-│                                          ↓                  │
-│                              database/crud.go                │
-│                                  ├── SetUserAccessible(uid, false)
-│                                  └── CreateUser / UpdateUser (含 is_accessible) │
+│  main.go (userArgs.GetUser)             │                   │
+│      ├── uid > 0 → database.SetUserAccessible(db, uid,      │
+│      │              false)                                  │
+│      └── uid == 0（screen_name 查询）→                      │
+│            database.SetUserAccessibleByScreenName(...)      │
+│                                                             │
+│  downloading/features.go                                    │
+│      ├── syncUser(db, user, accessible)                     │
+│      │       └── CreateUser / UpdateUser (含 is_accessible) │
+│      ├── downloadList() / syncLstAndGetMembers() /          │
+│      │   MarkUsersAsDownloaded()                            │
+│      │       └── lst.GetMembers() → *MembersResult{Users}   │
+│      │           （不含不可访问用户收集，见 4.3）            │
+│      └── syncUserAndEntity → syncUser(db, user, true)       │
+│                                                             │
+│  internal/profile/downloader.go                             │
+│      └── syncUserDirectory(): 成功获取 Profile              │
+│              → usrdb.IsAccessible = true                    │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -58,12 +65,13 @@
 | 文件 | 变更类型 | 涉及函数/结构体 |
 |------|----------|----------------|
 | `internal/database/model.go` | 新增字段 | `User.IsAccessible` |
-| `internal/database/crud.go` | Schema + 函数 + 新增 | `schema`, `CreateUser`, `UpdateUser`, `MigrateDatabase`, `SetUserAccessible` |
-| `internal/twitter/list.go` | 接口 + 结构 + 函数重构 | `ListBase`, `MembersResult`, `itemContentsToUsers`, `parseItemContentToUser`, `getMembers`, `List.GetMembers`, `UserFollowing.GetMembers` |
-| `internal/downloading/features.go` | 签名变更 + 调用点更新 | `syncUser`, `downloadList`, `syncLstAndGetMembers`, `MarkUsersAsDownloaded` |
-| `internal/profile/downloader.go` | 字段赋值 | `syncUserDirectory` |
-| `main.go` | 调用点更新 + 迁移调用 | `connectDatabase`, `handleProfileDownload` (2处) |
-| `internal/twitter/twitter_test.go` | 测试适配 | `TestGetMembers` |
+| `internal/database/crud.go`（已拆分至 `user.go`、`schema.go` 等） | Schema + 函数 + 新增 | `schema`, `CreateUser`, `UpdateUser`, `MigrateDatabase`, `SetUserAccessible`, `SetUserAccessibleByScreenName` |
+| `internal/twitter/user.go` | 函数重构 | `parseUserResults`, `getUser`（UserUnavailable 检测，返回 rest_id） |
+| `internal/twitter/list.go` | 接口 + 结构 + 函数重构 | `ListBase`, `MembersResult`, `parseItemContentToUser`, `itemContentsToUsers`, `getMembers`, `List.GetMembers`, `UserFollowing.GetMembers` |
+| `internal/downloading/features.go`（已拆分至 `list_download.go`、`list_sync.go`、`mark_downloaded.go`、`user_sync.go`） | 签名变更 + 调用点更新 | `syncUser`, `downloadList`, `syncLstAndGetMembers`, `MarkUsersAsDownloaded` |
+| `internal/profile/downloader.go`（现位于 `internal/downloading/profile/downloader.go`） | 字段赋值 | `syncUserDirectory` |
+| `main.go` | 调用点更新 + 迁移调用 | `connectDatabase`, `userArgs.GetUser` |
+| `internal/twitter/twitter_test.go`（已删除） | 测试适配 | `TestGetMembers` |
 
 ---
 
@@ -172,24 +180,23 @@ func SetUserAccessible(db *sqlx.DB, uid uint64, accessible bool) error {
 	if err != nil {
 		return fmt.Errorf("failed to set accessible status for user %d: %w", uid, err)
 	}
-
-	rows, _ := result.RowsAffected()
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected for user %d: %w", uid, err)
+	}
 	if rows == 0 {
-		// 用户不存在则创建新记录
-		user, getErr := GetUserById(db, uid)
-		if getErr != nil || user == nil {
-			newUser := &User{Id: uid, IsAccessible: accessible}
-			return CreateUser(db, newUser)
-		}
+		return fmt.Errorf("user %d not found, cannot set accessible status", uid)
 	}
 	return nil
 }
 ```
 
+同版本还新增了 `SetUserAccessibleByScreenName`（按 `screen_name` 更新，逻辑一致）。
+
 **设计要点**：
 - 单独更新访问状态，无需完整 User 对象
-- 用户不存在时自动创建（仅包含 ID 和 IsAccessible）
-- 用于批量标记不可访问用户时的轻量操作
+- 用户不存在时**返回 "not found" 错误，不自动创建用户**——调用方将 `not found` 视为预期情况忽略（见 4.6.2），避免为不存在的用户写入仅含 ID 的空记录
+- 用于标记不可访问用户时的轻量操作
 
 ---
 
@@ -217,53 +224,35 @@ type ListBase interface {
 
 ```go
 type MembersResult struct {
-	Users           []*User   // 可正常访问的用户列表
-	InaccessibleIDs []uint64  // 不可访问用户的 ID 列表
+	Users []*User
 }
 ```
 
 **设计决策**：
-- 不使用 `error` 返回不可访问信息，因为这是正常业务场景
-- 分离两个切片，便于上层分别处理
+- 将成员列表封装为结果对象，便于后续扩展
+- 注意：本版本 **没有** 在 `MembersResult` 中收集不可访问用户 ID。列表成员解析对 `UserUnavailable` 成员仅跳过（解析失败），不可访问检测发生在 `twitter/user.go` 的 `parseUserResults()`（见 4.3.6）
 
 #### 4.3.3 新增 parseItemContentToUser 辅助函数
 
 ```go
-func parseItemContentToUser(ic gjson.Result) (*User, uint64, bool) {
+func parseItemContentToUser(ic gjson.Result) (*User, error) {
 	user_results, err := getResults(ic, timelineUser)
 	if err != nil {
-		log.Debugln("getResults failed:", err)
-		return nil, 0, false
+		return nil, err
 	}
 	if user_results.String() == "{}" {
-		return nil, 0, false
+		return nil, fmt.Errorf("empty user results")
 	}
 
-	result := user_results.Get("result")
-
-	// 关键：检测 UserUnavailable 类型
-	if result.Get("__typename").String() == "UserUnavailable" {
-		if restId := result.Get("rest_id"); restId.Exists() {
-			return nil, restId.Uint(), true  // 返回不可访问用户的 ID
-		}
-		return nil, 0, false
-	}
-
-	u, err := parseUserResults(&user_results)
+	u, _, err := parseUserResults(&user_results)
 	if err != nil {
-		log.Debugln("user_results parse failed:", err, "- data:", user_results.String())
-		return nil, 0, false
+		return nil, err
 	}
-	return u, 0, false
+	return u, nil
 }
 ```
 
-**返回值语义**：
-| 返回值组合 | 含义 |
-|-----------|------|
-| `(user, 0, false)` | 正常用户 |
-| `(nil, uid, true)` | 不可访问用户，uid 为其 ID |
-| `(nil, 0, false)` | 解析失败或数据为空 |
+**说明**：此函数从 `itemContentsToUsers` 内联逻辑中提取，不包含不可访问检测——`parseUserResults` 返回 `UserUnavailable` 错误时，该成员被跳过（与旧逻辑一致）。
 
 #### 4.3.4 重构 itemContentsToUsers
 
@@ -274,15 +263,16 @@ func itemContentsToUsers(itemContents []gjson.Result) []*User { ... }
 // === 修改后 ===
 func itemContentsToUsers(itemContents []gjson.Result) MembersResult {
 	result := MembersResult{
-		Users:           make([]*User, 0, len(itemContents)),
-		InaccessibleIDs: make([]uint64, 0),
+		Users: make([]*User, 0, len(itemContents)),
 	}
 	for _, ic := range itemContents {
-		user, inaccessibleID, inaccessible := parseItemContentToUser(ic)
+		user, err := parseItemContentToUser(ic)
+		if err != nil {
+			log.Debugln("parseItemContentToUser failed:", err)
+			continue
+		}
 		if user != nil {
 			result.Users = append(result.Users, user)
-		} else if inaccessible {
-			result.InaccessibleIDs = append(result.InaccessibleIDs, inaccessibleID)
 		}
 	}
 	return result
@@ -296,6 +286,37 @@ func itemContentsToUsers(itemContents []gjson.Result) MembersResult {
 - `getMembers()` - 内部通用函数
 - `List.GetMembers()` - 列表成员获取
 - `UserFollowing.GetMembers()` - 关注列表获取
+
+#### 4.3.6 internal/twitter/user.go：parseUserResults 检测 UserUnavailable
+
+不可访问用户的检测实际发生在这里（返回 `rest_id` 供调用方标记）：
+
+```go
+func parseUserResults(user_results *gjson.Result) (*User, uint64, error) {
+	result := user_results.Get("result")
+	if !result.Exists() {
+		return nil, 0, fmt.Errorf("user result does not exist")
+	}
+	if result.Get("__typename").String() == "UserUnavailable" {
+		// 返回不可访问用户的 ID，用于标记状态
+		if restId := result.Get("rest_id"); restId.Exists() {
+			log.Debugf("UserUnavailable detected, rest_id: %s", restId.String())
+			return nil, restId.Uint(), fmt.Errorf("user unavaiable")
+		}
+		// 尝试从其他字段获取ID
+		log.Debugf("UserUnavailable result: %s", result.String())
+		return nil, 0, fmt.Errorf("user unavaiable")
+	}
+	// ... 正常解析 legacy 字段
+}
+```
+
+**返回值语义**：
+| 返回值组合 | 含义 |
+|-----------|------|
+| `(user, rest_id, nil)` | 正常用户 |
+| `(nil, rest_id, error)` | 不可访问用户，rest_id 为其 ID |
+| `(nil, 0, error)` | 解析失败（含 UserUnavailable 无 rest_id 的情况，如 screen_name 查询） |
 
 ---
 
@@ -318,7 +339,8 @@ func syncUser(db *sqlx.DB, user *twitter.User, accessible bool) error {
 **调用处变更**：
 
 ```go
-// features.go 中唯一调用点（BatchUserDownload -> syncUserAndEntity）
+// syncUser 的唯一调用点（syncUserAndEntity，features.go:524；该函数又被
+// BatchUserDownload / DownloadUser 等多处调用）
 if err := syncUser(db, user, true); err != nil { ... }
 //                                    ^^^^
 //                          成功获取到用户信息，标记为可访问
@@ -332,22 +354,26 @@ if err != nil {
     return nil, err
 }
 
-// 新增：标记不可访问用户
-for _, uid := range membersResult.InaccessibleIDs {
-    if err := database.SetUserAccessible(db, uid, false); err != nil {
-        log.Warnln("failed to mark user as inaccessible:", uid, err)
-    }
+eid, err := ent.Id()
+if err != nil {
+    return nil, err
 }
 
 members := membersResult.Users
 if len(members) == 0 {
-    return nil, nil  // 注意：这里不再报错，因为可能全部是不可访问用户
+    return nil, nil
 }
+log.Debugln("members:", len(members))
+packgedUsers := make([]userInLstEntity, len(members))
+for i, user := range members {
+    packgedUsers[i] = userInLstEntity{user: user, leid: &eid}
+}
+return BatchUserDownload(ctx, client, db, packgedUsers, realDir, true, additional, dwn)
 ```
 
-**行为变化**：
-- 旧逻辑：`len(members) == 0` 时返回 error
-- 新逻辑：只有 API 错误才返回 error，空列表是合法情况
+**行为变化**（实际 diff，git b22b570^..b22b570）：
+- 旧逻辑：`members, err := list.GetMembers(...)`；`if err != nil || len(members) == 0 { return nil, err }`
+- 新逻辑：只有 API 错误才返回 error；空成员列表返回 `nil, nil`（本版本列表流程不收集/标记不可访问用户）
 
 #### 4.4.3 syncLstAndGetMembers 变更
 
@@ -357,18 +383,13 @@ if err != nil {
     return nil, err
 }
 
-// 新增：标记不可访问用户
-for _, uid := range membersResult.InaccessibleIDs {
-    if err := database.SetUserAccessible(db, uid, false); err != nil {
-        log.Warnln("failed to mark user as inaccessible:", uid, err)
-    }
-}
-
 members := membersResult.Users
-if len(members) == 0 && len(membersResult.InaccessibleIDs) == 0 {
-    return nil, nil  // 两者都为空才算真正没有数据
+if len(members) == 0 {
+    return nil, nil
 }
 ```
+
+**行为变化**：与 downloadList 相同——旧逻辑 `if err != nil || len(members) == 0 { return nil, err }`；新逻辑仅 API 错误返回 error，空成员列表返回 `nil, nil`。同样不在此处标记不可访问用户。
 
 #### 4.4.4 MarkUsersAsDownloaded 变更
 
@@ -379,14 +400,7 @@ if err != nil {
     continue
 }
 
-// 新增：标记不可访问用户
-for _, uid := range membersResult.InaccessibleIDs {
-    if err := database.SetUserAccessible(db, uid, false); err != nil {
-        log.Warnln("failed to mark user as inaccessible:", uid, err)
-    }
-}
-
-// 仅遍历可访问用户
+// 仅遍历可访问用户（无 InaccessibleIDs 收集）
 for _, user := range membersResult.Users {
     info := markSingleUserWithInfo(db, user, dir, timestamp)
     results = append(results, info)
@@ -427,32 +441,27 @@ func connectDatabase(path string) (*sqlx.DB, error) {
 
 **调用时机**：程序启动时，在 `CreateTables` 之后立即执行。
 
-#### 4.6.2 handleProfileDownload 变更（2 处）
+#### 4.6.2 userArgs.GetUser 变更（标记不可访问用户）
 
-两处 `lst.GetMembers()` 调用的处理逻辑相同：
+实际变更发生在 `userArgs.GetUser`（CLI 用户参数解析/校验路径），而非列表下载流程。`twitter.GetUserById` / `GetUserByScreenName` 失败时返回从 `UserUnavailable` 中提取的 uid，据此标记：
 
 ```go
-// 第一处：profileList 的列表
-membersResult, err := lst.GetMembers(ctx, client)
+usr, uid, err := twitter.GetUserById(ctx, client, id)
 if err != nil {
-    log.WithError(err).WithField("list", lst.Title()).Errorln(...)
-    continue
-}
-
-// 新增：标记不可访问用户
-for _, uid := range membersResult.InaccessibleIDs {
-    if err := database.SetUserAccessible(db, uid, false); err != nil {
-        log.Warnln("failed to mark user as inaccessible:", uid, err)
+    // 标记不可访问用户（如果存在于数据库中）
+    if uid > 0 {
+        if markErr := database.SetUserAccessible(db, uid, false); markErr != nil {
+            // 用户不存在时不记录警告（预期行为）
+            if !strings.Contains(markErr.Error(), "not found") {
+                log.Warnln("failed to mark user as inaccessible:", uid, markErr)
+            }
+        }
     }
-}
-
-// 仅遍历可访问用户
-for _, member := range membersResult.Users {
-    requests = append(requests, profile.DownloadRequest{...})
+    return nil, err
 }
 ```
 
-第二处在 `task.lists` 循环中，逻辑完全一致。
+screen_name 分支同理：`GetUserByScreenName` 失败时若 uid > 0 用 `SetUserAccessible`，否则（API 对 screen_name 查询的 UserUnavailable 响应不含 rest_id）改用 `SetUserAccessibleByScreenName(db, screenName, false)`。
 
 ---
 
@@ -480,44 +489,45 @@ users = usersResult.Users
 
 ## 五、数据流图
 
-### 5.1 列表下载时的完整流程
+### 5.1 用户解析与列表下载时的完整流程
 
 ```
-                    ┌──────────────────────┐
-                    │   调用 GetMembers()   │
-                    └──────────┬───────────┘
-                               │
-                    ┌──────────▼───────────┐
-                    │  Twitter API 响应     │
-                    │  (JSON 数组)          │
-                    └──────────┬───────────┘
-                               │
-                    ┌──────────▼───────────┐
-                    │ itemContentsToUsers() │
-                    │  遍历每个元素          │
-                    └──────────┬───────────┘
-                               │
-              ┌────────────────┼────────────────┐
-              │                │                │
-    ┌─────────▼──────┐  ┌─────▼────────┐  ┌────▼─────────┐
-    │  正常用户       │  │ UserUnavailable│  │ 解析失败/空   │
-    │  __typename     │  │ + rest_id 存在  │  │ 跳过          │
-    │  ≠ "User..."    │  │               │  │              │
-    └────────┬───────┘  └─────┬────────┘  └──────────────┘
-             │                 │
-             ▼                 ▼
-    ┌────────────────┐  ┌─────────────────┐
-    │ Users[]        │  │ InaccessibleIDs[]│
-    │ (解析后的User)  │  │ (uint64 ID)     │
-    └────────┬───────┘  └────────┬─────────┘
-             │                   │
-             ▼                   ▼
-    ┌────────────────┐  ┌─────────────────┐
-    │ syncUser(      │  │ SetUserAccessible│
-    │   db,user,true)│  │   (db,id,false)  │
-    │ → 更新/创建    │  │ → 标记不可访问    │
-    └────────────────┘  └─────────────────┘
+    ┌─────────────────────────────┐    ┌─────────────────────────────┐
+    │ 用户解析（GetUserById /      │    │ 列表下载（downloadList /     │
+    │ GetUserByScreenName）        │    │ syncLstAndGetMembers /      │
+    └────────────┬────────────────┘    │ MarkUsersAsDownloaded）     │
+                 │                     └──────────────┬──────────────┘
+                 ▼                                    ▼
+    ┌──────────────────────┐            ┌──────────────────────┐
+    │ twitter/user.go      │            │ twitter/list.go      │
+    │ parseUserResults()   │            │ itemContentsToUsers()│
+    └──────────┬───────────┘            └──────────┬───────────┘
+               │                                   │
+    ┌──────────┴──────────┐              ┌─────────▼─────────┐
+    │ 正常用户             │              │ 正常用户 → Users[]│
+    │ (user, rest_id, nil)│              │ UserUnavailable / │
+    └──────────┬──────────┘              │ 解析失败 → 跳过    │
+               │                         └─────────┬─────────┘
+    ┌──────────▼──────────┐                        │
+    │ UserUnavailable     │                        ▼
+    │ (nil, rest_id, err) │           ┌────────────────────────┐
+    └──────────┬──────────┘           │ syncUser(db, user,     │
+               │                      │   accessible=true)     │
+               ▼                      │ → CreateUser/UpdateUser│
+    ┌──────────────────────┐          └────────────────────────┘
+    │ 调用方 main.go        │
+    │ userArgs.GetUser:    │
+    │ uid>0 →              │
+    │ SetUserAccessible(   │
+    │   db, uid, false)    │
+    │ uid==0 →             │
+    │ SetUserAccessibleBy- │
+    │ ScreenName(db,name,  │
+    │   false)             │
+    └──────────────────────┘
 ```
+
+**说明**：不可访问标记只发生在用户解析路径（CLI 参数解析、Profile 下载），列表成员下载流程不标记。Profile 下载成功时在 `syncUserDirectory` 中置 `usrdb.IsAccessible = true`（见 4.5）。
 
 ### 5.2 数据库状态转换
 
@@ -562,14 +572,14 @@ users = usersResult.Users
 
 | 场景 | 行为 |
 |------|------|
-| 列表中无可访问用户 | 返回空 `Users[]`，`InaccessibleIDs[]` 有数据 |
-| 列表中全部可访问 | `InaccessibleIDs[]` 为空 |
+| 列表成员全部不可访问 | `GetMembers` 返回空 `Users[]`（解析失败成员被跳过，无错误） |
+| 列表中部分可访问 | `Users[]` 仅含可访问成员 |
 | 列表不存在 | 返回 error（原有逻辑不变） |
 
 ### 6.3 代码兼容
 
 - `User` 结构体零值的 `IsAccessible=false`，但通过 `DEFAULT 1` 保证数据库层面正确
-- `SetUserAccessible` 自动处理用户不存在的边界情况
+- `SetUserAccessible` / `SetUserAccessibleByScreenName` 对不存在的用户返回 "not found" 错误，调用方将其视为预期情况忽略（不自动建用户，见 4.2.5、4.6.2）
 - 所有调用点已统一更新，无遗留编译错误
 
 ---

@@ -8,7 +8,7 @@
 
 | 维度 | 旧版本 v2.4.4 | 新版本 |
 |------|--------------|--------|
-| 源文件数 | 18 个 .go 文件 | 80+ 个 .go 文件 |
+| 源文件数 | 18 个 .go 文件 | 196 个 .go 文件（含测试；非测试 124 个） |
 | 包结构 | 5 个包（main, utils, twitter, database, downloading） | 15+ 个包（新增 api, cli, config, consolelog, downloader, entity, naming, path, scheduler, service 等） |
 | 运行模式 | 纯 CLI | CLI + Web Server 双模式 |
 | 数据库 | 单文件 crud.go（~350行） | 按实体拆分（user/user_entity/user_link/lst/lst_entity/schema/sqlite 等） |
@@ -45,7 +45,7 @@ type Config struct {
 
 **旧版本**（[main.go:L42-L85](file:///c:/Users/leeexxx/Documents/trae_projects/tmd-2.4.4/main.go#L42-L85)）：定义在 main.go 中，包含 `GetUser`、`Set`、`String` 方法。
 
-**新版本**：移到 [internal/cli/args.go](file:///c:/Users/leeexxx/Documents/trae_projects/tmd/internal/cli/args.go) 中，功能等效但使用 `twitter.NormalizeScreenName` 做标准化处理。
+**新版本**：移到 [internal/cli/args.go](file:///c:/Users/leeexxx/Documents/trae_projects/tmd/internal/cli/args.go) 中，`Set`/`String` 方法保留（`GetUser` 已移除），screen name 经 `utils.NormalizeScreenName`（剥离 `@` 前缀）标准化，并经 `utils.IsValidScreenName` 校验。
 
 **评价：精进。** 模块化，新增 screen name 标准化逻辑。
 
@@ -75,7 +75,7 @@ type Config struct {
 
 **旧版本**（[main.go:L174-L207](file:///c:/Users/leeexxx/Documents/trae_projects/tmd-2.4.4/main.go#L174-L207)）：定义在 main.go 中。
 
-**新版本**：移到 [internal/path/store.go](file:///c:/Users/leeexxx/Documents/trae_projects/tmd/internal/path/store.go) 中，`StorePath` 结构体新增了 `Downloads`、`DownloadsUsers` 等字段，支持更灵活的路径管理。
+**新版本**：移到 [internal/path/store.go](file:///c:/Users/leeexxx/Documents/trae_projects/tmd/internal/path/store.go) 中，`StorePath` 结构体包含 `Root`、`Users`、`Data`、`DB`、`ErrorsPath`、`JSONErrorsPath` 字段，支持更灵活的路径管理。
 
 **评价：精进。** 模块化，路径结构更丰富。
 
@@ -92,13 +92,21 @@ func initLogger(dbg bool, logFile io.Writer) {
 }
 ```
 
-**新版本**（[main.go:L34-L54](file:///c:/Users/leeexxx/Documents/trae_projects/tmd/main.go#L34-L54)）：
+**新版本**（[main.go:L39-L56](file:///c:/Users/leeexxx/Documents/trae_projects/tmd/main.go#L39-L56)）：
 ```go
 func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
-    // 新增 DisableSorting, PadLevelText 配置
+    // 使用 logging.NewTextFormatter 统一格式；文件端由 LumberjackHook 剥离 ANSI
+    formatter := logging.NewTextFormatter()
+    formatter.ForceColors = true
+    log.SetFormatter(formatter)
+    if dbg { log.SetLevel(log.DebugLevel) } else { log.SetLevel(log.InfoLevel) }
     // 新增 consolelog.StartCapture(logHub) 支持 Web 控制台日志
-    log.SetOutput(os.Stderr)
-    log.AddHook(lfshook.NewHook(logFile, nil))
+    if err := consolelog.StartCapture(logHub); err != nil {
+        log.Warnf("[startup] Console log capture failed error=%q", err.Error())
+    } else {
+        log.SetOutput(os.Stderr)
+    }
+    log.AddHook(logging.NewLumberjackHook(logFile))
 }
 ```
 
@@ -292,7 +300,7 @@ func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
 | `ReportRequestCount` | 相同 | 相同 | 无变化 |
 | `GetSelfScreenName` | 相同 | 相同 | 无变化 |
 | `GetClientError` | 相同 | 相同 | 无变化 |
-| `SetClientError` | 日志格式不同 | 日志格式更清晰 | **精进**：`✗ screenName - msg` |
+| `SetClientError` | 日志格式不同 | 日志格式更清晰 | **精进**：`[twitter] Account unavailable account=... error=...` |
 | `GetClientRateLimiter` | 相同 | 相同 | 无变化 |
 | `SelectClient` | 相同 | 相同 | 无变化 |
 | 新增 `SelectClientMFQ` | 无 | 新增，三级队列+指数退避 | **精进**：Q1附加账户→Q2全部+指数退避→Q3主账户(受保护用户) |
@@ -536,16 +544,16 @@ func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
 #### `BatchDownloadTweet`
 
 **旧版本**：返回 `[]PackgedTweet`。
-**新版本**：逻辑移到 `BatchUserDownload` 内部的下载器管理。
+**新版本**：仍在 [tweet_download.go](file:///c:/Users/leeexxx/Documents/trae_projects/tmd/internal/downloading/tweet_download.go):476，返回 `[]PackagedTweet`，新增 `onTweetDone` 进度回调和 `downloader.Downloader`/`fileWriter` 注入，内部经 `workerConfig` + `tweetDownloader` goroutine 池执行。
 
-**评价：重构。** 功能被整合到批量下载流程中。
+**评价：精进。** 接口注入 + 进度回调，函数本身未被移除。
 
 ---
 
-#### `syncUser` / `syncUserAndEntity`
+#### `syncUserAndEntity`
 
-**旧版本**：定义在 features.go。
-**新版本**：移到 [user_sync.go](file:///c:/Users/leeexxx/Documents/trae_projects/tmd/internal/downloading/user_sync.go)，使用 `entity.Sync` 统一接口。
+**旧版本**：`syncUser` / `syncUserAndEntity` 定义在 features.go。
+**新版本**：`syncUser` 已并入，仅存 [user_sync.go](file:///c:/Users/leeexxx/Documents/trae_projects/tmd/internal/downloading/user_sync.go):13 的 `syncUserAndEntity`，使用 `entity.Sync` 统一接口。
 
 **评价：精进。** 使用 entity 包统一接口。
 
@@ -554,9 +562,9 @@ func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
 #### `DownloadUser`
 
 **旧版本**：定义在 features.go。
-**新版本**：移到 [user_sync.go](file:///c:/Users/leeexxx/Documents/trae_projects/tmd/internal/downloading/user_sync.go)，使用 entity 包。
+**新版本**：**已移除**。下载入口上移到 service 层 `DownloadService.UserDownload`（[internal/service/download_service.go](file:///c:/Users/leeexxx/Documents/trae_projects/tmd/internal/service/download_service.go):461），CLI 经 `cli.Executor` 调用。
 
-**评价：精进。** 模块化。
+**评价：重构。** 职责上移，downloading 层只保留实体同步。
 
 ---
 
@@ -660,7 +668,7 @@ func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
 **新版本**：新增 [list_sync.go](file:///c:/Users/leeexxx/Documents/trae_projects/tmd/internal/downloading/list_sync.go) 中的 `ListSyncManager`，支持：
 - 事务安全的列表成员同步
 - 自动移除不再属于列表的符号链接
-- `InitListSyncManager` 全局单例初始化
+- `NewListSyncManager(db)` 构造器（main.go 中注入 `service.Dependencies.ListSyncManager`）
 
 **评价：精进。** 这是旧版本没有的功能，支持列表成员变更时自动清理。
 
@@ -689,7 +697,7 @@ func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
 - 速率限制核心逻辑（xRateLimit, rateLimiter）
 - 时间线解析逻辑（timeline.go 核心一致）
 - 推文解析逻辑（tweet.go 核心一致）
-- TweedDumper 逻辑
+- TweetDumper 逻辑
 - calcUserDepth 算法
 
 ### 7.3 移除的旧功能

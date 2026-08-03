@@ -88,7 +88,7 @@ Twitter Media Downloader Pro（简称 `tmdp`）的代码基于 [unkmonster/tmd](
 
 - **磁盘空间**: 根据下载数量而定
 
-- **权限**: Windows 需要管理员权限（创建符号链接）
+- **权限**: Windows 需要管理员权限（创建符号链接）；开启 Windows 开发者模式亦可创建符号链接
 
 ### 2. 下载/编译
 
@@ -118,11 +118,17 @@ tmdp-windows-amd64.exe
 
 首次运行会自动检测配置文件，不存在时进入**交互式配置向导**，依次填写：
 
-1. Twitter 登录凭据（`auth_token` 和 `ct0`）
-2. 下载根目录（存放媒体文件的路径）
-3. 可选：代理地址、下载并发数等
+1. 下载根目录 storage dir（必填）
+2. `auth_token`
+3. `ct0`
+4. max download routine（最大并发下载数）
+5. max file name len（最大文件名长度）
+6. proxy_url（可留空）
+7. api_key（可留空，设置后开启 HTTP 认证）
 
 配置完成后即可正常使用。
+
+> 注意：若设置了任一 `TMD_*` 环境变量（且未加 `-conf`），首次运行将跳过向导，直接使用环境变量配置。
 
 如需重新配置或修改参数，Windows 当前目录下运行 `.\tmdp-windows-amd64.exe -conf`（或重命名后运行 `.\tmdp.exe -conf`）可再次进入配置向导。若已加入 `PATH`，也可以直接运行 `tmdp -conf`。各配置项说明如下：
 
@@ -133,7 +139,8 @@ tmdp-windows-amd64.exe
 | ct0                  | Twitter Cookie 中的 ct0           | 无（必填）               | `x1y2z3...`             |
 | max download routine | 最大并发下载数（范围 1-100）               | `min(100, CPU×10)`¹ | `35`                    |
 | max file name len    | 最大文件名长度（50-245）                 | `158`               | `158`                   |
-| proxy_url           | 代理服务器 URL（支持 http/https/socks5） | 空（使用系统代理）           | `http://127.0.0.1:7890` |
+| proxy_url           | 代理服务器 URL（支持 http/https/socks5） | 空（使用 HTTP_PROXY/HTTPS_PROXY 环境变量代理；均未设置则直连） | `http://127.0.0.1:7890` |
+| api_key             | 可选：API Key 认证（设置后开启 HTTP 认证，至少 8 字符） | 空（不启用）                | `your-api-key`         |
 
 > ¹ `max download routine` 默认值为 `min(100, runtime.GOMAXPROCS(0)*10)`，即 CPU 核数的 10 倍且不超过 100。
 
@@ -182,11 +189,9 @@ GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o tmdp-macos .
 ```bash
 # Docker Hub
 docker pull leeexx00/tmdp:latest
-docker pull leeexx00/tmdp:v3.7.0
 
 # GHCR
 docker pull ghcr.io/leexunhuan743/twitter_media_downloader_pro:latest
-ghcr.io/leexunhuan743/twitter_media_downloader_pro:v3.7.0
 ```
 
 **推荐方式：使用 docker compose**
@@ -326,7 +331,7 @@ http://localhost:25556/api/v1/health
 | --------- | ------------------------------------- | ------------------------------------------------ |
 | 备用 Cookie | `$HOME/.tmd2/additional_cookies.yaml` | 多账号 Cookie                                       |
 | 定时任务      | `$HOME/.tmd2/schedules.yaml`          | 调度器配置                                            |
-| Bot 配置    | `$HOME/.tmd2/bot_config.yaml`         | 六平台 Bot 配置：Telegram/Discord/WeChat/Feishu（命令控制）+ Gotify/Pushover（仅推送）。首次运行自动生成注释模板 |
+| Bot 配置    | `$HOME/.tmd2/bot_config.yaml`         | 六平台 Bot 配置：Telegram/Discord/WeChat/Feishu（命令控制）+ Gotify/Pushover（仅推送）。仅 Server 模式启动时自动生成（文件不存在时），CLI 模式不生成 |
 | 日志文件      | `$HOME/.tmd2/tmd2.log`                | 主日志（全量：所有域的 logrus 日志，级别随 `-dbg`）          |
 | HTTP 客户端日志 | `$HOME/.tmd2/client.log`              | Twitter API 客户端的全量请求/响应日志（方法、URL、状态码、耗时、headers、body） |
 
@@ -442,7 +447,7 @@ tmdp -server
 
 开启内置认证后，建议配合以下措施使用：
 
-1. **绑定 localhost**：仅允许本地访问（默认行为）
+1. **默认监听所有网卡**：绑定 0.0.0.0，局域网内可直接访问；如需仅本地访问，请用防火墙/反向代理限制来源
 2. **HTTPS 加密**：使用 Nginx/Caddy 反向代理终止 TLS
 3. **速率限制**：外层 Nginx 配置 `limit_req`
 4. **IP 白名单**：防火墙限制访问来源
@@ -627,7 +632,7 @@ tmdp -user elonmusk -no-retry
 
 | 参数        | 类型   | 默认值   | 说明                                 |
 | --------- | ---- | ----- | ---------------------------------- |
-| `-conf`   | bool | false | 重新配置程序（部分更新，显示当前值可逐项修改）            |
+| `-conf`   | bool | false | 进入交互式向导，7 项全量重填；括号内显示各项默认值而非当前值；直接回车=使用默认值/清空字符串字段，storage dir 不可为空            |
 | `-dbg`    | bool | false | 显示调试信息，包括请求计数等                     |
 | `-server` | bool | false | 启动 API Server 模式                   |
 | `-port`   | int  | 25556 | API Server 监听端口（仅与 `-server` 一起使用） |
@@ -653,7 +658,7 @@ tmdp -user elonmusk -no-retry
 
 | 参数                | 类型   | 默认值   | 说明                                           |
 | ----------------- | ---- | ----- | -------------------------------------------- |
-| `-auto-follow`    | bool | false | 自动向受保护用户发送关注请求（列表下载时默认启用）                    |
+| `-auto-follow`    | bool | false | 自动向受保护用户发送关注请求（需显式开启，默认关闭）                    |
 | `-follow-members` | bool | false | 下载时关注目标/成员（用户/列表成员/关注列表成员），失败仅 warning 不阻塞下载 |
 | `-no-retry`       | bool | false | 快速退出，不重试失败的推文                                |
 
@@ -670,7 +675,7 @@ tmdp -user elonmusk -no-retry
 | 参数                 | 类型     | 默认值   | 说明                                      |
 | ------------------ | ------ | ----- | --------------------------------------- |
 | `-mark-downloaded` | bool   | false | 仅标记用户为已下载，不下载内容（常见使用场景：指定下载某用户某时间之后的推文） |
-| `-mark-time`       | string | 当前时间  | 指定标记时间戳，格式：`2006-01-02T15:04:05`，或 `null`/`nil` 表示全量标记 |
+| `-mark-time`       | string | 空（=当前时间）  | 指定标记时间戳，格式：`2006-01-02T15:04:05`，或 `null`/`nil` 表示全量标记 |
 
 > **关于** **`-mark-time`** **格式**：示例中的 `2006-01-02T15:04:05` 是 Go 语言的参考时间格式，表示"年-月-日T时:分:秒"。实际使用时填入具体时间，例如 `2024-01-01T00:00:00` 表示 2024 年 1 月 1 日零时。
 >
@@ -708,16 +713,16 @@ tmdp -user elonmusk -no-retry
 | `-auto-follow` + 推文下载                            |  ✅  | 自动关注受保护用户                                |
 | `-no-retry` + 推文下载                               |  ✅  | 失败不重试                                    |
 | `-mark-downloaded` + `-mark-time`                |  ✅  | 指定标记时间                                   |
-| `-mark-downloaded` + 推文下载                        |  ⚠️ | **仅执行标记，不下载推文**（与稳定版不同）                  |
+| `-mark-downloaded` + 推文下载                        |  ⚠️ | **仅执行标记，不下载推文**                  |
 | `-jsonfile` + `-mark-downloaded`                 |  ⚠️ | **仅执行** **`-jsonfile`**（高优先级独占）          |
 | `-jsonfolder` + `-mark-downloaded`               |  ⚠️ | **仅执行** **`-jsonfolder`**（高优先级独占）        |
-| `-conf` + 其他参数                                   |  ⚠️ | CLI 模式：配置后退出，忽略其他；Server 模式：配置后启动 Server |
+| `-conf` + 其他参数                                   |  ⚠️ | 配置后立即退出（写入 conf.yaml），其余参数（含 `-server`）均被忽略 |
 | `-noprofile` + 推文下载参数                            |  ✅  | 下载推文但跳过 Profile                          |
 | `-follow-members` + 推文下载                         |  ✅  | 下载时关注目标/成员（失败仅 warning）                  |
 | `-mark-downloaded` + `-user` + `-list` + `-foll` |  ✅  | 批量标记多种来源                                 |
 | `-server` + `-port`                              |  ✅  | 指定 API Server 端口                         |
 | `-server` + 下载参数                                 |  ⚠️ | Server 模式下忽略下载参数                         |
-| `-server` + `-conf`                              |  ⚠️ | 配置后启动 Server                             |
+| `-server` + `-conf`                              |  ⚠️ | 仅执行配置向导后退出，不会启动 Server             |
 
 ***
 
@@ -860,7 +865,7 @@ JSON 导入端点（`/api/v1/json/file/download` 和 `/api/v1/json/folder/downlo
 | 参数          | 默认值  | 说明             |
 | ----------- | ---- | -------------- |
 | `page`      | 1    | 页码             |
-| `pageSize`  | 20   | 每页数量（最大 100）   |
+| `pageSize`  | 20   | 每页数量（最大 200）   |
 | `sortBy`    | id   | 排序字段（白名单限制）    |
 | `sortOrder` | desc | 排序方向（asc/desc） |
 | `q`         | -    | 搜索关键词          |
@@ -889,7 +894,7 @@ JSON 导入端点（`/api/v1/json/file/download` 和 `/api/v1/json/folder/downlo
 
 - 基于控制台日志捕获（`consolelog.Hub`），实时推送新日志行
 
-- 支持 `level` 和 `q` 查询参数进行服务端筛选
+- 支持 `level`、`q`、`domain` 查询参数进行服务端筛选；历史日志接口 `GET /api/v1/logs` 额外支持 `start_time`/`end_time` 时间范围筛选
 
 - 客户端断开时自动取消订阅
 
@@ -911,7 +916,7 @@ Server 支持优雅关闭，确保所有资源正确释放：
 
 - **API 触发**：`POST /api/v1/server/shutdown`
 
-- **关闭顺序**：取消所有运行中的任务 → 等待下载队列 15 秒 → 停止调度器 → 关闭 HTTP Server（超时 30 秒） → 关闭数据库 → 关闭日志写入器
+- **关闭顺序**：取消所有运行中的任务 → 等待下载队列 15 秒 → 停止调度器 → 停止 Bot → 关闭 SSE 与日志捕获器 → 关闭 HTTP Server（超时 30 秒） → 关闭数据库（日志文件写入器在进程退出时关闭）
 
 - **超时保护**：HTTP Server 关闭超时 30 秒，下载队列等待 15 秒
 
@@ -925,14 +930,15 @@ Server 支持优雅关闭，确保所有资源正确释放：
 http://localhost:25556/
 ```
 
-**双主题界面**：内置两套无构建步骤的原生前端，页面左下角的 🎨 浮动按钮可随时切换（`web1` 经典主题功能最全，`web2` 精简主题更轻量）：
+**三主题界面**：内置三套无构建步骤的原生前端，页面左下角的 🎨 浮动按钮可随时切换（`web1` 经典主题功能最全，`web2` 精简主题更轻量，`web3` 深色玻璃拟态主题 v3.7.2 新增，hash 路由）：
 
 | 主题   | 说明                    | 位置                             |
 | ---- | --------------------- | ------------------------------ |
 | web1 | 经典主题（默认），功能最全 | `internal/api/web/web1/`        |
 | web2 | 精简主题                  | `internal/api/web/web2/`        |
+| web3 | 深色玻璃拟态主题（v3.7.2 新增） | `internal/api/web/web3/`        |
 
-主题通过公开 API 切换：`GET /api/v1/config/themes`（可用主题+当前值）、`POST /api/v1/config/theme`（切换）。设置 `TMD_DEV=1` 启动时前端走本地目录文件而非嵌入资源，修改 `web1`/`web2` 下的 HTML/JS/CSS 后刷新浏览器即可生效，无需重新编译。
+主题通过公开 API 切换：`GET /api/v1/config/themes`（可用主题+当前值）、`POST /api/v1/config/theme`（切换）。设置 `TMD_DEV=1` 启动时前端走本地目录文件而非嵌入资源，修改任意主题下的 HTML/JS/CSS 后刷新浏览器即可生效，无需重新编译。
 
 界面功能：
 
@@ -1229,7 +1235,7 @@ Telegram / WeChat / Feishu 使用文本命令，Discord 使用 Slash 命令（�
 | 选项               | 简写 | 说明                          | 适用命令   |
 | ---------------- | -- | --------------------------- | ------ |
 | `auto_follow`    | `af` | 自动关注受保护用户                  | user/list/foll |
-| `follow_members` | `fm` | 下载时关注目标/成员                  | list/foll |
+| `follow_members` | `fm` | 下载时关注目标/成员                  | user/list/foll |
 | `skip_profile`   | `sp` | 跳过 Profile 下载               | user/list/foll |
 | `no_retry`       | `nr` | 不重试失败推文                     | user/list/foll |
 
@@ -1298,7 +1304,7 @@ Profile 下载功能可以保存用户的完整个人资料：
 | 文件                        | 说明             | 格式   |
 | ------------------------- | -------------- | ---- |
 | `avatar.jpg/png/gif/webp` | 高清头像 (400x400) | 图片   |
-| `banner.jpg/png/gif/webp` | 个人主页横幅         | 图片   |
+| `banner.jpg`              | 个人主页横幅（固定 .jpg 扩展名） | 图片   |
 | `description.txt`         | 用户简介           | 纯文本  |
 | `profile.json`            | 完整资料信息         | JSON |
 
@@ -1325,13 +1331,13 @@ Profile 下载功能可以保存用户的完整个人资料：
 
 ```
 .loongtweet/.profile/.versions/
-├── avatar_20240115_103045.jpg
-├── banner_20240115_103045.jpg
-├── description_20240115_103045.txt
-└── profile_20240115_103045.json
+├── avatar_20240115_103045_123.jpg
+├── banner_20240115_103045_123.jpg
+├── description_20240115_103045_123.txt
+└── profile_20240115_103045_123.json
 ```
 
-版本命名格式：`{类型}_{日期}_{时间}.{扩展名}`
+版本命名格式：`{类型}_{日期}_{时间}_{毫秒}.{扩展名}`（毫秒 0-999）
 
 ***
 
@@ -1343,8 +1349,8 @@ Profile 下载功能可以保存用户的完整个人资料：
 
 | 文件                | 格式   | 说明               |
 | ----------------- | ---- | ---------------- |
-| `{tweet_id}.json` | JSON | 推文完整信息（格式化 JSON） |
-| `{tweet_id}.txt`  | TXT  | 人类可读的文本格式        |
+| `{推文文本}_{tweet_id}.json` | JSON | 推文完整信息（格式化 JSON） |
+| `{推文文本}_{tweet_id}.txt`  | TXT  | 人类可读的文本格式        |
 
 ### JSON 内容
 
@@ -1405,7 +1411,8 @@ media:2
     │                                 # - lst_entities: 列表下载实体
     │                                 # - user_links: 用户链接关联
     │                                 # - user_previous_names: 用户历史名称（含 record_date）
-    └── errors.json                 # 失败推文记录
+    ├── errors.json                 # 失败推文记录
+    └── json_errors.json            # JSON 导入失败的推文记录（-jsonfile/-jsonfolder）
 ```
 
 ***
@@ -1497,7 +1504,7 @@ start-server.bat -port 8080
 
 ### 日志位置
 
-程序维护两个独立的日志文件，均位于 app root 下：
+程序维护两个独立的日志文件，均位于 app root 下（默认 `%APPDATA%\.tmd2`（Windows）/ `~/.tmd2`（macOS/Linux），可用 `TMD_HOME` 环境变量覆盖）：
 
 | 平台              | 主日志（全量）                  | HTTP 客户端日志                    |
 | --------------- | -------------------------- | ---------------------------- |
@@ -1518,7 +1525,7 @@ start-server.bat -port 8080
 | 保留天数  | **14 天** | 自动清理 14 天前的日志  |
 | 压缩    | ✅ 开启     | 历史日志自动 gzip 压缩（lumberjack `Compress: true`） |
 
-> **client.log 脱敏说明**：全量请求/响应日志中的敏感头（`Authorization`、`Cookie`、`X-Csrf-Token`、`Set-Cookie` 等）不会明文落盘，值被替换为稳定指纹（如 `[redacted:xxxx]`）；单个请求/响应 body 超过 **1 MB** 的部分截断不写入（防超大响应打爆日志）。查询参数保持原样——Twitter GraphQL URL 不携带凭据参数。
+> **client.log 脱敏说明**：全量请求/响应日志中的敏感头（`Authorization`、`Cookie`、`X-Csrf-Token`、`Set-Cookie` 等）不会明文落盘，值被替换为稳定指纹（如 `[redacted:xxxx]`）；单个请求/响应 body 超过 **256 KB** 的部分截断不写入（resty 的截断检查发生在 JSON 美化之前：256 KB 原始响应经 indent 美化后约 700 KB，为 lumberjack 2 MB 单次写入上限留出余量）。查询参数保持原样——Twitter GraphQL URL 不携带凭据参数。
 
 ### 日志级别
 
@@ -1534,11 +1541,15 @@ tmdp -user elonmusk -dbg
 
 - 各 Twitter 端点的请求计数（`twitter.ReportRequestCount()`，退出时输出 `[rate-limit] Request count endpoint=... count=...`）
 
-- 限流等待细节（`[rate-limit] Sleeping/Would block/Updated ...`）
+- 限流细节（`[rate-limit] Would block/Updated/Reset ...`）
 
 - 文件原子写入日志（`[downloader] Atomic write complete path=... bytes=...`）
 
-- 哈希校验失败等诊断（`[downloader] Hash check failed ...`）
+另两项诊断为 **Warn 级（默认级别即输出，无需 `-dbg`）**：
+
+- 限流等待（`[rate-limit] Sleeping endpoint=... wake_at=... remaining=... limit=...`）
+
+- 哈希校验失败（`[downloader] Hash check failed path=... error=...`）
 
 
 
@@ -1577,15 +1588,15 @@ tmdp -user elonmusk -dbg
 
 ## 输出结果格式
 
-> CLI 模式下所有结果通过日志输出（logrus TextFormatter）。推文/Profile/JSON 导入完成时输出 `[task] Result summary=...`；标记、重试等无媒体统计的操作输出 `[task] Result message=...`。阶段进度（`syncing`/`marking`/`preparing`）输出为 `[task] Progress stage=...`，而 `downloading`/`retrying`/`profile` 高频阶段不会刷日志（仅进 SSE/任务状态）。
+> CLI 模式下所有结果通过日志输出（logrus TextFormatter）。推文/Profile/JSON 导入完成时输出 `[task] Result summary=...`；标记、重试等无媒体统计的操作输出 `[task] Result message=...`。阶段进度（`syncing`/`marking`）输出为 `[task] Progress stage=...`（`syncing` 仅列表类任务输出；`preparing` 无实际代码路径），而 `downloading`/`retrying`/`profile` 高频阶段不会刷日志（仅进 SSE/任务状态）。
 
 ### 推文下载结果
 
 CLI 模式下，下载完成后的输出示例：
 
+CLI 单用户下载不输出阶段进度行（`syncing` 仅列表类任务输出，真实格式为 `[task] Progress stage=syncing current="list:123"`），完成后直接输出最终结果：
+
 ```
-[task] Progress stage=syncing current="Elon Musk(elonmusk)"
-[task] Progress stage=preparing
 [task] Result summary="main(downloaded=164, Failedtweet=2), profile(downloaded=3, failed=0, versionedfile=0)"
 ```
 
@@ -1652,7 +1663,7 @@ API 模式下，标记结果可以通过任务详情查看（`GET /api/v1/tasks/
 无待重试项时（服务端日志）：
 
 ```
-[download] Retry all skipped reason=no_pending_errors
+[download] Retry all skipped reason=no_pending_errors dur=...
 ```
 
 ### 任务失败
@@ -1660,7 +1671,7 @@ API 模式下，标记结果可以通过任务详情查看（`GET /api/v1/tasks/
 任务失败时输出（错误信息经脱敏处理）：
 
 ```
-[task] Failed task_id=task_xxx error="..."
+[task] Failed task_id=task_xxx type=... dur=... error="..."
 ```
 
 ### 调试模式输出
@@ -1710,16 +1721,6 @@ tmdp -conf
 # 仅修改需要调整的字段，其他留空保持原值
 ```
 
-### 资源占用参考
-
-| 资源类型       | 空闲状态       | 下载中（并发35）    | 备注            |
-| ---------- | ---------- | ------------ | ------------- |
-| **内存**     | \~40-60 MB | \~100-200 MB | 取决于并发数和文件大小   |
-| **CPU**    | < 1%       | 5-15%        | 单核即可满足        |
-| **磁盘 I/O** | 极低         | 中等           | SSD 推荐用于大文件下载 |
-| **网络连接**   | 1 个（登录）    | 35+ 个        | 每个媒体文件一个连接    |
-| **数据库**    | \~5 MB     | \~50-200 MB  | SQLite，无需额外服务 |
-
 ### 性能优化特性
 
 tmdp 内置多项性能优化机制：
@@ -1737,9 +1738,9 @@ tmdp 内置多项性能优化机制：
 
 - 大视频文件不再占用大量内存
 
-- 实时进度跟踪
+- 任务级进度经 SSE 推送(完成文件数/总数),无逐文件字节级进度
 
-- 失败时仅重试未完成部分
+- 失败时整文件重试(最多 2 次,间隔递增),最后一次尝试自动回退 Buffer 模式;不支持断点续传
 
 #### 2. 增量下载
 
@@ -1823,11 +1824,13 @@ tmdp -user elonmusk -dbg
 | -------------------- | --------------------- | ------------------- | ---------------------------------------------- |
 | **429**              | Too Many Requests     | 触发 Twitter API 速率限制 | 等待 15 分钟自动恢复；或添加备用 Cookie                      |
 | **401**              | Unauthorized          | Cookie 失效或过期        | 运行 `tmdp -conf` 更新 Cookie                      |
-| **403**              | Forbidden             | 用户受保护且未关注           | 使用 `-auto-follow` / `-follow-members` 或手动关注后重试 |
-| **404**              | Not Found             | 用户不存在/已注销/被封禁       | 检查用户名是否正确；用户可能已被封禁                             |
+| **403**              | Forbidden（不可重试）     | 用户受保护且未关注           | 使用 `-auto-follow` / `-follow-members` 或手动关注后重试 |
+| **404**              | Not Found（不可重试）     | 用户不存在/已注销/被封禁       | 检查用户名是否正确；用户可能已被封禁                             |
 | **500**              | Internal Server Error | Twitter 服务器内部错误     | 稍后自动重试；检查网络连接                                  |
 | **503**              | Service Unavailable   | Twitter 服务暂时不可用     | 等待服务恢复后重试                                      |
 | **connection reset** | 网络连接中断                | 代理不稳定或网络波动          | 检查代理设置；启用 `-no-retry` 快速测试                     |
+
+> **403/404 均为不可重试错误**：对应媒体立即失败并跳过（`[download] Skip non-retriable media ...`），不再自动重试（`isNonRetriableStatusError` 仅匹配 403/404）；仅 500/503 等错误才触发自动重试。
 
 ### 调试技巧集锦
 
@@ -1857,8 +1860,9 @@ tmdp -user elonmusk -noprofile -dbg
 tmdp -server
 # 然后在浏览器访问 http://localhost:25556/api/v1/health
 
-# 7. 查看数据库内容（确认同步状态）
-sqlite3 .data/foo.db "SELECT screen_name, latest_release_time FROM users;"
+# 7. 查看数据库内容（确认同步状态；需在 conf.yaml 的 root_path 下执行）
+# latest_release_time 位于 user_entities 表（users 表无此列），需 JOIN：
+sqlite3 .data/foo.db "SELECT u.screen_name, e.latest_release_time FROM users u LEFT JOIN user_entities e ON e.user_id = u.id;"
 
 # 8. 检查失败记录
 cat .data/errors.json | head -20
@@ -1906,7 +1910,7 @@ tmdp -user elonmusk -dbg
 [rate-limit] Would block endpoint=... remaining=... limit=...
 ```
 
-**原因：** 触发 Twitter API 速率限制（每 15 分钟 500 次请求）
+**原因：** 触发 Twitter API 速率限制（窗口与配额以响应头 `X-Rate-Limit-*` 为准，程序自动按剩余额度调度请求）
 
 **解决方案：**
 

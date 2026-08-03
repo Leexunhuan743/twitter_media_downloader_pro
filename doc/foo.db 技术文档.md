@@ -37,6 +37,7 @@ db, err := sqlx.Connect(database.DriverName, dsn)
 // 关键参数说明:
 // - _pragma=journal_mode(WAL): 启用预写日志模式，提升并发读写性能
 // - _pragma=busy_timeout(30000): 设置锁等待超时时间为 30 秒
+// - _time_format=sqlite: 使用 SQLite 原生时间格式（实际实现见 internal/database/sqlite.go addSQLiteQueryDefaults）
 ```
 
 ### 1.3 初始化流程
@@ -55,23 +56,31 @@ func Connect(path string) (*sqlx.DB, error) {
         }
     }
 
-    db, err := openSQLiteFile(path, false) // → DSN: file:///path?_pragma=journal_mode(WAL)&_pragma=busy_timeout(30000)
+    db, err := openSQLiteFile(path, false) // → DSN: file:///path?_pragma=journal_mode(WAL)&_pragma=busy_timeout(30000)&_time_format=sqlite
     if err != nil {
         return nil, fmt.Errorf("failed to connect to database at %q: %w", path, err)
     }
 
-    configureSQLiteConnection(db)           // SetMaxOpenConns(1), SetMaxIdleConns(1)
+    configureSQLiteConnection(db)           // SetMaxOpenConns(1), SetMaxIdleConns(1), SetConnMaxLifetime(30min), SetConnMaxIdleTime(10min)
 
-    CreateTables(db)                        // 自动创建表结构
+    CreateTables(db)                        // 自动创建表结构（含显式索引，见 schema.go 的 schema/indexes 常量）
     if err := MigrateDatabase(db); err != nil {
         db.Close()
         return nil, err
     }
-    CreateIndexes(db)
+    if err := validateDatabase(db); err != nil {
+        db.Close()
+        return nil, err
+    }
     // ...
     return db, nil
 }
 ```
+
+> **迁移说明**: `MigrateDatabase()` 内置 3 条幂等迁移（internal/database/schema.go），重复执行安全：
+> 1. `ALTER TABLE users ADD COLUMN is_accessible BOOLEAN NOT NULL DEFAULT 1`
+> 2. `ALTER TABLE user_previous_names RENAME COLUMN uid TO user_id`
+> 3. `ALTER TABLE lsts RENAME COLUMN owner_uid TO owner_user_id`
 
 ***
 
@@ -251,8 +260,8 @@ CREATE INDEX IF NOT EXISTS idx_user_previous_names_user_id ON user_previous_name
 | 查询模式                                                               | 使用索引                          | 性能影响     |
 | ------------------------------------------------------------------ | ----------------------------- | -------- |
 | `SELECT * FROM user_links WHERE user_id = ?`                       | `idx_user_links_user_id`      | O(log n) |
-| `SELECT * FROM users WHERE screen_name = ?`                        | `UNIQUE(screen_name)`         | O(1)     |
-| `SELECT * FROM user_entities WHERE user_id = ? AND parent_dir = ?` | `UNIQUE(user_id, parent_dir)` | O(1)     |
+| `SELECT * FROM users WHERE screen_name = ?`                        | `UNIQUE(screen_name)`         | O(log n) |
+| `SELECT * FROM user_entities WHERE user_id = ? AND parent_dir = ?` | `UNIQUE(user_id, parent_dir)` | O(log n) |
 
 ***
 
@@ -350,7 +359,7 @@ func NewUserEntity(db *sqlx.DB, uid uint64, parentDir string) (*UserEntity, erro
     }
     if record == nil {
         record = &database.UserEntity{}
-        record.Uid = uid
+        record.UserId = uid
         record.ParentDir = parentDir
         created = false
     }
@@ -438,7 +447,7 @@ func CreateUser(db *sqlx.DB, usr *User) error
 
 ```sql
 INSERT INTO users(id, screen_name, name, protected, friends_count, is_accessible) 
-VALUES(:id, :screen_name, :name, :protected, :friends_count)
+VALUES(:id, :screen_name, :name, :protected, :friends_count, :is_accessible)
 ```
 
 #### GetUserById
@@ -534,7 +543,7 @@ func GetUserLinks(db *sqlx.DB, uid uint64) ([]*UserLink, error)
    }
    entity.ParentDir = abs
    ```
-2. **事务处理**: 批量操作应使用事务（当前实现未显式使用事务，建议优化）
+2. **事务处理**: 批量/级联操作已使用事务——`DelLst`（lst.go:39）、`DelUser`（user.go:132）、`CreateUserLink`（user_link.go:10）等通过 `db.Beginx()` 包裹多步写入；`internal/database/tx` 提供 `Manager.RunInTransaction` 封装（被 `internal/downloading/list_sync.go` 的列表同步流程使用）
 3. **唯一性约束**: 插入前检查是否违反唯一约束，或使用 `INSERT OR REPLACE`
 4. **数据库迁移**: 新增字段通过 `MigrateDatabase()` 函数自动迁移，支持重复执行
 
@@ -612,11 +621,11 @@ _journal_mode=WAL
 #### 9.1.2 Busy Timeout
 
 ```sql
-_busy_timeout=2147483647
+_pragma=busy_timeout(30000)
 ```
 
 - 避免因短暂锁竞争导致的失败
-- 适合长时间运行的下载任务
+- 锁等待超时 30 秒（`sqliteBusyTimeoutMs = 30000`，见 sqlite.go），适合长时间运行的下载任务
 
 ### 9.2 查询优化
 
@@ -632,11 +641,13 @@ db.Get(result, `SELECT * FROM users WHERE id=?`, uid)
 #### 9.2.2 利用索引
 
 ```go
-// 高效：使用唯一索引
+// 高效：通过唯一索引查询
 LocateUserEntity(db, uid, parentDir)
 
-// 低效：全表扫描
-GetUserEntity(db, name)  // name 字段无索引
+// 高效：按主键查询（id 为主键，O(log n)）
+GetUserEntity(db, id)  // 签名：GetUserEntity(db *sqlx.DB, id int)（user_entity.go）
+
+// 说明：user_entities.name 也有索引 idx_user_entities_name（schema.go）
 ```
 
 ### 9.3 批量操作优化
@@ -668,8 +679,12 @@ func BenchmarkUpdateUser24(b *testing.B) {
 
 **测试结论**:
 
-- WAL 模式下，并发更新性能随协程数增加而提升
-- 24 协程时吞吐量约为单协程的 15-20 倍
+- `BenchmarkUpdateUser1` / `BenchmarkUpdateUser6` / `BenchmarkUpdateUser12` / `BenchmarkUpdateUser24` 为并发 UpdateUser 基准（internal/database/test/db_test.go）
+- 各协程数下吞吐量对比需在本机实测确认（当前无基准数据支撑），可运行：
+
+```bash
+go test ./internal/database/test/ -bench BenchmarkUpdateUser -benchmem
+```
 
 ***
 
@@ -769,7 +784,7 @@ func TestUserEntity(t *testing.T) {
     db := opentmpdb()
     defer db.Close()
     
-    entity := generateUserEntity(1, os.TempDir())
+    entity := generateUserEntity(db, 1, os.TempDir())
     
     // 测试创建
     if err := CreateUserEntity(db, entity); err != nil {
@@ -914,4 +929,4 @@ CREATE INDEX IF NOT EXISTS idx_user_previous_names_user_id ON user_previous_name
 - **版本**: 1.2
 - **更新日期**: 2026-06-04
 - **作者**: AI Assistant
-- **适用版本**: TMD v3.4.19
+- **适用版本**: TMD v3.7.2

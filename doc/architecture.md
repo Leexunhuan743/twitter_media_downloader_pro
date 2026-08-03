@@ -200,6 +200,8 @@ type DownloadService interface {
 
 ### 与稳定版的区别
 
+> 本节为 Service 层重构时的历史沿革说明，未对照当前代码逐条验证，仅供参考。
+
 | 特性 | 稳定版 | 重构版 |
 |------|--------|--------|
 | CLI 实现 | 直接调用 downloading 包 | 通过 Service 层间接调用 |
@@ -219,7 +221,7 @@ tmd/
 ├── main.go                        # 应用入口（命令行解析、模式选择）
 ├── start-server.bat               # Windows Server 模式启动脚本
 ├── internal/
-│   ├── api/                       # API Server 模块
+│   ├── api/                       # API Server 模块（web/web1|web2|web3 三主题）
 │   ├── cli/                       # CLI 命令模块
 │   ├── config/                    # 配置管理
 │   ├── service/                   # Service 层（核心业务编排）
@@ -227,14 +229,16 @@ tmd/
 │   ├── downloading/               # 核心下载逻辑
 │   ├── downloader/                # 通用下载基础设施
 │   ├── twitter/                   # Twitter API 客户端
+│   ├── bot/                       # Bot 通知（telegram/discord/feishu/gotify/pushover/wechat）
 │   ├── naming/                    # 命名服务
 │   ├── entity/                    # 数据实体层
 │   ├── path/                      # 路径管理
 │   ├── scheduler/                 # 定时任务调度器
 │   ├── consolelog/                # 控制台日志捕获与分发
+│   ├── logging/                   # 日志基础设施（rotation / sanitize / lumberjack hook）
 │   └── utils/                     # 工具函数
 ├── doc/                           # 详细文档
-├── tools/                         # 工具脚本（迁移工具、Tampermonkey脚本）
+├── tools/                         # 工具脚本（tmd-db-migrate、convert_db_to_legacy.py、Tampermonkey脚本）
 ├── .github/workflows/             # CI/CD 配置
 ├── go.mod                         # Go 模块定义
 ├── go.sum                         # 依赖校验和
@@ -243,13 +247,12 @@ tmd/
 ├── readme.md                      # 用户手册
 ├── CHANGELOG.md                   # 变更日志
 ├── LICENSE                        # GPL-3.0 许可证
-├── convert_db_to_legacy.py        # 数据库格式转换脚本
 └── .gitignore                     # Git 忽略规则
 ```
 
 ### 运行测试
 
-项目包含 **58 个测试文件**，覆盖核心业务逻辑：
+项目包含 **73 个测试文件**，覆盖核心业务逻辑：
 
 ```bash
 # 运行所有测试（含竞态检测）
@@ -288,33 +291,42 @@ go tool cover -html=covprofile -o coverage.html
 |------|---------|------|
 | **依赖注入** | `service/deps.go` | 通过构造函数注入依赖，支持测试 Mock |
 | **策略模式** | `downloader/downloader.go` | 小文件 Buffer / 大文件流式两种策略 |
-| **观察者模式** | `api/sse.go` | SSE 推送任务状态更新 |
-| **观察者模式** | `consolelog/hub.go` | SSE 推送实时日志流 |
+| **观察者模式** | `api/sse_tasks.go` | SSE 推送任务状态更新 |
+| **观察者模式** | `consolelog/hub.go` + `api/sse_logs.go` | SSE 推送实时日志流 |
 | **工厂模式** | `naming/` | TweetNaming / UserNaming / ListNaming 工厂 |
-| **单例模式** | `database/connect.go` | 全局数据库连接（SQLite） |
+| **工厂函数** | `database/connect.go` | 统一建库、迁移与校验入口（每次调用新建连接，非单例） |
 | **调度器模式** | `scheduler/scheduler.go` | interval/daily 两种调度策略 |
 
 ### CI/CD 流程
 
-项目配置了 GitHub Actions 自动化流程：
+项目配置了两个独立的 GitHub Actions 工作流：
 
 ```yaml
-触发条件:
-  - push 到 master 分支
-  - Pull Request 到 master
-  - 创建版本标签 (v*)
+go.yml（Go Release）:
+  触发条件:
+    - 创建版本标签 (v*)
 
-执行步骤:
-  1. 多平台构建 (Windows / Linux / macOS) + Docker 镜像构建
-  2. 运行测试套件 (go test -race)
-  3. 上报覆盖率到 Coveralls
-  4. 发布版本时自动创建 Release
+  执行步骤:
+    1. 6 平台交叉构建 (Windows / Linux / macOS × amd64 / arm64)
+    2. 生成 checksums.txt
+    3. 自动创建 GitHub Release 并上传二进制
+
+docker.yml（Docker Publish）:
+  触发条件:
+    - 创建版本标签 (v*)
+    - workflow_dispatch（手动触发）
+
+  执行步骤:
+    1. 多平台镜像构建 (linux/amd64 + linux/arm64)
+    2. 推送 GHCR (ghcr.io) + Docker Hub
 ```
+
+注意：两个工作流均**不含测试 job**（无 `go test`），也未接入 Coveralls。
 
 ### 独立工具
 
 | 工具 | 位置 | 用途 |
 |------|------|------|
 | **tmd-db-migrate** | `tools/tmd-db-migrate/` | 跨平台数据库路径迁移，当下载目录从 Windows 迁移到 Linux 等场景时重写 `foo.db` 中的 `parent_dir` 路径。详见 [foo.db 跨平台迁移说明](foo.db%20跨平台迁移说明.md) |
-| **convert_db_to_legacy.py** | 仓库根目录 | 将新格式数据库转换为旧格式的辅助脚本 |
+| **convert_db_to_legacy.py** | `tools/convert_db_to_legacy.py` | 将新格式数据库转换为旧格式的辅助脚本 |
 

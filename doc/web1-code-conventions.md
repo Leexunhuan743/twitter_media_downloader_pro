@@ -11,6 +11,8 @@ internal/api/web/web1/
 └── app.js          # 全部 JS（~6600行），单文件无模块
 ```
 
+另有 web2/web3 主题（`internal/api/web/web2|web3/`），由 `listThemes()` 自动发现，Go handler 注入的主题切换器（`themeSwitcherHTML`）对三主题通用。
+
 - **CSS 变量双份定义**：`index.html` 内联 `:root` 是防 FOUC 的最小变量集，`styles.css` 是全集。改配色**必须同步两处**（内联块已加注释互引）。
 - **reduced-motion 单一来源**：全量覆盖在 `index.html` 内联块（`*` 通配 + 具体元素 + `.btn:active`/`.auth-modal` transform 复位）。**新增动画元素必须加入该列表**，不要在 styles.css 另写 reduced-motion 块。
 

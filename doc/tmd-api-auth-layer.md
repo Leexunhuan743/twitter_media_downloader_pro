@@ -107,7 +107,7 @@ TMD 默认的 HTTP API Server 端口是全开放的，任何能访问该端口�
 │     │   └─ validateSessionToken → 放行/继续               │
 │     ├─ 原始 API Key 比较 (向后兼容)                         │
 │     │   └─ token == config.APIKey → 放行/继续              │
-│     └─ 401 + X-Token-Type: expired|invalid                 │
+│     └─ 401 + X-Token-Type: missing|expired|invalid                 │
 │                                                            │
 │  ⑥ ServeMux → handler                                      │
 │     GET  /api/v1/auth/login    → handleAuthLogin (公开)     │
@@ -558,7 +558,7 @@ authMiddleware(next, w, r):
   ├─ ③ 提取 token:
   │    token = extractBearerToken(r)
   │    token == "" → token = r.URL.Query().Get("token")
-  │    token == "" → writeAuth401(w, "missing"); return  // 不设 X-Token-Type
+  │    token == "" → writeAuth401(w, "missing"); return  // X-Token-Type: missing
   │
   ├─ ④ isAuthManagementPath(r.URL.Path)?
   │   ├─ true: _, err = validateSessionToken(token, apiKey)
@@ -592,16 +592,17 @@ authMiddleware(next, w, r):
 
 | 值 | 触发条件 | 前端行为 |
 |---------|---------|---------|
+| `missing` | 未携带任何 token | 弹出认证对话框 |
 | `expired` | JWT 已过期但签名有效 | 调用 `/api/v1/auth/refresh` 续期 |
 | `invalid` | JWT 签名无效/格式错误/Key 不匹配 | 清除本地凭据，弹出认证对话框 |
 
-> **注意**：`writeAuth401` 函数本身不设 `X-Token-Type` 头。该头由 `authMiddleware` 在相应逻辑分支中显式设置。token 为空时不设此头（前端根据响应状态码 401 直接弹出认证框）。
+> **注意**：所有 401 响应都会携带 `X-Token-Type` 头，值为 `missing`/`invalid`/`expired` 之一。`writeAuth401(w, tokenType)` 在 tokenType 非空且头未设置时会写入该头（middleware.go:222-229）；`authMiddleware` 对 expired/invalid 分支先显式设置再调用（`writeAuth401` 不会覆盖），missing 分支（token 为空）由 `writeAuth401` 直接写入。
 
 ### 场景对照表
 
 | # | 场景 | 请求携带 | 中间件行为 | 结果 |
 |---|------|---------|-----------|------|
-| 1 | 全新客户端 | 无 token | token 为空 → `writeAuth401("missing")` | 弹认证框 |
+| 1 | 全新客户端 | 无 token | token 为空 → 401 `X-Token-Type: missing` | 弹认证框 |
 | 2 | 有 API Key 无 JWT | `Bearer <api_key>` | JWT 验证失败 → `token == apiKey` → 放行 | ✅ 向后兼容 |
 | 3 | 有有效 JWT | `Bearer <jwt>` | `validateSessionToken` 成功 → 放行 | ✅ 推荐模式 |
 | 4 | JWT 过期 | `Bearer <expired_jwt>` | JWT 验证失败（过期）→ Key 不匹配 → 401 `X-Token-Type: expired` | 前端 refresh |
@@ -610,7 +611,7 @@ authMiddleware(next, w, r):
 | 7 | 认证未配置 | 任何 | `apiKey == ""` → 放行 | ✅ 无认证 |
 | 8 | auth/refresh 有过期 JWT | `Bearer <expired_jwt>` | `isAuthManagementPath` → JWT 签名有效（允许过期）→ 放行 | ✅ handler 签发新 JWT |
 | 9 | auth/refresh 有无效 JWT | `Bearer <tampered>` | `isAuthManagementPath` → 签名无效 → 401 `X-Token-Type: invalid` | ❌ 拒绝 |
-| 10 | auth/check 无 token | 无 | token 为空 → `writeAuth401("missing")`（**不设 X-Token-Type**） | 401 |
+| 10 | auth/check 无 token | 无 | token 为空 → `writeAuth401("missing")`（带 `X-Token-Type: missing`） | 401 |
 | 11 | auth/check 有有效 JWT | `Bearer <jwt>` | `isAuthManagementPath` → JWT 有效 → 放行 | ✅ handler 返回状态 |
 
 ### 前端 401 处理策略
@@ -714,18 +715,19 @@ authMiddleware 中 token 提取优先级：
 
 ### SSE 断线重连 + JWT 过期处理（web1）
 
-**代码位置**：`internal/api/web/web1/app.js:525-560`
+**代码位置**：`internal/api/web/web1/app.js:676-701, 784-792`
 
 ```
 SSE onerror:
   ① conn.close()
-  ② 有 JWT 且 2 分钟内将过期？
-     ├─ 是 → api._tryRefreshJWT() → 成功后 _scheduleReconnect()
-     └─ 否 → 直接 _scheduleReconnect()
-  ③ _scheduleReconnect(): 指数退避重连
+  ② tryRefreshJWT('SSE', cb):
+     有 JWT 且 2 分钟内将过期 → api._tryRefreshJWT() 预刷新
+     否则（无 JWT / 剩余时间充足）→ 直接回调
+  ③ 回调 _scheduleReconnect(): 无论刷新结果如何，指数退避重连
+     （每 10 次重连尝试附带一次 /health 健康检查）
 ```
 
-**重要**：web2 的 SSE 在 `onerror` 中没有 JWT 刷新逻辑。web2 依赖 `unhandledrejection` 来触发 refresh（SSE 连接失败会触发全局错误处理）。
+**重要**：web2 的 SSE 在 `onerror` 中已内置完整 JWT 刷新逻辑（`internal/api/web/web2/app.js:687-723`）：先调用 `API._tryRefreshJWT()`，成功则指数退避重连；失败再用 `auth/check` 探测——401 表示会话失效弹认证框，网络错误表示服务器暂时不可达则静默重连。
 
 ---
 
@@ -1128,8 +1130,8 @@ async _tryRefreshJWT() {
 | API 客户端 | `api.request()` 统一 JSON 解析 | `API._fetch()` 各自处理 JSON |
 | 401 重试 | 递归调用 `this.request()` | 直接构造新请求 |
 | JWT 刷新超时 | `AbortController` 30s ✅ | `fetchWithTimeout` 30s ✅ |
-| SSE token | `sseManager._tokenParam()` | `sseApiKey()` |
-| SSE onerror JWT 刷新 | ✅ `_tryRefreshJWT` < 2min 时触发 | ❌ 依赖 `unhandledrejection` |
+| SSE token | `sseManager._tokenParam()` | `sseJWT()`（`connectSSE` 拼 `?token=` 参数） |
+| SSE onerror JWT 刷新 | ✅ `_tryRefreshJWT` < 2min 时触发 | ✅ `API._tryRefreshJWT()` + auth/check 探测（`app.js:687-723`） |
 | 认证弹窗 | 硬编码 HTML（`index.html`） | 动态 `openModal()` |
 | 弹窗提交 | `async/await` | `async/await` ✅ |
 | Security 标签 | 合并至配置编辑页 | 独立 `renderSecurityEditor()` |
@@ -1315,7 +1317,7 @@ const (
 | `internal/api/config_handlers.go` | `buildConfigFieldMeta()` api_key UI 映射、`__CLEAR__` sentinel、api_key 变更立即生效提示 | 155-158, 250-252, 291-303 |
 | `internal/api/handlers.go` | `TMD_DEV=1` 本地 web 目录开发模式 | 26-33 |
 | `internal/api/web/web1/app.js` | web1 JWT 集成：`api.request()`/`_tryRefreshJWT()`/`sseManager._tokenParam()`/`submitAuthKey()`/SSE onerror refresh | 224-305, 410-413, 525-560 |
-| `internal/api/web/web2/app.js` | web2 JWT 集成：`API._fetch()`/`API._tryRefreshJWT()`/`sseApiKey()`/`renderSecurityEditor()`/`submitAuthKey()` | 21-74, 60-73, 444-445 |
+| `internal/api/web/web2/app.js` | web2 JWT 集成：`API._fetch()`/`API._tryRefreshJWT()`/`sseJWT()`/`renderSecurityEditor()`/`submitAuthKey()` | 21-74, 595, 687-723 |
 | `go.mod` | `github.com/golang-jwt/jwt/v5 v5.3.1`（15k+ 项目依赖） | 7 |
 
 ### 单元测试

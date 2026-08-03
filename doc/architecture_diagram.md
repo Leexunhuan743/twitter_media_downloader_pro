@@ -6,8 +6,8 @@
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                              main.go                                    │
-│                   进程入口：配置 / 日志 / 数据库 / 分流                    │
-│          ┌─ 初始化顺序：config → logrus → database → twitter client      │
+│                   进程入口：日志 / 配置 / Twitter 客户端 / 数据库 / 分流   │
+│          ┌─ 初始化顺序：logrus → config → twitter client → database      │
 └──────────────────────────────┬───────────────────────────────────────────┘
                                │
                 ┌──────────────┴──────────────┐
@@ -31,7 +31,7 @@
 │                           │   │  └───────────────────────────────────┘    │
 │                           │   │        │                                    │
 │                           │   │  ┌─────▼──────────────────────────────┐    │
-│                           │   │  │         SSE → Web UI              │    │
+│                           │   │  │   SSE → Web UI（web1/web2/web3）    │    │
 │                           │   │  │   GET /api/v1/sse/tasks           │    │
 │                           │   │  │   GET /api/v1/logs/stream         │    │
 │                           │   │  │   心跳 25s / 慢消费者保护 4096     │    │
@@ -43,6 +43,15 @@
 │                           │   │  │  到期 → scheduledDownload 回调      │    │
 │                           │   │  │  → 创建 Task → DownloadQueue 入队  │    │
 │                           │   │  │  仅 Server 模式，CLI 不使用         │    │
+│                           │   │  └────────────────────────────────────┘    │
+│                           │   │                                            │
+│                           │   │  ┌────────────────────────────────────┐    │
+│                           │   │  │  Bot 通知（仅 Server 模式）          │    │
+│                           │   │  │  6 平台：telegram / discord /       │    │
+│                           │   │  │  feishu / gotify / pushover /       │    │
+│                           │   │  │  wechat                            │    │
+│                           │   │  │  订阅 EventBus tasks 事件 → 任务通知 │    │
+│                           │   │  │  解析消息命令（/dl 等）→ 创建下载任务 │    │
 │                           │   │  └────────────────────────────────────┘    │
 └──────────┬────────────────┘   └───────────────────┬────────────────────────┘
            │
@@ -77,7 +86,7 @@
 │  • ListSync / Entity│ │   分流       │ │   user_entities      │
 │  • MarkDownloaded   │ │ • 限流管理   │ │   lst_entities       │
 │                     │ │ • Bearer     │ │   user_links         │
-│  ┌───────────────┐  │ │   Token      │ │   user_prev_names    │
+│  ┌───────────────┐  │ │   Token      │ │   user_previous_names│
 │  │profile 子包   │  │ │              │ │                      │
 │  │头像/横幅/简介  │  │ │              │ │ • 迁移 / 事务 / 查询  │
 │  │版本备份       │  │ │              │ │ • latest_release_time │
@@ -88,18 +97,18 @@
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                             下载基础设施层                                 │
 │                                                                          │
-│  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────┐  ┌────────┐ │
-│  │ downloader  │  │  entity    │  │  naming    │  │  path  │  │ utils  │ │
-│  │            │  │            │  │            │  │        │  │        │ │
-│  │ 3 个接口：  │  │ Entity 接口 │  │ 3 种策略：  │  │ Store  │  │ 通用   │ │
-│  │ Downloader │  │ 7 个方法   │  │ UserNaming │  │ Path   │  │ 工具   │ │
-│  │ FileWriter │  │ Path Create│  │ ListNaming │  │ 管理   │  │        │ │
-│  │ VersionMgr │  │ Rename ... │  │ TweetNaming│  │ 6 个   │  │ 算法   │ │
-│  │            │  │            │  │            │  │ 路径   │  │ HTTP   │ │
-│  │ HEAD→策略  │  │ Sync 函数  │  │ UniquePath │  │ 字段   │  │ 文件   │ │
-│  │ 选Buffer/  │  │ 处理用户名  │  │ Resolver   │  │        │  │ 用户   │ │
-│  │ 流式       │  │ 变更重命名  │  │ 去重       │  │        │  │ win32  │ │
-│  └────────────┘  └────────────┘  └────────────┘  └────────┘  └────────┘ │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────┐  ┌───────────┐ │
+│  │ downloader  │  │  entity    │  │  naming    │  │  path  │  │ utils     │ │
+│  │            │  │            │  │            │  │        │  │           │ │
+│  │ 3 个接口：  │  │ Entity 接口 │  │ 3 种策略：  │  │ Store  │  │ 通用       │ │
+│  │ Downloader │  │ 7 个方法   │  │ UserNaming │  │ Path   │  │ 工具       │ │
+│  │ FileWriter │  │ Path Create│  │ ListNaming │  │ 管理   │  │ 算法       │ │
+│  │ VersionMgr │  │ Rename ... │  │ TweetNaming│  │ 6 个   │  │ HTTP/文件  │ │
+│  │            │  │            │  │            │  │ 路径   │  │ 用户/win32 │ │
+│  │ HEAD→策略  │  │ Sync 函数  │  │ 调用 utils  │  │ 字段   │  │ UniquePath │ │
+│  │ 选Buffer/  │  │ 处理用户名  │  │ 的 UniquePath│  │        │  │ Resolver   │ │
+│  │ 流式       │  │ 变更重命名  │  │ Resolver 去重│  │        │  │ 去重       │ │
+│  └────────────┘  └────────────┘  └────────────┘  └────────┘  └───────────┘ │
 └──────────────────────────────────────────────────────────────────────────┘
 
               ┌──────────────┐    ┌──────────────────┐
@@ -108,14 +117,26 @@
               │              │    │                  │
               │ YAML 配置    │    │ 接管 stdout/     │
               │ 环境变量覆盖  │    │ stderr → OS pipe │
-              │ (6 个 TMD_)  │    │ → 解析行         │
-              │ 交互式配置    │    │ → 环形缓冲区     │
-              │              │    │ → 扇出 subscribers│
-              │ 被 main      │    │                  │
-              │ 读取后注入    │    │ SSE handler 订阅  │
-              │ service /    │    │ filter by level/q │
-              │ scheduler    │    │                  │
-              └──────────────┘    └──────────────────┘
+              │ 7 个 TMD_ 配置项，│  │ → 解析行         │
+              │ 另有 TMD_HOME /  │  │ → 环形缓冲区     │
+              │ TMD_PORT         │  │ → 扇出 subscribers│
+              │ 交互式配置    │    │                  │
+              │              │    │ SSE handler 订阅  │
+              │ 被 main 读取  │    │ filter by level/q │
+              │ 后注入 service│    └──────────────────┘
+              │ （scheduler  │
+              │  仅收路径）   │
+              └──────────────┘
+                                   ┌──────────────────┐
+                                   │   logging        │
+                                   │  日志基础设施     │
+                                   │                  │
+                                   │ NewRotatingWriter│
+                                   │ lumberjack 轮转  │
+                                   │ LumberjackHook   │
+                                   │ SanitizeHeaders  │
+                                   │ 日志脱敏          │
+                                   └──────────────────┘
 
                     其他支撑层：不直接参与下载流程，为各层提供基础能力
 ```
@@ -129,7 +150,7 @@
 | 内嵌子框 `┌──┐` | 子包（如 downloading/profile） |
 | Server 内部并列框 | 各组件独立但通过 EventBus 协作 |
 | 底部 5 个并列框 | 基础设施层，被上层调用 |
-| 底部 2 个独立框 | 支撑层（config / consolelog），不参与主调用链 |
+| 底部 3 个独立框 | 支撑层（config / consolelog / logging），为各层提供基础能力 |
 
 ## 调用主线速记
 
@@ -153,6 +174,8 @@ main.go
 | **三接口分离** | downloader 框标注 Downloader / FileWriter / VersionManager 三个独立接口 |
 | **原子写入** | downloader 框标注"Buffer/流式策略选择" |
 | **用户名变更处理** | entity 框标注 Sync 函数处理用户名变更重命名 |
-| **三种命名策略** | naming 框标注 UserNaming / ListNaming / TweetNaming + UniquePathResolver |
+| **三种命名策略** | naming 框标注 UserNaming / ListNaming / TweetNaming，调用 utils 的 UniquePathResolver 去重 |
 | **EventBus 两种事件** | EventBus 框标注 coalesced / replayable |
 | **Scheduler 回调机制** | api 框内 Scheduler 组件，标注"独立包"和"scheduledDownload" |
+| **Bot 通知与命令** | api 框内 Bot 组件：订阅 EventBus tasks 事件推送任务通知，解析消息命令（/dl 等）创建下载任务 |
+| **日志基础设施** | logging 框标注轮转（lumberjack）、LumberjackHook、SanitizeHeaders 日志脱敏 |

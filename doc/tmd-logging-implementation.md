@@ -1,6 +1,6 @@
 # TMDP 日志系统实现文档
 
-> 基于当前代码审计后的日志实现说明。最后校准：2026-07-29。
+> 基于当前代码审计后的日志实现说明。最后校准：2026-08-04。
 
 本文档描述 TMDP 当前日志栈、日志输出约定、Web UI 消费路径、Bot 告警路径，以及维护日志时需要遵守的实现规则。它以真实代码为准。
 
@@ -18,7 +18,7 @@
 - 补充 `dur=`、`task_id`、路径规范、敏感信息脱敏规范。
 - 日志 API 只按当前 `LEVEL[...+08:00]` 格式解析时间戳。
 - Bot 告警只按当前 `ERRO[...]`/`FATA[...]` 格式识别错误级日志。
-- 修复两套 Web UI 主题对 `FATA[...]` 和带时区 TextFormatter 时间戳的高亮。
+- 修复三套 Web UI 主题（web1/web2/web3，web3 自 v3.7.2 起）对 `FATA[...]` 和带时区 TextFormatter 时间戳的高亮。
 
 ---
 
@@ -70,7 +70,7 @@ logrus 全局 logger
 - `internal/api/log_handlers.go`：日志列表、统计、导出。
 - `internal/api/sse_logs.go`：实时日志 SSE。
 - `internal/api/bot_notify.go`：Bot 日志告警循环。
-- `internal/api/web/web1/app.js`、`internal/api/web/web2/app.js`：日志颜色和时间戳高亮。
+- `internal/api/web/web1/app.js`、`internal/api/web/web2/app.js`、`internal/api/web/web3/app.js`：日志颜色和时间戳高亮（web3 自 v3.7.2 起，仅对 ERROR/FATA/WARN 着色）。
 
 ---
 
@@ -87,28 +87,16 @@ logrus 全局 logger
 
 当前不使用 `github.com/rifflock/lfshook`。文件日志通过 `internal/logging.LumberjackHook` 写入，Hook 写入前会调用 `logging.StripANSI()`，避免彩色控制符进入 `tmd2.log`。
 
-主日志文件：
+主日志文件（实际由 `logging.NewRotatingWriter` 工厂构造，`internal/logging/rotation.go:11-21`，单文件 2MB、2 份备份、14 天、gzip 压缩）：
 
 ```go
-logWriter := &lumberjack.Logger{
-    Filename:   filepath.Join(appRootPath, "tmd2.log"),
-    MaxSize:    2,
-    MaxBackups: 2,
-    MaxAge:     14,
-    Compress:   true,
-}
+logWriter := logging.NewRotatingWriter(filepath.Join(appRootPath, "tmd2.log"))
 ```
 
 HTTP client 日志：
 
 ```go
-cliLogWriter := &lumberjack.Logger{
-    Filename:   filepath.Join(appRootPath, "client.log"),
-    MaxSize:    2,
-    MaxBackups: 2,
-    MaxAge:     14,
-    Compress:   true,
-}
+cliLogWriter := logging.NewRotatingWriter(filepath.Join(appRootPath, "client.log"))
 ```
 
 ---
@@ -119,12 +107,9 @@ cliLogWriter := &lumberjack.Logger{
 
 ```go
 func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
-    log.SetFormatter(&log.TextFormatter{
-        ForceColors:    true,
-        FullTimestamp:  true,
-        DisableSorting: true,
-        PadLevelText:   false,
-    })
+    formatter := logging.NewTextFormatter()
+    formatter.ForceColors = true // 终端彩色；文件端由 LumberjackHook 剥离 ANSI
+    log.SetFormatter(formatter)
 
     if dbg {
         log.SetLevel(log.DebugLevel)
@@ -143,6 +128,7 @@ func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
 
 关键点：
 
+- formatter 由 `logging.NewTextFormatter()`（`internal/logging/rotation.go:24-33`）构造：`FullTimestamp`、`DisableSorting`、`PadLevelText: false`；主日志终端端覆盖 `ForceColors = true`（文件端由 LumberjackHook 剥离 ANSI），HTTP client 日志端覆盖 `DisableQuote = true`。
 - `consolelog.StartCapture()` 替换 `os.Stdout` 和 `os.Stderr` 为 pipe writer。
 - `capturePipe()` 把内容写回原始终端，同时逐行写入 Hub。
 - logrus 输出指向当前 `os.Stderr`，所以终端和 Web UI 都能看到同一条日志。
@@ -165,7 +151,7 @@ ERRO[2026-07-29T04:55:01+08:00] [download-queue] Task panic task_id=task_xxx err
 
 - Web 日志 level 筛选使用 `DEBU[`、`INFO[`、`WARN[`、`ERRO[`、`FATA[` 前缀。
 - 时间过滤解析 `LEVEL[RFC3339]` 这类 TextFormatter 时间戳。
-- 两套 Web UI 主题的日志高亮支持 `FATA`、`ERRO`、`WARN`、`INFO`、`DEBU`，并支持带时区的 `+08:00`。
+- 三套 Web UI 主题的日志高亮：web1（`getLineLevel`/`levelRegex`）与 web2（`getLogLineColor`）完整支持 `FATA`、`ERRO`、`WARN`、`INFO`、`DEBU` 五级并支持带时区的 `+08:00` 时间戳；web3（v3.7.2 起，`app.js` 中 `logLoadReplace`/`logLoadMore`/`logConnect` 的着色逻辑）仅对包含 `ERROR`/`FATA`/`WARN` 的行着色。
 - Bot 告警支持 `ERRO[`、`FATA[`。
 
 ---
@@ -211,6 +197,7 @@ WARN[...] [consolelog] Slow subscriber closed reason=queue_overflow
 | --- | --- |
 | `level` | `debug`、`info`、`warn`、`error`、`all` |
 | `q` | 大小写不敏感搜索 |
+| `domain` | 域前缀筛选，匹配行首 `[xxx]` 域（`log_handlers.go:29-30`；SSE 流同样支持，`sse_logs.go:24`） |
 | `start_time` | `RFC3339`、`2006-01-02T15:04:05`、`2006-01-02` |
 | `end_time` | 同 `start_time` |
 | `page` | 页码 |
@@ -340,7 +327,7 @@ log.Warnf("[download] Failed media tweet_id=%d url=%s error=%q",
 
 `internal/downloader/*`：
 
-- 单文件下载使用 `log.WithFields`。
+- 单文件下载不使用 `log.WithFields`，而是通过自定义 `orderedLogFields`（`internal/downloader/downloader.go:74-96`）手工拼接 `key=value` 字段，logger 为 `log.StandardLogger()`（downloader.go:121）；`tweet_id` 优先排在最前，其余字段按 key 排序，再追加调用方传入字段。
 - `DownloadRequest.LogFields` 用于透传 `tweet_id` 等上下文。
 - URL 必须 sanitize。
 - 流式下载 retry/fallback 是 Warn；模式选择是 Debug。
@@ -397,6 +384,7 @@ log.Warnf("[download] Failed media tweet_id=%d url=%s error=%q",
 | `[api]` | HTTP access 和通用 API |
 | `[auth]` | API 认证 |
 | `[task]` | 任务状态 |
+| `[tasks]` | 任务执行（run 函数构建失败等，`download_handlers.go:48,481,530`） |
 | `[download-queue]` | 下载队列 |
 | `[download]` | 下载服务和下载业务 |
 | `[batch]` | 批量下载内部阶段 |
@@ -415,6 +403,7 @@ log.Warnf("[download] Failed media tweet_id=%d url=%s error=%q",
 | `[sse]` | SSE |
 | `[upload]` | 上传处理 |
 | `[theme]` | Web UI 主题 |
+| `[web]` | Web 页面服务（如首页加载失败，`handlers.go:109`） |
 | `[bot]` / `[bot-*]` | Bot 生命周期和平台日志 |
 | `[consolelog]` | 控制台捕获 |
 | `[cli]` | CLI 执行 |
@@ -429,17 +418,17 @@ log.Warnf("[download] Failed media tweet_id=%d url=%s error=%q",
 
 ## 13. 当前日志调用分布
 
-截至 2026-07-29 审计时，源码日志调用热点如下：
+截至 2026-07-29 审计时（2026-08-04 复核 Info 列），源码日志调用热点如下：
 
 | 包/入口 | Debug | Info | Warn | Error/Fatal | 评估 |
 | --- | ---: | ---: | ---: | ---: | --- |
-| `internal/api` | 38 | 23 | 50 | 37 | API 错误面广，等级基本合理 |
+| `internal/api` | 38 | 22 | 50 | 37 | API 错误面广，等级基本合理 |
 | `internal/downloading` | 50 | 27 | 37 | 21 | 已降低低层重复 Error |
 | `internal/service` | 5 | 22 | 22 | 15 | 已补 retry/profile 汇总和 skip reason |
 | `internal/scheduler` | 16 | 9 | 10 | 1 | 已将 stale generation 降为 Debug |
 | `internal/twitter` | 23 | 1 | 4 | 0 | 限流和解析分层合理 |
 | `internal/bot` | 0 | 8 | 21 | 0 | 启动/发送失败分层合理 |
-| `internal/cli` | 0 | 9 | 11 | 2 | CLI 模式选择和失败分层合理 |
+| `internal/cli` | 0 | 8 | 11 | 2 | CLI 模式选择和失败分层合理 |
 | `main.go` | 1 | 7 | 7 | 9 | 启动期 Fatal 合理 |
 
 统计只是辅助，不是质量目标。日志质量以是否能解释生命周期、失败原因、用户影响和后续动作作为判断标准。

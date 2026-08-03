@@ -40,17 +40,21 @@
 | `/api/v1/db/users/{id}` | PATCH | `handleDBUserUpdate` | 更新用户 |
 | `/api/v1/db/users/{id}` | DELETE | `handleDBUserDelete` | 删除用户 |
 | `/api/v1/db/users/{id}/previous-names` | GET | `handleDBUserPreviousNames` | 获取用户历史名称 |
+| `/api/v1/db/users/{id}/entities` | GET | `handleDBUserEntitiesByUserID` | 获取用户实体（按用户） |
+| `/api/v1/db/users/{id}/links` | GET | `handleDBUserLinksByUserID` | 获取用户链接（按用户） |
 | `/api/v1/db/user-previous-names` | GET | `handleDBPreviousNames` | 全局历史名称查询（含当前名称） |
 | `/api/v1/db/lists` | GET | `handleDBLists` | 查询列表 |
 | `/api/v1/db/lists/{id}` | GET | `handleDBListDetail` | 获取列表详情 |
 | `/api/v1/db/lists/{id}` | PATCH | `handleDBListUpdate` | 更新列表 |
 | `/api/v1/db/lists/{id}` | DELETE | `handleDBListDelete` | 删除列表 |
+| `/api/v1/db/lists/{id}/entities` | GET | `handleDBLstEntitiesByListID` | 获取列表实体（按列表） |
 | `/api/v1/db/user-entities` | GET | `handleDBUserEntities` | 查询用户实体 |
 | `/api/v1/db/user-entities/{id}` | GET/PATCH/DELETE | ... | CRUD操作 |
 | `/api/v1/db/list-entities` | GET | `handleDBListEntities` | 查询列表实体 |
 | `/api/v1/db/list-entities/{id}` | GET/PATCH/DELETE | ... | CRUD操作 |
 | `/api/v1/db/user-links` | GET | `handleDBUserLinks` | 查询用户链接 |
 | `/api/v1/db/user-links/{id}` | GET/PATCH/DELETE | ... | CRUD操作 |
+| `/api/v1/db/stats` | GET | `handleDBStats` | 数据库统计 |
 
 ### 1.4 配置管理端点 (config_handlers.go)
 
@@ -84,6 +88,9 @@
 | 端点 | 方法 | 处理器 | 功能 |
 |------|------|--------|------|
 | `/api/v1/health` | GET | `handleHealth` | 健康检查 |
+| `/api/v1/auth/login` | POST | `handleAuthLogin` | 登录（API Key 换取 JWT） |
+| `/api/v1/auth/refresh` | POST | `handleAuthRefresh` | 刷新 JWT |
+| `/api/v1/auth/check` | GET | `handleAuthCheck` | 校验当前 JWT 状态 |
 | `/api/v1/server/shutdown` | POST | `handleServerShutdown` | 关闭服务器 |
 | `/api/v1/sse/tasks` | GET | `handleSSETasks` | 任务实时推送(SSE) |
 | `/api/v1/errors` | GET | `handleErrors` | 失败推文摘要 |
@@ -126,9 +133,15 @@
 ```
 HTTP Request
     ↓
-[Middleware] loggingMiddleware (记录请求日志)
+[Middleware] securityHeadersMiddleware (安全响应头)
+    ↓
+[Middleware] loggingMiddleware (记录请求日志, 内部构造 responseRecorder)
+    ↓
+[Middleware] API-Version 头 (所有响应添加 `API-Version: v1`)
     ↓
 [Middleware] CORS (跨域处理)
+    ↓
+[Middleware] authMiddleware (api_key 空放行; 非空校验 Bearer JWT / 原始 Key)
     ↓
 Go `http.ServeMux` 路由匹配 (`POST /api/v1/users/{screen_name}/download`)
     ↓
@@ -136,11 +149,11 @@ handleUserDownloadRoute
     ↓
 handleUserDownload
     ├── 请求解析: json.NewDecoder(r.Body).Decode(&req)
-    ├── 参数校验: isValidScreenName (screen_name格式)
+    ├── 参数校验: utils.IsValidScreenName (经 screenNameFromPath 归一化校验, download_handlers.go:84-87)
     ├── 创建任务: taskManager.CreateTask(TaskTypeUserDownload, &req)
     │   └── 生成UUID, 初始化context, 设置状态为queued
-    ├── 入队任务: enqueueTask
-    │   └── executeDownloadTask (启动goroutine)
+    ├── 入队任务: enqueueTask → DownloadQueue.Enqueue
+    │   └── workerLoop 消费队列 → executeJob (download_queue.go:146/199)
     │       ├── UpdateTaskStatus → running
     │       └── 调用: downloadService.UserDownload
     │           ├── path.NewStorePath (获取存储路径)
@@ -161,7 +174,7 @@ handleUserDownload
 handleBatchDownload
     ├── 请求解析: BatchDownloadTaskData
     ├── 参数校验:
-    │   ├── isValidScreenName (校验所有screenName)
+    │   ├── utils.IsValidScreenName (校验所有screenName)
     │   └── listID > 0 (校验列表ID)
     ├── 创建任务: CreateTask(TaskTypeBatchDownload)
     └── 异步执行: downloadService.BatchDownload
@@ -172,7 +185,7 @@ handleBatchDownload
         ├── downloading.NewDumper + Load
         ├── downloading.BatchDownloadAny
         │   ├── syncListAndGetMembers (同步列表成员)
-        │   ├── batchDownloadUsers (批量下载用户推文)
+        │   ├── BatchUserDownload (批量下载用户推文, batch_any.go:73)
         │   └── 返回: failedTweets, listMembers
         ├── collectFailedTweets
         ├── downloading.RetryFailedTweets (如果NoRetry=false)
@@ -240,25 +253,35 @@ handleDBUserDelete
 ### 3.3 中间件应用检查
 
 ```
-请求处理流程:
+请求处理流程 (从外到内):
 Client Request
+    ↓
+[securityHeadersMiddleware] - 设置 X-Content-Type-Options/X-Frame-Options/Referrer-Policy 安全响应头
     ↓
 [loggingMiddleware] - 记录请求方法、路径、IP、状态码、耗时
     ↓
+[API-Version 头] - 所有响应添加 `API-Version: v1` 头
+    ↓
 [CORS Middleware] - 处理跨域，允许所有来源与 `GET/POST/PUT/PATCH/DELETE/OPTIONS`
+    ↓
+[authMiddleware] - api_key 为空放行；非空校验 Bearer JWT / 原始 Key（SSE 回退 ?token=）
     ↓
 [Handler] - 业务处理
 ```
 
 | 中间件 | 应用范围 | 功能 | 状态 |
 |--------|----------|------|------|
-| loggingMiddleware | 所有路由 | 请求日志 | ✅ 完整 |
+| securityHeadersMiddleware | 所有路由 | 安全响应头 | ✅ 完整 |
+| loggingMiddleware | 所有路由 | 请求日志（内部构造 responseRecorder 记录状态码，middleware.go:53-58） | ✅ 完整 |
+| API-Version 头 | 所有路由 | 响应头 `API-Version: v1` | ✅ 完整 |
 | CORS | 所有路由 | 跨域处理 | ✅ 完整 |
-| responseRecorder | 所有路由 | 状态码记录 | ✅ 完整 |
+| authMiddleware | 除公开路径外的所有路由 | 认证（JWT/API Key） | ✅ 完整 |
+
+中间件包裹顺序来自 `server.go:buildHandler()`（server.go:257-277）：从外到内为 securityHeadersMiddleware → loggingMiddleware → API-Version 头 → CORS → authMiddleware → mux。`responseRecorder` 不是独立中间件，而是 `loggingMiddleware` 内部构造的 ResponseWriter 包装（middleware.go:53）。
 
 **注意**: 
-- 缺少认证/授权中间件（可能是设计选择）
-- 缺少请求限流中间件
+- 认证由 `authMiddleware`（server.go:259）提供：`api_key` 为空时放行所有请求（向后兼容）；非空时优先校验 `Authorization: Bearer <JWT>`，回退原始 API Key 字符串比较，SSE 端点无法设置自定义头时回退 `?token=` 查询参数（middleware.go:authMiddleware）；`/api/v1/health`、`/api/v1/auth/login`、SPA 页面、`/static/` 等公开路径免认证（middleware.go:isPublicPath）
+- 全局请求限流仍缺失（仅 auth 登录/refresh/check 路径有 `authRateLimiter` 限流，auth_jwt.go:115/174/237）
 - 请求大小限制尚未统一；JSON 上传接口已通过 `http.MaxBytesReader` 限制请求体大小
 
 ### 3.4 边界情况检查
@@ -272,7 +295,7 @@ Client Request
 | 数据库连接失败 | ✅ health检查返回503 | 已处理 |
 | 空请求体 | ✅ 使用默认值或返回400 | 已处理 |
 | 文件不存在 | ✅ 返回404或空结果 | 已处理 |
-| 路径遍历攻击 | ✅ path.Clean + ".."检查 | 已处理 |
+| 路径遍历攻击 | ✅ `filepath.Clean` + 允许根目录前缀包含检查（`validateJsonPaths`，download_service.go:1144-1167，前缀含 RootPath 与 AppRootPath） | 已处理 |
 | 超大分页参数 | ✅ 限制pageSize<=200 | 已处理 |
 | 并发任务创建 | ✅ TaskManager加锁保护 | 已处理 |
 

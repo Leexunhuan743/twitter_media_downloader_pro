@@ -19,27 +19,35 @@
 ```
 internal/api/web/web2/
 ├── index.html      # 单页 HTML，加载 /static/app.js + /static/styles.css
-├── app.js          # 全部 JS（~2475 行）
-└── styles.css      # 全部样式（~800 行），锌灰 + 蓝色强调 + 系统字体
+├── app.js          # 全部 JS（~3348 行）
+└── styles.css      # 全部样式（~907 行），锌灰 + 蓝色强调 + 系统字体
 ```
 
 ## app.js 段落布局
 
 | 段落 | 行号 | 内容 |
 |---|---|---|
-| API Client | 1-112 | `API_BASE`, `fetchWithTimeout`, `API` 对象（\_fetch/get/post/put/patch/del/\_tryRefreshJWT/\_doRefreshJWT）|
-| Utility | 114-233 | `esc`, `jsEsc`, `getTweetId`, `getLogLineColor`, `relativeTime`, `formatTime`, `formatDuration`, `getTaskProgressPercent`, `getStageText`, `getTaskTarget`, `taskTypeName`, `taskTypeIcon` |
-| Toast | 235-264 | `toast(msg, type)`, `dismissToast(id)` |
-| Modal | 266-279 | `openModal(html)`, `closeModal()` |
-| Global State | 281-294 | `pageTasks`, `sseConnected`, `pageRenderers`, `currentPage`, `debounce` |
-| API Endpoints | 296-441 | `ENDPOINTS` 对象 |
-| SSE | 444-545 | `sseJWT`, `tryRefreshJWT`, `debouncedTasksUpdate`, `debouncedSchedulesUpdate`, `connectSSE` |
-| Navigation | 547-605 | `navigateTo`, `renderPage`, `loadPageModule` |
-| Pages | 607-1200 | 页面渲染器：`renderTasksPage`, `renderDataPage`, `renderSchedulesPage`, `renderSystemPage`, `renderLogsPage` |
-| Schedules | 1202-1694 | 计划页面逻辑 |
-| System | 1696-2007 | 系统页面（配置/Cookies/Security）+ `loginWithApiKey`, `checkAuth` |
-| Logs | 2009-2351 | 日志 SSE、错误面板、Auth Dialog |
-| Init | 2353-2475 | `showAuthDialog`, `submitAuthKey`, `checkAuth`, DOMContentLoaded, window exports |
+| API Client | 6-133 | `API_BASE`, `apiBase`, `fetchWithTimeout`, `API` 对象（\_fetch/get/post/put/patch/del/upload/\_parse/\_tryRefreshJWT/\_doRefreshJWT）|
+| Utility | 135-254 | `esc`, `jsEsc`, `stripAnsi`, `getTweetId`, `getLogLineColor`, `highlightLogTimestamp`, `relativeTime`, `formatTime`, `formatDuration`, `getTaskProgressPercent`, `getStageText`, `getTaskTarget`, `taskTypeName`, `taskTypeIcon` |
+| Toast | 256-289 | `toast(msg, type)`（无 `dismissToast` 函数：关闭由 `.toast-close` 按钮内联 onclick 移除自身，app.js:280）|
+| Modal | 291-327 | `openModal(html)`, `closeModal()` |
+| Global State | 329-352 | `pageTasks`, `sseConnected`, `_sseAuthChecked`, `pageRenderers`, `_lastSchedulesData`, `_tasksRESTEpoch`, `_dbTabSeq`, `_logGen`, `_prependedCount`, `_actionBusy`, `debounce` |
+| API Endpoints | 354-456 | `ENDPOINTS` 对象（355-448）+ `qs()` 查询串辅助（450-456）|
+| Overview Page | 459-532 | `renderDashboard`, `updateDashboard` |
+| Routing | 534-588 | `navigateTo`, `renderPage`, `loadPageModule`（在 SSE 段之前）|
+| SSE | 589-725 | `sseSource`, `sseReconnectTimer`, `sseJWT`, `tryRefreshJWT`, `debouncedTasksUpdate`, `debouncedSchedulesUpdate`, `connectSSE` |
+| Health Check | 727-751 | `checkHealth` |
+| Tasks Page | 757-976 | `renderTasksPage`, `renderTaskActions`, `renderTaskRow`, `updateTaskRowDynamic`, `updateTasksView` |
+| Download Forms | 978-1466 | `showBatchForm`, `doUserDownload`/`doUserProfile`/`doUserMark`, `doListDownload`/`doListProfile`/`doListMark`, `doFollowingDownload`/`doFollowingMark`, `doBatchDownload`/`doBatchMark`, `doJSONFileDownload`/`doJSONFolderDownload`, `doCancelTask`/`doRetryTask`/`doDeleteTask`, `showTaskDetail`, `cancelAllQueued`, `handleQuickDownload` |
+| Data Page | 1468-1930 | `renderDataPage`, `sortDB`, `sortableTh`, `loadDBTab`, `currentDBTab`, `renderDBUsers`/`renderDBLists`/`renderDBEntities`/`renderDBPrevNames`/`renderDBStats`, `viewEntityDetail`/`saveEntityEdit`/`deleteEntity`, `viewUserDetail`/`saveUserEdit`/`viewListDetail`/`saveListEdit`, `window.dbSearch`/`dbSearchClear` 导出 |
+| Schedules | 1931-2321 | `renderSchedulesPage`, `loadSchedules`, `updateSchedulesView`, `showSchedulesRawEditor`/`saveSchedulesRawEditor`, `showNewScheduleForm`, `toggleSchedTargetFields`, `saveNewSchedule`, `toggleSchedule`, `triggerSchedule`, `triggerAllSchedules`, `reloadSchedules`, `editSchedule`/`saveScheduleEdit`/`toggleEditSchedTargetFields`/`deleteSchedule` |
+| System | 2323-2707 | `renderSystemPage`, `loadSystemData`, `loadConfigTab`/`renderConfigFields`/`saveConfigFields`/`renderConfigRaw`/`saveConfigRaw`, `renderCookies`/`saveCookies`/`addCookieRow`/`renderCookiesRaw`/`saveCookiesRaw`, `renderSecurityEditor`, `updateSecStatus`, `loginWithApiKey`, `saveSecKey`, `refreshSecJWT`, `clearSecKey`, `testSecKey` |
+| Logs | 2709-3005 | `renderLogsPage`, `setLogTimeFilter`, `toggleLogAutoScroll`, `exportLogs`, `renderLogEntryHTML`, `copyLogTweetId`, `setLogLevel`/`setLogDomain`/`toggleLogPause`/`doLogSearch`/`scrollLogToBottom`/`refreshLogs`, `loadLogsReplace`/`loadMoreLogs`, `loadLogStats`, `logLineInTimeWindow` |
+| Log SSE | 3007-3095 | `connectLogSSE`, `disconnectLogSSE`（`_logSSETimer` 等状态在此段；日志行用 `createDocumentFragment` 批量追加，app.js:3046-3055）|
+| Sidebar | 3097-3115 | `toggleSidebar`, `closeSidebar` |
+| Errors | 3117-3211 | `_errorsData`, `toggleErrorsPanel`, `loadErrors`, `updateErrorsPanel`, `retryAllErrors`, `clearAllErrors` |
+| Auth Dialog | 3213-3295 | `showAuthDialog`, `submitAuthKey`, `checkAuth` |
+| Init | 3297-3348 | unhandledrejection 兜底, DOMContentLoaded 初始化（`currentPage` 隐式全局首个赋值处，app.js:3313）, window exports（`window.ENDPOINTS`, `window.apiBase`）|
 
 ## 事件系统
 
@@ -75,7 +83,7 @@ configTabs.addEventListener('click', (e) => {
 ```js
 // API 调用通过 ENDPOINTS 对象
 const r = await ENDPOINTS.tasks();
-const stats = await ENDPOINTS.taskStats();
+const stats = await ENDPOINTS.queueStatus(); // 无 taskStats 成员；统计用 queueStatus()/getTask(id)
 await ENDPOINTS.cancelTask(taskId);
 
 // 标准 try/catch + toast 错误处理
@@ -105,8 +113,9 @@ container.innerHTML = `
     ...
   </div>`;
 
-// 追加（罕见，仅系统页面）
-// 使用 += 追加额外内容
+// 追加（全文件无 innerHTML +=）
+// 任务行增量：createElement('tbody') + appendChild（app.js:968-969）
+// 日志流批量：document.createDocumentFragment() + appendChild（app.js:3046-3055）
 ```
 
 ### 局部更新（特殊场景）
@@ -134,11 +143,17 @@ function updateSecStatus(msg, color) {
 ```js
 let pageTasks = [];
 let sseConnected = false;
+let _sseAuthChecked = false;
 let pageRenderers = {};
-let currentPage = 'tasks';
-let _errorsData = null;
-let _logSSETimer = null;
+let _lastSchedulesData = null;
+let _tasksRESTEpoch = 0;
+let _dbTabSeq = 0;
+let _logGen = 0;
+let _prependedCount = 0;
+let _actionBusy = false;
 ```
+
+> 注意：上表仅列出 Global State 段（329-352）的真实成员。其余模块级变量按段声明：`currentPage` 无 `let` 声明，属隐式全局，首个赋值在 Init 段（app.js:3313）；`_errorsData` 在 Errors 段（app.js:3118）；`_logSSETimer` 在 Logs/Log SSE 段（app.js:2794）；SSE 状态（`sseSource`/`sseReconnectTimer` 等）在 SSE 段（589-725）。
 
 ### SSE 数据流
 
@@ -195,7 +210,7 @@ openModal(`
 3. **没有 store**：直接操纵 `let` 变量 + `container.innerHTML = '...'`。注意不要在异步函数之间共享可变的 `container` 引用
 4. **JWT 令牌**：全部来自 `localStorage.getItem('tmd_jwt_token')`，由 `API._fetch` 自动注入
 5. **Log SSE**：有自己的 `connectLogSSE`/`disconnectLogSSE` 和 `_logSSETimer`/`_logReconnectAttempts` 状态
-6. **`connectSSE` 的首次延迟**：若无 JWT，`connectSSE` 通过 `window._sseAuthChecked` 延迟到 `checkAuth` 确认后才真正连接
+6. **`connectSSE` 的首次延迟**：若无 JWT，`connectSSE` 通过模块级 `let _sseAuthChecked`（app.js:332，不是 window 属性）延迟到 `checkAuth` 确认后才真正连接
 
 ## 修改前必读
 

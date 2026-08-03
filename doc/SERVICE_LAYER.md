@@ -109,6 +109,7 @@ type Dependencies struct {
     AdditionalClients []*resty.Client              // 附加账号客户端（负载均衡）
     DB                *sqlx.DB                     // SQLite 数据库
     Config            *config.Config               // 应用配置（必须包含 RootPath）
+    AppRootPath       string                       // 验证 JSON download path 时的允许前缀，通常为 appRootPath
     ListSyncManager   *downloading.ListSyncManager // 可选，为 nil 时跳过 list 成员同步清理
 }
 ```
@@ -118,7 +119,7 @@ type Dependencies struct {
 - `DB` 不能为 nil
 - `Config` 不能为 nil
 - `Config.RootPath` 不能为空
-- `AdditionalClients` 可以为空切片（可选依赖）
+- `AdditionalClients` 可以为空切片（可选依赖）；**非空时每个元素必须非 nil**
 - `ListSyncManager` 可以为 nil（可选依赖）
 
 ### 3.4 ProgressReporter 接口
@@ -166,13 +167,13 @@ type Result struct {
 
 | Stage | 含义 | 触发场景 |
 |-------|------|----------|
-| `"syncing"` | 同步列表成员 | ListDownload, FollowingDownload 开始时 |
+| `"syncing"` | 同步列表成员 | ListDownload / ListProfileDownload 开始时（Current 恒为 `list:{id}`）；FollowingDownload 不发射 syncing |
 | `"downloading"` | 下载中 | 推文媒体下载过程中 |
 | `"retrying"` | 重试中 | 重试失败推文时 |
 | `"profile"` | 资料下载中 | 头像/横幅下载时 |
 | `"profile_warning"` | 资料下载警告 | 资料下载部分失败时 |
 | `"marking"` | 标记中 | MarkDownloaded 执行时 |
-| `"preparing"` | 准备中 | BatchDownload 准备阶段 |
+| `"preparing"` | 准备中 | 遗留死分支：全库无 `Stage: "preparing"` 发射点（仅 LogReporter / 前端保留该分支） |
 | `"resolving"` | 解析中 | 解析用户名/列表ID时 |
 | `"completed"` | 已完成 | 任务完成时 |
 
@@ -296,7 +297,7 @@ downloadProfile(ctx, taskID, users, pathHelper, versionManager, fileWriter, dwn,
 日志报告器，用于 CLI 模式。通过注入的 `logger` 函数输出日志。
 
 **特殊行为**：
-- `downloading` 阶段的进度**被静默**（不输出），因为下载过程会产生大量进度更新
+- `downloading`、`retrying`、`profile` 三个阶段的进度**被静默**（不输出），因为这些阶段会产生大量进度更新
 - 其他阶段正常输出
 
 ```go
@@ -327,6 +328,7 @@ downloadService, err := service.NewDownloadService(&service.Dependencies{
     AdditionalClients: additionalClients,
     DB:                db,
     Config:            &configCopy,
+    AppRootPath:       appRootPath,
     ListSyncManager:   downloading.NewListSyncManager(db),
 })
 s.downloadService = downloadService
@@ -368,8 +370,10 @@ service
   │     ├── github.com/unkmonster/tmd/internal/downloader
   │     ├── github.com/unkmonster/tmd/internal/downloading
   │     ├── github.com/unkmonster/tmd/internal/downloading/profile
+  │     ├── github.com/unkmonster/tmd/internal/logging
   │     ├── github.com/unkmonster/tmd/internal/path
-  │     └── github.com/unkmonster/tmd/internal/twitter
+  │     ├── github.com/unkmonster/tmd/internal/twitter
+  │     └── github.com/unkmonster/tmd/internal/utils
   │
   └── used by
         ├── internal/api/server.go               → API Server
@@ -458,6 +462,6 @@ func (r *MyReporter) OnError(taskID string, err error)     { ... }
 | `AdditionalClients` 可为空 | 单账号场景下无需附加客户端 |
 | `JsonFileDownload`/`JsonFolderDownload` 使用 `noRetry` 参数 | JSON 下载失败项进入 `json_errors.json`，可通过 `RetryAllFailed()` 重试 |
 | `NopReporter` 替换 nil reporter | 避免每个方法都做 nil 检查 |
-| `LogReporter` 静默 `downloading` 阶段 | 下载过程进度更新过于频繁，不适合日志输出 |
+| `LogReporter` 静默 `downloading`/`retrying`/`profile` 阶段 | 这些阶段进度更新过于频繁，不适合日志输出 |
 | Profile 下载复用 `BatchDownloadAny` 返回的 `listMembers` | 避免重复调用 `GetMembers` API |
 | `downloadServiceImpl` 私有 | 强制通过接口使用，便于替换实现 |

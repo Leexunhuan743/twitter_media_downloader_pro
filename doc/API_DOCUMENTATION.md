@@ -326,12 +326,14 @@ curl http://localhost:25556/api/v1/auth/check \
 ```json
 {
   "success": true,
+  "data": {
     "authenticated": true,
     "auth_enabled": true,
     "valid": true,
     "expires_at": "2026-06-25T12:00:00Z",
     "expires_in": 3590,
     "needs_refresh": false
+  }
 }
 ```
 
@@ -1129,8 +1131,7 @@ GET /api/v1/tasks
         "created_at": "2024-01-15T10:30:00Z",
         "started_at": "2024-01-15T10:30:05Z"
       }
-    ],
-    "total": 1
+    ]
   }
 }
 ```
@@ -1166,6 +1167,7 @@ GET /api/v1/tasks
 | `json_file_download` | JSON 文件下载 |
 | `json_folder_download` | JSON 文件夹下载 |
 | `batch_download` | 批量下载 |
+| `retry_all_failed` | 重试所有失败任务 |
 
 **示例：**
 
@@ -1372,8 +1374,10 @@ POST /api/v1/tasks/{task_id}/retry
 {
   "success": true,
   "data": {
+    "message": "Task retried",
     "task_id": "task_new_xyz",
-    "message": "Task retry successful"
+    "status": "queued",
+    "original_id": "task_failed_123"
   }
 }
 ```
@@ -1471,7 +1475,7 @@ Content-Type: application/json
     "users": ["elonmusk", "twitter"],
     "lists": ["123456789"],
     "following_names": ["userA"],
-    "message": "Batch mark task queued"
+    "message": "Batch mark downloaded task queued"
   }
 }
 ```
@@ -1637,7 +1641,7 @@ GET /api/v1/logs/export
 
 **响应：**
 
-直接返回日志文件内容，`Content-Type: application/octet-stream`，浏览器会自动下载。
+直接返回日志文件内容，`Content-Type: text/plain; charset=utf-8`，并带 `Content-Disposition: attachment; filename="tmd2-<时间戳>.log"`（时间戳格式 `20060102-150405`），浏览器会自动下载。
 
 **示例：**
 
@@ -1731,10 +1735,10 @@ curl "http://localhost:25556/api/v1/db/user-previous-names?q=elonmusk"
 API Server 记录所有请求的详细信息：
 
 ```
-[GET] /api/v1/tasks 127.0.0.1 200 (2.3ms)
+[api] GET /api/v1/tasks status=200 dur=2.3ms ip=127.0.0.1
 ```
 
-日志包含：HTTP 方法（方括号包围）、请求路径、客户端 IP、状态码、处理时间
+日志包含：`[api]` 域前缀、HTTP 方法、请求路径、状态码、处理耗时（`dur`）、客户端 IP（`ip`）
 
 ### 响应写入错误处理
 
@@ -1781,7 +1785,7 @@ TMD 内置 API Key 认证层（自 v3.5 起），支持双模式：
 
 `/api/v1/config` 端点返回的配置信息已脱敏：
 
-- `root_path` 仅返回目录名，不返回完整绝对路径
+- `root_path` 返回配置中的完整路径
 - 敏感信息（如 Cookie）不会返回
 
 ### 缓存控制
@@ -1790,8 +1794,8 @@ Web 界面响应包含适当的缓存头：
 
 | 资源类型 | Cache-Control | 说明 |
 |---------|---------------|------|
-| HTML 页面 | `public, max-age=3600` | 1小时缓存 |
-| 静态资源 | `public, max-age=86400` | 24小时缓存 |
+| HTML 页面 | `no-cache` + ETag | 协商缓存（304 Not Modified） |
+| 静态资源 | `no-cache` + ETag | 协商缓存（304 Not Modified） |
 | API 响应 | 无缓存 | 实时数据 |
 
 ***
@@ -2029,7 +2033,7 @@ GET /api/v1/config
 **说明：**
 
 - 返回脱敏后的配置信息（不包含敏感 Cookie 和代理地址）
-- `root_path` 仅返回目录名，不返回完整绝对路径
+- `root_path` 返回配置中的完整路径
 - 完整配置请使用 `/api/v1/config/fields` 或 `/api/v1/config/raw`
 
 ***
@@ -2082,7 +2086,7 @@ Content-Type: application/json
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `theme` | string | 是 | 主题名称，来自可用主题列表（如 `web1`、`web2`） |
+| `theme` | string | 是 | 主题名称，来自可用主题列表（如 `web1`、`web2`、`web3`） |
 
 **响应（成功）：**
 
@@ -2136,7 +2140,7 @@ GET /api/v1/config/themes
 {
   "success": true,
   "data": {
-    "themes": ["web1", "web2"],
+    "themes": ["web1", "web2", "web3"],
     "current": "web1"
   }
 }
@@ -2224,7 +2228,7 @@ Content-Type: application/json
   "success": true,
   "data": {
     "message": "Configuration saved successfully. Please restart TMD manually for changes to take effect.",
-    "backup": "conf.yaml.backup.1705312345",
+    "backup": "backups/conf.yaml.backup.1705312345123456789",
     "yaml_preview": "root_path: ./downloads\nmax_download_routine: 35"
   }
 }
@@ -2267,67 +2271,67 @@ GET /api/v1/config/fields
     "fields": [
       {
         "name": "root_path",
-        "label": "存储路径",
-        "prompt": "storage dir",
+        "label": "Storage Path",
+        "prompt": "enter storage dir",
         "value": "./downloads",
         "default": "",
         "type": "text",
-        "placeholder": "storage dir",
+        "placeholder": "",
         "required": true,
         "group": "basic"
       },
       {
         "name": "auth_token",
         "label": "Auth Token",
-        "prompt": "auth_token",
+        "prompt": "enter auth_token",
         "value": "a1b•••xyz",
         "default": "",
         "type": "password",
-        "placeholder": "auth_token",
+        "placeholder": "",
         "required": true,
         "group": "cookie"
       },
       {
         "name": "ct0",
         "label": "CT0",
-        "prompt": "ct0",
+        "prompt": "enter ct0",
         "value": "x1y•••789",
         "default": "",
         "type": "password",
-        "placeholder": "ct0",
+        "placeholder": "",
         "required": true,
         "group": "cookie"
       },
       {
         "name": "max_download_routine",
-        "label": "最大并发下载",
-        "prompt": "max download routine",
+        "label": "Max Concurrent Downloads",
+        "prompt": "enter max download routine",
         "value": "35",
-        "default": "10",
+        "default": "min(100, GOMAXPROCS*10)",
         "type": "number",
-        "placeholder": "1-100, 默认 10",
+        "placeholder": "1-100, default min(100, GOMAXPROCS*10)",
         "required": false,
         "group": "advanced"
       },
       {
         "name": "max_file_name_len",
-        "label": "最大文件名长度",
-        "prompt": "max file name len",
+        "label": "Max File Name Length",
+        "prompt": "enter max file name length (50-245)",
         "value": "158",
         "default": "158",
         "type": "number",
-        "placeholder": "50-250, 默认 158",
+        "placeholder": "50-245, default 158",
         "required": false,
         "group": "advanced"
       },
       {
         "name": "proxy_url",
-        "label": "代理地址",
-        "prompt": "proxy url",
+        "label": "Proxy URL",
+        "prompt": "enter proxy url (e.g., http://127.0.0.1:7897, leave empty for system proxy)",
         "value": "",
         "default": "",
         "type": "text",
-        "placeholder": "http://127.0.0.1:7897 或留空",
+        "placeholder": "http://127.0.0.1:7897 or leave empty",
         "required": false,
         "group": "advanced"
       },
@@ -2353,7 +2357,7 @@ GET /api/v1/config/fields
 |------|------|------|
 | `fields[]` | array | 配置字段数组 |
 | `fields[].name` | string | 字段名（用于提交） |
-| `fields[].label` | string | 显示标签（中文） |
+| `fields[].label` | string | 显示标签 |
 | `fields[].type` | string | 输入类型（text/number/password） |
 | `fields[].group` | string | 分组（basic/cookie/advanced/security） |
 | `fields[].value` | string | 当前值（密码类型已脱敏） |
@@ -2415,7 +2419,7 @@ Content-Type: application/json
   "success": true,
   "data": {
     "message": "Configuration saved successfully. Please restart TMD manually for changes to take effect.",
-    "backup": "conf.yaml.backup.1705312345",
+    "backup": "backups/conf.yaml.backup.1705312345123456789",
     "yaml_preview": "root_path: ./downloads\n...",
     "fields": [...]
   }
@@ -2445,7 +2449,7 @@ curl -X PUT http://localhost:25556/api/v1/config/fields \
 
 ### 获取系统日志
 
-查询系统日志，支持按级别筛选、搜索和分页。
+查询系统日志，支持按级别、域、时间范围筛选、搜索和分页。
 
 **请求：**
 
@@ -2458,6 +2462,9 @@ GET /api/v1/logs?level=info&page=1&pageSize=100&q=download
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `level` | string | `""`(全部) | 日志级别筛选：debug/info/warn/error |
+| `domain` | string | `""`(全部) | 日志域筛选（如 api、task、downloader、rate-limit） |
+| `start_time` | string | - | 起始时间过滤（RFC3339，如 `2024-01-15T10:00:00+08:00`） |
+| `end_time` | string | - | 结束时间过滤（RFC3339，如 `2024-01-15T11:00:00+08:00`） |
 | `page` | int | `1` | 页码 |
 | `pageSize` | int | `100` | 每页数量（最大 200） |
 | `q` | string | - | 搜索关键词 |
@@ -2469,8 +2476,8 @@ GET /api/v1/logs?level=info&page=1&pageSize=100&q=download
   "success": true,
   "data": {
     "logs": [
-      "[2024-01-15 10:30:00] [INFO] [WebUI] config updated via structured form",
-      "[2024-01-15 10:29:58] [INFO] Download completed: user elonmusk, 15 media"
+      "INFO[2024-01-15T10:30:00+08:00] [task] Created task_id=task_abc123 type=user_download target=elonmusk status=queued",
+      "INFO[2024-01-15T10:29:58+08:00] [theme] Switched theme=web2"
     ],
     "total": 150,
     "page": 1,
@@ -2509,7 +2516,7 @@ curl "http://localhost:25556/api/v1/logs?page=2&pageSize=50"
 
 ### 日志实时流
 
-通过 SSE 实时推送日志，支持按级别和关键词筛选。
+通过 SSE 实时推送日志，支持按级别、域和关键词筛选。
 
 **请求：**
 
@@ -2522,6 +2529,7 @@ GET /api/v1/logs/stream?level=info&q=download
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `level` | string | `""`(全部) | 日志级别筛选：debug/info/warn/error |
+| `domain` | string | `""`(全部) | 日志域筛选（如 api、task、downloader、rate-limit） |
 | `q` | string | - | 搜索关键词 |
 
 **响应格式：**
@@ -2531,7 +2539,7 @@ SSE 事件流，每条日志为一行 `data:` 事件：
 ```
 : connected
 
-data: [2024-01-15 10:30:00] [INFO] Download completed: user elonmusk, 15 media
+data: INFO[2024-01-15T10:30:00+08:00] [task] Created task_id=task_abc123 type=user_download target=elonmusk status=queued
 ```
 
 **示例：**
@@ -2632,7 +2640,7 @@ Content-Type: application/json
   "success": true,
   "data": {
     "message": "Additional cookies saved successfully. Please restart TMD manually for changes to take effect.",
-    "backup": "additional_cookies.yaml.backup.1705312345"
+    "backup": "backups/additional_cookies.yaml.backup.1705312345123456789"
   }
 }
 ```
@@ -2686,7 +2694,7 @@ Content-Type: application/json
   "success": true,
   "data": {
     "message": "Additional cookies saved successfully. Please restart TMD manually for changes to take effect.",
-    "backup": "additional_cookies.yaml.backup.1705312345"
+    "backup": "backups/additional_cookies.yaml.backup.1705312345123456789"
   }
 }
 ```
@@ -2723,7 +2731,7 @@ POST /api/v1/server/shutdown
 
 - 服务器将在 500ms 后开始优雅关闭
 - 所有运行中的任务将被取消
-- HTTP 服务器有 5 秒超时完成进行中的请求
+- HTTP 服务器有 30 秒超时完成进行中的请求
 - 数据库连接将被关闭
 
 ***
@@ -2887,7 +2895,7 @@ Content-Type: application/json
   "success": true,
   "data": {
     "message": "Schedule created successfully.",
-    "backup": "schedules.yaml.backup.1705312345",
+    "backup": "backups/schedules.yaml.backup.1705312345123456789",
     "entry": { ... }
   }
 }
@@ -2932,7 +2940,7 @@ Content-Type: application/json
   "success": true,
   "data": {
     "message": "Schedules saved and reloaded successfully.",
-    "backup": "schedules.yaml.backup.1705312345",
+    "backup": "backups/schedules.yaml.backup.1705312345123456789",
     "entries": [ ... ]
   }
 }
@@ -2968,7 +2976,7 @@ Content-Type: application/json
   "success": true,
   "data": {
     "message": "Schedule updated successfully.",
-    "backup": "schedules.yaml.backup.1705312345",
+    "backup": "backups/schedules.yaml.backup.1705312345123456789",
     "entry": { ... }
   }
 }
@@ -2989,7 +2997,7 @@ DELETE /api/v1/schedules/{id}
   "success": true,
   "data": {
     "message": "Schedule deleted successfully.",
-    "backup": "schedules.yaml.backup.1705312345"
+    "backup": "backups/schedules.yaml.backup.1705312345123456789"
   }
 }
 ```
@@ -3020,7 +3028,7 @@ Content-Type: application/json
   "success": true,
   "data": {
     "message": "Schedule updated successfully.",
-    "backup": "schedules.yaml.backup.1705312345",
+    "backup": "backups/schedules.yaml.backup.1705312345123456789",
     "entry": { ... }
   }
 }
@@ -3095,7 +3103,7 @@ Content-Type: application/json
   "success": true,
   "data": {
     "message": "Schedules saved and reloaded successfully.",
-    "backup": "schedules.yaml.backup.1705312345"
+    "backup": "backups/schedules.yaml.backup.1705312345123456789"
   }
 }
 ```
@@ -3320,7 +3328,7 @@ curl http://localhost:25556/api/v1/queue/status
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `page` | int | 1 | 页码 |
-| `pageSize` | int | 20 | 每页数量（最大 100） |
+| `pageSize` | int | 20 | 每页数量（最大 200） |
 | `sortBy` | string | `id` | 排序字段 |
 | `sortOrder` | string | `desc` | 排序方向：`asc` 或 `desc` |
 | `q` | string | - | 搜索关键词 |
