@@ -8,6 +8,7 @@ let _logGen = 0; // 日志分页代际：refresh/筛选变化时递增，丢弃�
 let _tasksEpoch = 0; // 任务快照代际：SSE 应用新快照时递增，丢弃在途 GET /tasks 旧响应
 let _logBatch = []; // 日志流批量追加缓冲（rAF 合并）
 let _logFlushRAF = null;
+let _prependedCount = 0; // loadMore 前置的日志行数（SSE trim 时保留，防刚加载的旧页被削掉）
 
 // ============================================
 // Utility Functions
@@ -459,8 +460,11 @@ const api = {
   updateSchedulesRaw(content) { return this.request('PUT', '/api/v1/schedules/raw', { content }); },
   triggerSchedule(id) { return this.request('POST', `/api/v1/schedules/${encodeURIComponent(id)}/trigger`, {}); },
   triggerAllSchedules() { return this.post('/api/v1/schedules/trigger-all', {}); },
-  getScheduleStats() { return this.get('/api/v1/schedules/stats'); },
   validateSchedule(body, extra = {}) { return this.request('POST', '/api/v1/schedules/validate', body, extra); },
+  createSchedule(entry) { return this.post('/api/v1/schedules', entry); },
+  updateSchedule(id, entry) { return this.request('PUT', `/api/v1/schedules/${id}`, entry); },
+  deleteSchedule(id) { return this.request('DELETE', `/api/v1/schedules/${id}`); },
+  reloadSchedules() { return this.post('/api/v1/schedules/reload', {}); },
 
   // Queue
   getQueueStatus() { return this.get('/api/v1/queue/status'); },
@@ -475,15 +479,12 @@ const api = {
   getDBUser(id) { return this.get(`/api/v1/db/users/${id}`); },
   updateDBUser(id, data) { return this.request('PATCH', `/api/v1/db/users/${id}`, data); },
   deleteDBUser(id) { return this.request('DELETE', `/api/v1/db/users/${id}`); },
-  getDBUserRelatedEntities(id, params = '') { return this.get(`/api/v1/db/users/${id}/entities${params ? '?' + params : ''}`); },
-  getDBUserRelatedLinks(id, params = '') { return this.get(`/api/v1/db/users/${id}/links${params ? '?' + params : ''}`); },
 
   getDBLists(params = '') { return this.get(`/api/v1/db/lists${params ? '?' + params : ''}`); },
   getDBList(id) { return this.get(`/api/v1/db/lists/${id}`); },
   updateDBList(id, data) { return this.request('PATCH', `/api/v1/db/lists/${id}`, data); },
   deleteDBList(id) { return this.request('DELETE', `/api/v1/db/lists/${id}`); },
-  getDBListRelatedEntities(id, params = '') { return this.get(`/api/v1/db/lists/${id}/entities${params ? '?' + params : ''}`); },
-  
+
   getDBUserEntities(params = '') { return this.get(`/api/v1/db/user-entities${params ? '?' + params : ''}`); },
   getDBUserEntity(id) { return this.get(`/api/v1/db/user-entities/${id}`); },
   updateDBUserEntity(id, data) { return this.request('PATCH', `/api/v1/db/user-entities/${id}`, data); },
@@ -499,8 +500,7 @@ const api = {
   updateDBUserLink(id, data) { return this.request('PATCH', `/api/v1/db/user-links/${id}`, data); },
   deleteDBUserLink(id) { return this.request('DELETE', `/api/v1/db/user-links/${id}`); },
   getDBPreviousNames(params = '') { return this.get(`/api/v1/db/user-previous-names${params ? '?' + params : ''}`); },
-  getDBStats() { return this.get('/api/v1/db/stats'); },
-  getDBUserPreviousNames(id, params = '') { return this.get(`/api/v1/db/users/${id}/previous-names${params ? '?' + params : ''}`); }
+  getDBStats() { return this.get('/api/v1/db/stats'); }
 };
 
 // 数据管理类型配置：统一所有类型的 API 方法映射，消除散落的 switch-case
@@ -602,7 +602,11 @@ const sseManager = {
       this._everConnected = true;
       store.setState({ sseConnected: true });
       this._updateIndicator(true);
-      if (this.reconnectAttempts > 0) {
+      // 连接成功即重置指数退避：无任务事件推送的安静期不会让退避永久涨到上限
+      const wasReconnect = this.reconnectAttempts > 0;
+      this.reconnectDelay = this.baseReconnectDelay;
+      this.reconnectAttempts = 0;
+      if (wasReconnect) {
         this.refreshCurrentPage();
       }
     };
@@ -731,6 +735,8 @@ const sseManager = {
     if (!el) return;
     el.classList.toggle('connected', connected);
     el.title = connected ? '实时连接正常 (点击刷新)' : '实时连接已断开 (点击刷新)';
+    // role=status + aria-live：断开/恢复状态对屏幕阅读器可感知
+    el.setAttribute('aria-label', connected ? '实时连接正常' : '实时连接已断开');
   },
 
   refreshCurrentPage() {
@@ -827,6 +833,8 @@ const toast = {
     
     const el = document.createElement('div');
     el.className = `toast toast-${type}`;
+    // 错误通知用 role=alert 立即播报，其余走容器 aria-live=polite
+    if (type === 'error') el.setAttribute('role', 'alert');
     
     const icons = { success: '✓', error: '✕', warning: '⚠' };
     const titles = { success: '成功', error: '错误', warning: '警告' };
@@ -869,6 +877,10 @@ const drawer = {
     this.el.classList.add('open');
     this.overlay.classList.add('open');
     document.body.style.overflow = 'hidden';
+    // 焦点管理：记住触发元素，聚焦抽屉内第一个可聚焦控件，关闭时还原
+    this._lastFocused = document.activeElement;
+    const focusable = this.el.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    if (focusable) focusable.focus();
   },
   
   close() {
@@ -876,6 +888,8 @@ const drawer = {
     this.overlay.classList.remove('open');
     document.body.style.overflow = '';
     delete this._taskId;
+    if (this._lastFocused && this._lastFocused.isConnected) this._lastFocused.focus();
+    this._lastFocused = null;
   }
 };
 
@@ -1189,6 +1203,7 @@ const pages = {
             <div class="tab ${store.state._systemTab === 'config' ? 'active' : ''}" data-tab="config" data-action="setSystemTab">⚙️ 配置编辑</div>
             <div class="tab ${store.state._systemTab === 'cookies' ? 'active' : ''}" data-tab="cookies" data-action="setSystemTab">🍪 额外账户</div>
             <div class="tab ${store.state._systemTab === 'schedules' ? 'active' : ''}" data-tab="schedules" data-action="setSystemTab">⏰ 任务配置</div>
+            <div class="tab ${store.state._systemTab === 'security' ? 'active' : ''}" data-tab="security" data-action="setSystemTab">🔐 安全认证</div>
           </div>
           <button class="btn btn-danger btn-sm" data-action="shutdownServer">⏻ 关闭服务器</button>
         </div>
@@ -1203,6 +1218,10 @@ const pages = {
 
         <div id="systemSchedulesPanel" class="system-panel system-panel-scroll" style="${store.state._systemTab === 'schedules' ? '' : 'display:none'}">
           ${renderScheduleViewer()}
+        </div>
+
+        <div id="systemSecurityPanel" class="system-panel system-panel-scroll" style="${store.state._systemTab === 'security' ? '' : 'display:none'}">
+          ${renderSecurityEditor()}
         </div>
       </div>
     `;
@@ -1620,7 +1639,7 @@ function renderTaskForm(type) {
   </div>
   <div class="form-group mt-3">
     <label class="form-checkbox">
-      <input type="checkbox" id="jsonFileNoRetry"> NoRetry
+      <input type="checkbox" id="jsonFileNoRetry"> 不重试
     </label>
   </div>
   <button class="btn btn-primary" data-action="createJsonFileTask">创建 JSON 文件任务</button>
@@ -1642,7 +1661,7 @@ jsonfolder: `
   </div>
   <div class="form-group mt-3">
     <label class="form-checkbox">
-      <input type="checkbox" id="jsonFolderNoRetry"> NoRetry
+      <input type="checkbox" id="jsonFolderNoRetry"> 不重试
     </label>
   </div>
   <button class="btn btn-primary" data-action="createJsonFolderTask">创建 LoongTweet 任务</button>
@@ -1664,10 +1683,10 @@ function renderCheckboxes(prefix) {
           <input type="checkbox" id="${prefix}FollowMembers"> 下载时关注目标/成员
         </label>
         <label class="form-checkbox">
-          <input type="checkbox" id="${prefix}SkipProfile"> SkipProfile
+          <input type="checkbox" id="${prefix}SkipProfile"> 跳过 Profile
         </label>
         <label class="form-checkbox">
-          <input type="checkbox" id="${prefix}NoRetry"> NoRetry
+          <input type="checkbox" id="${prefix}NoRetry"> 不重试
         </label>
       </div>`;
 }
@@ -2900,10 +2919,12 @@ function renderTaskDetail(task, options = {}) {
   let durationText = '';
   if (task.started_at && task.ended_at) {
     const dur = new Date(task.ended_at) - new Date(task.started_at);
-    const mins = Math.floor(dur / 60000);
-    const secs = Math.round((dur % 60000) / 1000);
-    if (mins > 0) durationText = `${mins}分${secs}秒`;
-    else durationText = `${secs}秒`;
+    if (!isNaN(dur)) {
+      const mins = Math.floor(dur / 60000);
+      const secs = Math.round((dur % 60000) / 1000);
+      if (mins > 0) durationText = `${mins}分${secs}秒`;
+      else durationText = `${secs}秒`;
+    }
   }
 
   let timeHtml = `
@@ -3085,10 +3106,12 @@ async function refreshTasks(options = {}) {
 }
 
 async function loadOverviewData() {
+  const epoch = _tasksEpoch; // 捕获发起时代际：SSE 推送的新快照优先，在途 GET 过期即弃
   const [health, tasks] = await Promise.all([
     api.getHealth(),
     api.getTasks()
   ]);
+  if (epoch !== _tasksEpoch) return null; // 期间 SSE 已推送更新，丢弃过期快照
   return {
     health,
     tasks: tasks.tasks || [],
@@ -3097,6 +3120,7 @@ async function loadOverviewData() {
 
 async function refreshOverviewData() {
   const data = await loadOverviewData();
+  if (!data) return null; // 代际过期：SSE 已推送更新，本次响应作废
   store.setState(data);
   return data;
 }
@@ -3228,6 +3252,128 @@ function highlightLogLine(line) {
   return html;
 }
 
+// ============================================
+// Security 面板：JWT 会话状态 + API Key 登录/测试/刷新/清除
+// 不持久化 API Key 明文到 localStorage（web2 的 tmd_api_key 行为有意不复刻，避免明文密钥驻留浏览器）
+// ============================================
+function getJWTStatusHTML() {
+  const jwt = localStorage.getItem('tmd_jwt_token');
+  const jwtExpiry = localStorage.getItem('tmd_jwt_expiry');
+  if (!jwt) return '<div class="card-subtitle">当前无 JWT 会话（服务器可能未启用认证）</div>';
+  if (!jwtExpiry) return '<div class="card-subtitle" style="color:var(--success)">✅ JWT 会话已建立（无过期时间）</div>';
+  const remaining = new Date(jwtExpiry) - new Date();
+  if (remaining > 0) {
+    const mins = Math.max(1, Math.round(remaining / 60000));
+    return `<div class="card-subtitle" style="color:var(--success)">✅ JWT 会话有效，约 ${mins} 分钟后过期</div>`;
+  }
+  return '<div class="card-subtitle" style="color:var(--danger)">❌ JWT 已过期，需要重新登录</div>';
+}
+
+function renderSecurityEditor() {
+  return `
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">🔐 安全认证</div>
+          ${getJWTStatusHTML()}
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="form-group">
+          <label class="form-label">API Key</label>
+          <input type="password" class="form-input" id="secApiKey" placeholder="输入 API Key 以建立会话" autocomplete="off">
+          <div class="form-hint" style="font-size:12px;color:var(--text-tertiary);margin-top:6px">API Key 在「配置编辑」页的安全认证分组或 conf.yaml 中设置。登录后仅保存 JWT 会话，不保存 API Key 明文到浏览器。</div>
+        </div>
+        <div class="flex gap-3" style="flex-wrap:wrap;margin-top:12px">
+          <button class="btn btn-primary btn-sm" data-action="secLogin">登录并保存</button>
+          <button class="btn btn-secondary btn-sm" data-action="secTest">测试连接</button>
+          <button class="btn btn-ghost btn-sm" data-action="secRefresh">刷新会话</button>
+          <button class="btn btn-ghost btn-sm" data-action="secClear">清除会话</button>
+        </div>
+        <div id="secStatus" class="form-hint" style="font-size:12px;margin-top:10px;min-height:18px"></div>
+      </div>
+    </div>
+  `;
+}
+
+function setSecStatus(message, color = '') {
+  const st = document.getElementById('secStatus');
+  if (!st) return;
+  st.textContent = message;
+  if (color) st.style.color = color;
+}
+
+function refreshSecStatusHeader() {
+  const subtitle = document.querySelector('#systemSecurityPanel .card-subtitle');
+  if (subtitle) subtitle.outerHTML = getJWTStatusHTML();
+}
+
+async function secLogin() {
+  const input = document.getElementById('secApiKey');
+  if (!input) return;
+  const key = input.value.trim();
+  if (!key) { setSecStatus('⚠️ 请输入 API Key', 'var(--warning)'); return; }
+  setSecStatus('⏳ 正在登录...');
+  try {
+    const res = await fetch('/api/v1/auth/login', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + key }
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || !json?.success || !json.data || !json.data.token) {
+      throw new Error(json?.error || '认证失败 (HTTP ' + res.status + ')');
+    }
+    localStorage.setItem('tmd_jwt_token', json.data.token);
+    if (json.data.expires_at) localStorage.setItem('tmd_jwt_expiry', json.data.expires_at);
+    else localStorage.removeItem('tmd_jwt_expiry');
+    input.value = '';
+    setSecStatus('✅ 登录成功，JWT 会话已建立', 'var(--success)');
+    refreshSecStatusHeader();
+  } catch (e) {
+    setSecStatus('❌ 登录失败: ' + e.message, 'var(--danger)');
+  }
+}
+
+async function secTest() {
+  const input = document.getElementById('secApiKey');
+  const key = input ? input.value.trim() : '';
+  if (!key) { setSecStatus('⚠️ 请先输入 API Key', 'var(--warning)'); return; }
+  setSecStatus('⏳ 正在测试...');
+  try {
+    // 直接 fetch + Bearer 头：显式验证 key，不走 JWT 自动刷新链
+    const res = await fetch('/api/v1/tasks?limit=1', {
+      headers: { 'Authorization': 'Bearer ' + key }
+    });
+    if (res.ok) setSecStatus('✅ 连接成功，API Key 有效', 'var(--success)');
+    else if (res.status === 401) setSecStatus('❌ API Key 无效（服务器返回 401）', 'var(--danger)');
+    else setSecStatus('⚠️ 服务器返回状态 ' + res.status, 'var(--warning)');
+  } catch (e) {
+    if (e.name === 'AbortError') setSecStatus('❌ 请求超时', 'var(--danger)');
+    else setSecStatus('❌ 网络错误: ' + e.message, 'var(--danger)');
+  }
+}
+
+async function secRefresh() {
+  setSecStatus('⏳ 正在刷新会话...');
+  const ok = await api._tryRefreshJWT();
+  if (ok) {
+    const expiry = localStorage.getItem('tmd_jwt_expiry');
+    const remaining = expiry ? Math.max(1, Math.round((new Date(expiry) - new Date()) / 60000)) : '?';
+    setSecStatus(`✅ 会话已刷新（约 ${remaining} 分钟后过期）`, 'var(--success)');
+    refreshSecStatusHeader();
+  } else {
+    setSecStatus('❌ 会话刷新失败，请重新登录', 'var(--danger)');
+  }
+}
+
+function secClear() {
+  clearStoredAuth();
+  const input = document.getElementById('secApiKey');
+  if (input) input.value = '';
+  setSecStatus('✅ 已清除 JWT 会话', 'var(--success)');
+  refreshSecStatusHeader();
+}
+
 function renderConfigEditor() {
   const { configMode, configFields, configSaving, configExists, configRaw, configFieldsLoading } = store.state;
 
@@ -3281,7 +3427,7 @@ function renderConfigForm(fields, saving, exists, loading = false) {
   const renderField = f => {
     const inputType = f.type === 'password' ? 'password' : (f.type === 'number' ? 'number' : 'text');
     const placeholder = f.type === 'password' && f.value
-      ? `当前值: ${escapeHtml(f.value)}`
+      ? `当前值: ${escapeAttr(f.value)}`
       : escapeAttr(f.placeholder || f.prompt);
     return `
       <div class="config-field">
@@ -3604,18 +3750,30 @@ function toggleLogAutoScroll() {
 
 async function exportLogs() {
   // 用 fetch + Authorization 头 + blob 下载，避免 JWT 进入 URL（浏览器历史/扩展可见）
-  try {
+  const doExport = async () => {
     const res = await fetch('/api/v1/logs/export', {
       headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('tmd_jwt_token') || '') }
     });
     if (!res.ok) {
       if (res.status === 401) {
         const authErr = makeUnauthorizedError(res.headers.get('X-Token-Type') || '');
+        // 接入统一 JWT 刷新链：刷新成功则重试一次导出，与其余 API 调用行为一致
+        const refreshed = await api._tryRefreshJWT();
+        if (refreshed) {
+          const retry = await fetch('/api/v1/logs/export', {
+            headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('tmd_jwt_token') || '') }
+          });
+          if (retry.ok) return retry;
+        }
         requireAuthentication(authErr);
         throw authErr;
       }
       throw new Error('导出失败 (HTTP ' + res.status + ')');
     }
+    return res;
+  };
+  try {
+    const res = await doExport();
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -3627,6 +3785,7 @@ async function exportLogs() {
     setTimeout(() => URL.revokeObjectURL(url), 10000);
   } catch (err) {
     if (err.name === 'AbortError') return;
+    if (err.name === 'UnauthorizedError' || err._isUnauthorized) return; // 已弹认证框
     toast.show(err.message, 'error');
   }
 }
@@ -3687,6 +3846,7 @@ let _logLoadingMore = false;
 async function refreshLogs() {
   _logGen++;
   store.setState({ logPage: 1 });
+  _prependedCount = 0; // 重置前置页计数
   await loadLogsReplace();
   // 实时流断开（自动重连耗尽/未连接）时通过刷新按钮复活
   if (!logSSESource) connectLogSSE();
@@ -3710,6 +3870,7 @@ async function loadLogsReplace() {
     store.setState({ logTotalPages: d.totalPages || 1 });
     loadLogStats();
   } catch (e) {
+    if (e.name === 'AbortError') return; // 导航中止在途请求，不残留错误文案
     stream.innerHTML = '<div class="log-entry" style="color:var(--danger)">加载日志失败: ' + escapeHtml(e.message) + '</div>';
   }
 }
@@ -3741,10 +3902,14 @@ async function loadMoreLogs() {
     const lines = (d.logs || []).reverse();
     const oldHeight = stream.scrollHeight;
     stream.innerHTML = renderLogLines(lines) + stream.innerHTML;
+    // 记录前置页行数：SSE trim 时保留，防止刚加载的旧页被立即削掉
+    _prependedCount += lines.length;
     // 保持视觉位置不变
     stream.scrollTop = (stream.scrollHeight - oldHeight) + stream.scrollTop;
     store.setState({ logTotalPages: d.totalPages || 1 });
   } catch (e) {
+    // 代际过期：期间发生了刷新/筛选变化，丢弃本次响应（防止把新查询的 logPage 覆盖回旧值）
+    if (gen !== _logGen) return;
     // 加载失败，回退页码
     store.setState({ logPage: logPage });
   } finally {
@@ -4132,12 +4297,16 @@ function renderScheduleTable(schedules, exists) {
       <div class="card">
         <div class="card-header">
           <div><div class="card-title">定时下载任务</div><div class="card-subtitle">${exists ? '✅ 文件存在 · 0 条规则' : '⚠️ 配置文件不存在'}</div></div>
+          <div class="flex gap-2">
+            <button class="btn btn-ghost btn-sm" data-action="reloadSchedules">🔄 重载配置</button>
+            <button class="btn btn-primary btn-sm" data-action="navigateToSystemSchedules">📝 编辑任务</button>
+          </div>
         </div>
         <div class="card-body">
           <div class="empty-state">
             <div class="empty-icon">⏰</div>
             <div class="empty-title">暂无定时任务</div>
-            <div class="empty-desc">点击「添加规则」创建定时下载任务</div>
+            <div class="empty-desc">点击「编辑任务」创建定时下载任务</div>
           </div>
         </div>
       </div>
@@ -4150,6 +4319,7 @@ function renderScheduleTable(schedules, exists) {
         <div><div class="card-title">定时下载任务</div><div class="card-subtitle">共 ${total} 条规则 · ${active} 个启用${failures > 0 ? ` · ${failures} 个异常` : ''}</div></div>
         <div class="flex gap-2">
           <button class="btn btn-primary btn-sm" id="btnTriggerAll" data-action="triggerAllSchedules">⬇️ 下载全部</button>
+          <button class="btn btn-ghost btn-sm" data-action="reloadSchedules">🔄 重载配置</button>
           <button class="btn btn-ghost btn-sm" data-action="navigateToSystemSchedules">📝 编辑任务</button>
         </div>
       </div>
@@ -4211,6 +4381,9 @@ async function loadSchedules(options = {}) {
       update._scheduleFormDirty = false;
       update._scheduleUndoDelete = null;
       update._scheduleUndoStack = [];
+      // 表单初始化时的服务器基线 id 集合：diff 保存时只删除用户明确删过的条目，
+      // 外部客户端新增的条目不会被误删
+      _state._scheduleBaselineIds = entries.map(s => normalizeScheduleEntry(s.entry || s).id).filter(Boolean);
     }
     store.setState(update);
   } catch (e) {
@@ -4327,6 +4500,21 @@ async function triggerSchedule(id, button = null) {
       toast.show('触发失败: ' + e.message, 'error');
     }
   });
+}
+
+// 重载调度配置：外部手工修改 schedules.yaml 后热加载，不经过表单保存
+async function reloadSchedulesConfig(button = null) {
+  const btn = button || document.querySelector('[data-action="reloadSchedules"]');
+  if (btn) { btn.disabled = true; btn.textContent = '重载中...'; }
+  try {
+    await api.reloadSchedules();
+    toast.show('调度配置已重新加载');
+    await loadSchedules();
+  } catch (e) {
+    toast.show('重载失败: ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 重载配置'; }
+  }
 }
 
 async function triggerAllSchedules() {
@@ -4727,6 +4915,27 @@ function failScheduleRule(index, message) {
   return false;
 }
 
+// 规范化调度条目用于 diff 保存：固定字段顺序的 JSON 字符串（id 不参与比较），
+// 返回 { entry, key } —— entry 可直接作为 POST/PUT body
+function normalizeSchedForDiff(item) {
+  const entry = {
+    type: item.type,
+    target: item.type === 'mixed' ? '' : (item.target || '').trim(),
+    users: item.type === 'mixed' ? (item.users || []) : [],
+    lists: item.type === 'mixed' ? (item.lists || []) : [],
+    following_names: item.type === 'mixed' ? (item.following_names || []) : [],
+    name: (item.name || '').trim(),
+    schedule: `${item.scheduleMode}:${item.scheduleValue.trim()}`,
+    enabled: item.enabled !== false,
+    run_on_start: !!item.run_on_start,
+    auto_follow: !!item.auto_follow,
+    follow_members: !!item.follow_members,
+    skip_profile: !!item.skip_profile,
+    no_retry: !!item.no_retry,
+  };
+  return { entry, key: JSON.stringify(entry) };
+}
+
 async function saveScheduleForm() {
   if (store.state._scheduleSaving) return; // 防重入：双击/重复点击不并发提交
   const items = readScheduleFormItemsFromDOM();
@@ -4765,6 +4974,70 @@ async function saveScheduleForm() {
 
   store.setState({ _scheduleFormItems: items, _scheduleSaving: true });
   try {
+    // 逐条 CRUD：与服务器基线 diff，新增 POST / 修改 PUT / 删除 DELETE。
+    // 只在基线从未加载（null/undefined）时回退全量替换 PUT /schedules，避免静默覆盖外部修改。
+    // 注意：空数组也是有效基线（服务器确认 0 条规则 → 新增走 POST）
+    const baselineItems = (store.state._schedules || []).map(s => scheduleStatusToFormItem(s));
+    const baselineIds = _state._scheduleBaselineIds || baselineItems.map(i => i.id).filter(Boolean);
+    const hasBaseline = Array.isArray(store.state._schedules);
+
+    if (hasBaseline) {
+      const baselineById = new Map(baselineItems.map(i => [i.id, i]));
+      const creates = [];
+      const updates = [];
+      const deletes = [];
+
+      for (const item of items) {
+        const norm = normalizeSchedForDiff(item);
+        if (item.id && baselineById.has(item.id)) {
+          if (normalizeSchedForDiff(baselineById.get(item.id)).key !== norm.key) updates.push({ id: item.id, entry: norm.entry });
+        } else {
+          creates.push(norm.entry);
+        }
+      }
+      for (const id of baselineIds) {
+        if (!items.some(i => i.id === id)) deletes.push(id);
+      }
+
+      if (!creates.length && !updates.length && !deletes.length) {
+        // 无任何变化：直接同步表单与 raw 状态后退出
+        store.setState({ _scheduleSaving: false });
+        toast.show('调度配置无变化');
+        const rawData = await api.getSchedulesRaw();
+        store.setState({
+          _scheduleRaw: rawData.content || '',
+          _scheduleExists: rawData.exists || false,
+        });
+        return;
+      }
+
+      // 顺序：新增 → 修改 → 删除（互不依赖，任一失败即停止并保留已应用部分）
+      for (const c of creates) await api.createSchedule(c);
+      for (const u of updates) await api.updateSchedule(u.id, u.entry);
+      for (const id of deletes) await api.deleteSchedule(id);
+
+      const saved = await api.getSchedules();
+      const entries = saved.entries || [];
+      _state._scheduleBaselineIds = entries.map(e => normalizeScheduleEntry(e.entry || e).id).filter(Boolean);
+      store.setState({
+        _scheduleFormItems: entries.map(entry => scheduleStatusToFormItem(entry)),
+        _scheduleFormDirty: false,
+        _scheduleUndoDelete: null,
+        _scheduleUndoStack: [],
+      });
+      await loadSchedules({ updateFormItems: false });
+      toast.show(`调度配置已保存并重载（新增 ${creates.length} / 修改 ${updates.length} / 删除 ${deletes.length}）`);
+      const rawData = await api.getSchedulesRaw();
+      store.setState({
+        _scheduleRaw: rawData.content || '',
+        _scheduleExists: rawData.exists || false,
+        _scheduleSaving: false,
+        _scheduleUndoDelete: null,
+      });
+      return;
+    }
+
+    // 兜底：无基线时全量替换（与旧行为一致）
     const saved = await api.replaceSchedules(schedules);
     if (saved?.entries) {
       store.setState({
@@ -4817,15 +5090,16 @@ function renderServerClosedState() {
   `;
 }
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 async function saveConfigForm() {
   if (store.state.configSaving) return;
   const inputs = document.querySelectorAll('.config-input:not(.cookie-input)[name]');
   const fields = {};
   for (const el of inputs) {
+    if (el.type === 'password' && el.value.includes('•••')) {
+      // 用户粘贴了后端掩码占位文本（如 abc•••xyz）：留空可保留原值，避免被当真实值提交
+      toast.show(`${el.name}: 检测到掩码占位文本，请留空以保留原值`, 'error');
+      return;
+    }
     if (el.type === 'password' && el.value.trim() === '') {
       // api_key 是唯一可安全清空的可选密码字段（清空 = 关闭认证）
       fields[el.name] = el.name === 'api_key' ? '__CLEAR__' : '__KEEP_OLD__';
@@ -5101,6 +5375,12 @@ function connectLogSSE() {
   const url = '/api/v1/logs/stream' + (qs ? '?' + qs : '');
   logSSESource = new EventSource(url);
 
+  // 连接成功即重置计数：日志流安静（无新日志事件）时计数器也要归零，
+  // 否则跨多次独立断连累计 60 次后即使重连成功也会被误判为永久断开
+  logSSESource.onopen = () => {
+    _logReconnectAttempts = 0;
+  };
+
   logSSESource.addEventListener('log', (e) => {
     _logReconnectAttempts = 0; // 成功收到事件 → 连接正常，重置计数器
     const stream = document.getElementById('log-stream');
@@ -5167,7 +5447,8 @@ function connectLogSSE() {
 function trimLogStream() {
   const stream = document.getElementById('log-stream');
   if (!stream) return;
-  while (stream.children.length > LOG_STREAM_MAX_LINES) stream.removeChild(stream.firstChild);
+  // 保留 loadMore 前置的旧页：上限放宽 _prependedCount 行，防刚加载内容被立即削掉
+  while (stream.children.length > LOG_STREAM_MAX_LINES + _prependedCount) stream.removeChild(stream.firstChild);
 }
 
 function disconnectLogSSE() {
@@ -5297,8 +5578,12 @@ const SUB_TO_HASH = { 'users': '', 'lists': '#lists', 'entities': '#entities', '
 const PAGE_TITLES = { overview: '概览', tasks: '任务中心', data: '数据管理', schedules: '定时任务', system: '应用配置', logs: '系统日志' };
 
 function updateNavigationUI(page) {
-  document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.page === page));
-  document.querySelectorAll('.mobile-nav-item').forEach(el => el.classList.toggle('active', el.dataset.page === page));
+  document.querySelectorAll('.nav-item, .mobile-nav-item').forEach(el => {
+    const active = el.dataset.page === page;
+    el.classList.toggle('active', active);
+    if (active) el.setAttribute('aria-current', 'page');
+    else el.removeAttribute('aria-current');
+  });
   document.getElementById('pageTitle').textContent = PAGE_TITLES[page] || '概览';
 }
 
@@ -5513,7 +5798,9 @@ async function bootstrapApp() {
   sseManager.connect();
 
   try {
-    const { health, tasks } = await loadOverviewData();
+    const data = await loadOverviewData();
+    // 代际过期（SSE 已推送）时保留 store 已有值，不覆盖新快照
+    const { health = store.state.health, tasks = store.state.tasks } = data || {};
 
     store.setState({
       currentPage: page,
@@ -5556,6 +5843,7 @@ function showAuthDialog(message = '') {
     status.style.color = 'var(--warning)';
   }
   if (overlay.classList.contains('open')) return; // 已在显示中，防重复触发
+  overlay._lastFocused = document.activeElement; // 记录触发元素，关闭时还原焦点
   requestAnimationFrame(() => overlay.classList.add('open'));
   const input = document.getElementById('authDialogKey');
   if (input) {
@@ -5569,6 +5857,12 @@ function hideAuthDialog() {
   overlay.classList.remove('open');
   const status = document.getElementById('authDialogStatus');
   if (status) status.textContent = '';
+  // 焦点还原：弹窗关闭后焦点回到触发元素（若有），否则归还 body
+  if (overlay.contains(document.activeElement)) {
+    if (overlay._lastFocused && overlay._lastFocused.isConnected) overlay._lastFocused.focus();
+    else document.activeElement.blur();
+  }
+  overlay._lastFocused = null;
 }
 
 async function submitAuthKey() {
@@ -5633,6 +5927,10 @@ window.addEventListener('resize', () => {
   const isMobile = window.innerWidth < 768;
   if (isMobile !== store.state.isMobile) {
     store.setState({ isMobile });
+    // 断点切换后，惰性渲染的另一侧容器需要补渲染
+    if (store.state.currentPage === 'data' && !store.state.dbLoading && !store.state.dbError) {
+      renderDataTables(store.state);
+    }
   }
 });
 
@@ -5653,24 +5951,20 @@ const systemDetector = makeChangeDetector([
 // Page-specific state sync functions
 // ============================================
 
-function syncDataPage(state) {
-  const { hasAny, changed } = dataDetector.detect(state);
-  if (!hasAny) return;
-
-  // 子页面、加载/错误态、筛选横幅变化：全量重建（这些区域不只影响表格主体）
-  if (changed.dataSubPage || changed.dbLoading || changed.dbError || changed._prevNameUserIdFilter || changed._relUserIdFilter || changed._relListIdFilter) { render(); return; }
-
-  // 仅数据/排序/分页变化：局部更新表格 + 分页栏，保留标签页和搜索状态
+// 局部更新表格 + 分页栏（syncDataPage 与 resize 断点切换共用）
+// 惰性渲染：只重建当前视口可见的容器（桌面表格 / 移动卡片），隐藏侧在断点切换时补渲染
+function renderDataTables(state) {
   const subPage = state.dataSubPage;
   const current = state.dbData[subPage] || { data: [], total: 0 };
   const pagination = state.dbPagination[subPage] || { page: 1, pageSize: 200, totalPages: 1 };
   const sort = state.dbSort[subPage] || { sortBy: 'id', sortOrder: 'desc' };
 
+  const isMobile = window.innerWidth < 768;
   const tableEl = document.getElementById('dataTableContainer');
-  if (tableEl) tableEl.innerHTML = renderDBTable(subPage, current.data, sort);
+  if (tableEl && !isMobile) tableEl.innerHTML = renderDBTable(subPage, current.data, sort);
 
   const mobileEl = document.getElementById('dataMobileCards');
-  if (mobileEl) mobileEl.innerHTML = renderDBMobileCards(subPage, current.data);
+  if (mobileEl && isMobile) mobileEl.innerHTML = renderDBMobileCards(subPage, current.data);
 
   const pagEl = document.getElementById('dataPagination');
   if (pagEl) {
@@ -5687,6 +5981,17 @@ function syncDataPage(state) {
       `;
     }
   }
+}
+
+function syncDataPage(state) {
+  const { hasAny, changed } = dataDetector.detect(state);
+  if (!hasAny) return;
+
+  // 子页面、加载/错误态、筛选横幅变化：全量重建（这些区域不只影响表格主体）
+  if (changed.dataSubPage || changed.dbLoading || changed.dbError || changed._prevNameUserIdFilter || changed._relUserIdFilter || changed._relListIdFilter) { render(); return; }
+
+  // 仅数据/排序/分页变化：局部更新表格 + 分页栏，保留标签页和搜索状态
+  renderDataTables(state);
 }
 
 // ============================================
@@ -5911,7 +6216,44 @@ function updateOverviewTasksUI(tasks) {
   }
 }
 
+// 增量更新单个任务行的动态部分（进度/状态/操作按钮），静态标题与时间不重建
+function updateTaskItemDynamic(el, task) {
+  const status = getTaskStatusInfo(task.status);
+  const pct = getTaskProgressPercent(task);
+  const stageText = task.progress?.stage ? getStageText(task.progress.stage) : '';
+  const currentText = task.progress?.current ? ' · ' + task.progress.current : '';
+
+  const tag = el.querySelector('.tag');
+  if (tag) {
+    const newTagClass = 'tag ' + status.tag;
+    if (tag.className !== newTagClass) tag.className = newTagClass;
+    if (tag.textContent !== status.text) tag.textContent = status.text;
+  }
+
+  const fill = el.querySelector('.progress-fill');
+  if (fill) fill.style.width = pct + '%';
+
+  const ptext = el.querySelector('.task-progress-text');
+  if (ptext) {
+    const newText = pct + '%' + stageText + currentText;
+    if (ptext.textContent !== newText) ptext.textContent = newText;
+  }
+
+  const actions = el.querySelector('.task-actions');
+  const btn = actions?.querySelector('button');
+  const shouldCancel = task.status === 'running' || task.status === 'queued';
+  const needBtnSwap = shouldCancel
+    ? (btn?.dataset.action !== 'cancelTask')
+    : (btn?.dataset.action !== 'showTaskDetail');
+  if (actions && needBtnSwap) {
+    actions.innerHTML = shouldCancel
+      ? `<button class="btn btn-danger btn-sm" data-task-id="${escapeAttr(task.task_id)}" data-action="cancelTask">取消</button>`
+      : `<button class="btn btn-ghost btn-sm" data-task-id="${escapeAttr(task.task_id)}" data-action="showTaskDetail">详情</button>`;
+  }
+}
+
 // Update only the task list part of the UI without full re-render
+// keyed 增量：按 task_id 复用行元素，仅更新进度/状态/按钮，避免 SSE 高频快照触发整表重建
 function updateTaskListUI(tasks) {
   const taskList = document.getElementById('taskListContainer');
   if (!taskList) return;
@@ -5947,15 +6289,42 @@ function updateTaskListUI(tasks) {
   }
   
   if (filtered.length === 0) {
-    taskList.className = 'empty-state';
-    taskList.innerHTML = `
-      <div class="empty-icon">🔍</div>
-      <div class="empty-title">没有找到匹配的任务</div>
-      <div class="empty-desc">尝试调整筛选条件或搜索关键词</div>
-    `;
+    if (!taskList.classList.contains('empty-state')) {
+      taskList.className = 'empty-state';
+      taskList.innerHTML = `
+        <div class="empty-icon">🔍</div>
+        <div class="empty-title">没有找到匹配的任务</div>
+        <div class="empty-desc">尝试调整筛选条件或搜索关键词</div>
+      `;
+    }
   } else {
-    taskList.className = 'task-list';
-    taskList.innerHTML = filtered.map(t => renderTaskItem(t)).join('');
+    if (!taskList.classList.contains('task-list')) {
+      // 从空态切换到列表：先清空空态 DOM
+      taskList.className = 'task-list';
+      taskList.innerHTML = '';
+    }
+    const existing = new Map();
+    taskList.querySelectorAll('.task-item').forEach(el => {
+      const id = el.getAttribute('data-task-id');
+      if (id) existing.set(id, el);
+    });
+    const seen = new Set();
+    for (const t of filtered) {
+      const id = String(t.task_id);
+      seen.add(id);
+      const el = existing.get(id);
+      if (el) {
+        updateTaskItemDynamic(el, t);
+      } else {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = renderTaskItem(t);
+        taskList.appendChild(tmp.firstElementChild);
+      }
+    }
+    // 移除已消失（取消/删除/筛选变化）的行
+    for (const [id, el] of existing) {
+      if (!seen.has(id)) el.remove();
+    }
   }
   
   // Update task count subtitle
@@ -5972,6 +6341,26 @@ document.getElementById('contentContainer').addEventListener('keydown', (e) => {
   if (id === 'quickDownloadInput') handleQuickDownload();
   else if (id === 'dbSearchInput') searchDB();
   else if (id === 'log-search-input') doLogSearch();
+});
+
+// Esc 关闭：抽屉优先，其次认证弹窗（键盘可达性）
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (drawer.el.classList.contains('open')) {
+    drawer.close();
+    return;
+  }
+  const authOverlayEl = document.getElementById('authOverlay');
+  if (authOverlayEl && authOverlayEl.classList.contains('open')) hideAuthDialog();
+});
+
+// 导航项键盘可达性：role=link 的 div 用 Enter/Space 触发导航（与点击行为一致）
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const nav = e.target?.closest?.('[data-action="navigateTo"][data-page]');
+  if (!nav) return;
+  e.preventDefault();
+  navigateTo(nav.dataset.page);
 });
 
 // Auth Dialog: Enter key 提交（弹窗在 #app 内但不在 #contentContainer 内，需独立委派）
@@ -6141,6 +6530,15 @@ document.addEventListener('click', (e) => {
 
     // Server
     case 'shutdownServer':        shutdownServer(); break;
+
+    // Security
+    case 'secLogin':              secLogin(); break;
+    case 'secTest':               secTest(); break;
+    case 'secRefresh':            secRefresh(); break;
+    case 'secClear':              secClear(); break;
+
+    // Schedules
+    case 'reloadSchedules':       reloadSchedulesConfig(el); break;
 
     // Errors
     case 'retryAllErrors':        retryAllErrors(); break;
