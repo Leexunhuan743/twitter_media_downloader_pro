@@ -306,8 +306,8 @@ async function submitAuth() {
 
 /* ---------- 任务工具 ---------- */
 const TASK_STAGE_TEXT = {
-  queueing: '排队中', queued: '排队中', preparing: '准备中', fetching: '获取中',
-  downloading: '下载中', processing: '处理中', finalizing: '收尾', completed: '完成',
+  queueing: 'Queuing', queued: 'Queued', preparing: 'Preparing', fetching: 'Fetching',
+  downloading: 'Downloading', processing: 'Processing', finalizing: 'Finalizing', completed: 'Done',
 };
 function getStageText(stage) {
   if (!stage) return '';
@@ -527,10 +527,10 @@ const TASK_FORM_HTML = {
     <div class="form-group"><label>Lists (one per line)</label><textarea id="tf-lists"></textarea></div>
     <div class="form-group"><label>Following (one per line)</label><textarea id="tf-following"></textarea></div>
   </div>`,
-  jsonFile: `<div class="form-group"><label>上传第三方工具导出的 JSON 文件</label><input type="file" id="tf-files" accept=".json,application/json" multiple><div class="form-hint">支持多选 .json 文件；未选择文件时可改用下面的服务端路径模式</div></div>
-    <div class="form-group"><label>高级：服务端 JSON 文件路径（每行一个）</label><textarea id="tf-paths" rows="3" placeholder="/path/to/twitter-followers-123.json"></textarea></div>`,
-  jsonFolder: `<div class="form-group"><label>上传 LoongTweet JSON 文件</label><input type="file" id="tf-files" accept=".json,application/json" multiple><div class="form-hint">直接选择一个或多个 .loongtweet 生成的 JSON 文件；未选择文件时可改用下面的服务端路径模式</div></div>
-    <div class="form-group"><label>高级：服务端 .loongtweet 文件夹路径（每行一个）</label><textarea id="tf-paths" rows="3" placeholder="/path/to/.loongtweet"></textarea></div>`,
+  jsonFile: `<div class="form-group"><label>Upload JSON files exported by third-party tools</label><input type="file" id="tf-files" accept=".json,application/json" multiple><div class="form-hint">Multiple .json files supported; leave empty to use the server-path mode below</div></div>
+    <div class="form-group"><label>Advanced: server-side JSON file paths (one per line)</label><textarea id="tf-paths" rows="3" placeholder="/path/to/twitter-followers-123.json"></textarea></div>`,
+  jsonFolder: `<div class="form-group"><label>Upload LoongTweet JSON files</label><input type="file" id="tf-files" accept=".json,application/json" multiple><div class="form-hint">Pick one or more .loongtweet JSON files; leave empty to use the server-path mode below</div></div>
+    <div class="form-group"><label>Advanced: server-side .loongtweet folder paths (one per line)</label><textarea id="tf-paths" rows="3" placeholder="/path/to/.loongtweet"></textarea></div>`,
   mark: `<div class="form-row">
     <div class="form-group"><label>Users (one per line)</label><textarea id="tf-users"></textarea></div>
     <div class="form-group"><label>Lists (one per line)</label><textarea id="tf-lists"></textarea></div>
@@ -557,8 +557,8 @@ function renderTaskFormInline() {
     : TASK_FORM_NO_OPTS.has(taskFormType) ? '' : TASK_FORM_OPTS;
   const submitLabel = taskFormType === 'mark' ? 'Mark Downloaded' : 'Create Download';
   // 并列操作（web1 同款，共享输入框）：user/list 有「仅下载 Profile」，user/list/following 有「标记已下载」
-  const profileBtn = (taskFormType === 'user' || taskFormType === 'list') ? `<button class="btn" onclick="submitTaskForm('${taskFormType}', 'profile')">仅下载 Profile</button>` : '';
-  const markBtn = (taskFormType === 'user' || taskFormType === 'list' || taskFormType === 'following') ? `<button class="btn ghost" onclick="submitTaskForm('${taskFormType}', 'mark')">标记已下载</button>` : '';
+  const profileBtn = (taskFormType === 'user' || taskFormType === 'list') ? `<button class="btn" onclick="submitTaskForm('${taskFormType}', 'profile')">Profile Only</button>` : '';
+  const markBtn = (taskFormType === 'user' || taskFormType === 'list' || taskFormType === 'following') ? `<button class="btn ghost" onclick="submitTaskForm('${taskFormType}', 'mark')">Mark Downloaded</button>` : '';
   body.innerHTML = `
     ${TASK_FORM_HTML[taskFormType]}
     ${opts}
