@@ -1923,6 +1923,7 @@ async function init() {
 
   setState({ page: currentPageFromHash() });
   renderPage();
+  checkHealth(); // 全局健康检查：左下角状态不依赖 Dashboard 页加载（直接进其它页或主题切换回原页时也要更新）
 
   // 认证探测：有 JWT 先轻量校验，无 JWT 探测 tasks；均用 REST 兜底填充初始任务快照（SSE 未建立时不显示误导空态）
   const jwt = localStorage.getItem('tmd_jwt_token');
