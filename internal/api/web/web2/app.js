@@ -51,6 +51,10 @@ const API = {
             const r2 = await fetchWithTimeout(url, retryOpts);
             if (r2.status !== 401) return r2;
           }
+          // 刷新失败：清理失效 token 并引导重新登录（避免各处只报 unauthorized）
+          localStorage.removeItem('tmd_jwt_token');
+          localStorage.removeItem('tmd_jwt_expiry');
+          showAuthDialog();
         }
         const authErr = new Error('unauthorized');
         authErr.status = 401;
@@ -266,15 +270,13 @@ function toast(msg, type) {
   const el = document.createElement('div');
   el.className = 'toast toast-' + type;
   el.id = 'toast-' + id;
+  // 错误通知用 role=alert 立即播报，其余走容器 aria-live=polite
+  if (type === 'error') el.setAttribute('role', 'alert');
   const icons = { success:'✓', error:'✕', warning:'!', info:'i' };
-  el.innerHTML = '<span class="toast-icon">' + icons[type] + '</span><span class="toast-msg">' + esc(msg) + '</span><button class="toast-close">✕</button>';
+  el.innerHTML = '<span class="toast-icon">' + icons[type] + '</span><span class="toast-msg">' + esc(msg) + '</span><button class="toast-close" aria-label="Dismiss">✕</button>';
   el.querySelector('.toast-close').onclick = () => el.remove();
   container.appendChild(el);
   setTimeout(() => { const e = document.getElementById('toast-'+id); if (e) e.remove(); }, 5000);
-}
-function dismissToast(id) {
-  const el = document.getElementById('toast-'+id);
-  if (el) el.remove();
 }
 
 /* ---- Modal ---- */
@@ -285,6 +287,7 @@ function openModal(html) {
   overlay.className = 'modal-overlay';
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-modal', 'true');
+  overlay._lastFocused = document.activeElement; // 记录触发元素，关闭时还原焦点
   overlay.innerHTML = '<div class="modal">' + html + '</div>';
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
   document.body.appendChild(overlay);
@@ -294,11 +297,23 @@ function openModal(html) {
   if (focusable) setTimeout(() => focusable.focus(), 50);
 }
 function closeModal() {
-  if (currentModal) { currentModal.remove(); currentModal = null; }
+  if (currentModal) {
+    const opener = currentModal._lastFocused;
+    currentModal.remove();
+    currentModal = null;
+    if (opener && opener.isConnected) opener.focus();
+  }
 }
-// ESC 关闭弹窗/侧边栏
+// ESC 关闭弹窗/侧边栏；Tab 焦点陷阱循环（弹窗打开时约束在容器内）
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closeModal(); closeSidebar(); }
+  if (e.key === 'Escape') { closeModal(); closeSidebar(); return; }
+  if (e.key !== 'Tab' || !currentModal) return;
+  const focusables = currentModal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+  if (!focusables.length) { e.preventDefault(); return; }
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 });
 
 /* ---- Global State ---- */
@@ -331,10 +346,10 @@ const ENDPOINTS = {
   // Health
   health:      () => API.get('/api/v1/health'),
   queueStatus: () => API.get('/api/v1/queue/status'),
+  authCheck:   () => API.get('/api/v1/auth/check'),
 
   // Tasks
   tasks:       () => API.get('/api/v1/tasks'),
-  taskStats:   () => API.get('/api/v1/tasks/stats'),
   getTask:     (id) => API.get('/api/v1/tasks/' + encodeURIComponent(id)),
   cancelTask:  (id) => API.post('/api/v1/tasks/' + encodeURIComponent(id) + '/cancel'),
   cancelQueued:() => API.post('/api/v1/tasks/cancel-queued'),
@@ -386,7 +401,6 @@ const ENDPOINTS = {
   dbUserLinkDelete:    (id) => API.del('/api/v1/db/user-links/' + encodeURIComponent(id)),
 
   // Config
-  config:        () => API.get('/api/v1/config'),
   configRaw:     () => API.get('/api/v1/config/raw'),
   configFields:  () => API.get('/api/v1/config/fields'),
   saveConfigRaw: (c) => API.put('/api/v1/config/raw', {content:c}),
@@ -401,12 +415,9 @@ const ENDPOINTS = {
   // Schedules
   schedules:       () => API.get('/api/v1/schedules'),
   schedulesRaw:    () => API.get('/api/v1/schedules/raw'),
-  scheduleStats:   () => API.get('/api/v1/schedules/stats'),
   createSchedule:  (e) => API.post('/api/v1/schedules', e),
   saveSchedulesRaw:(c) => API.put('/api/v1/schedules/raw', {content:c}),
-  replaceSchedules:(e) => API.put('/api/v1/schedules', {entries:e}),
   reloadSchedules: () => API.post('/api/v1/schedules/reload'),
-  validateSchedule:(b) => API.post('/api/v1/schedules/validate', b),
   triggerAll:      () => API.post('/api/v1/schedules/trigger-all'),
   updateSchedule:  (id,e) => API.put('/api/v1/schedules/' + encodeURIComponent(id), e),
   deleteSchedule:  (id) => API.del('/api/v1/schedules/' + encodeURIComponent(id)),
@@ -435,6 +446,77 @@ function qs(params) {
   return '?' + keys.map(k => encodeURIComponent(k) + '=' + encodeURIComponent(filtered[k])).join('&');
 }
 
+/* ---- Overview Page ---- */
+function renderDashboard(container) {
+  container.innerHTML = `
+    <div class="stats-grid" id="dash-stats"></div>
+    <div class="card mb-4">
+      <div class="card-header">
+        <h3>Recent Tasks</h3>
+        <button class="btn btn-xs btn-ghost" onclick="navigateTo('tasks')">View all &rarr;</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:32px">Type</th><th>ID</th><th style="width:100px">Status</th><th style="width:220px">Progress</th><th style="width:130px">Time</th></tr></thead>
+          <tbody id="dash-task-body"><tr><td colspan="5" class="text-muted">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>`;
+  updateDashboard();
+  checkHealth();
+  // 队列深度
+  ENDPOINTS.queueStatus().then(q => {
+    const el = document.getElementById('dash-queue-depth');
+    if (el) el.textContent = q.queue_depth || 0;
+    const labels = document.querySelectorAll('#dash-stats .stat-card[data-dash]');
+    labels.forEach(l => {
+      const k = l.dataset.dash;
+      if (k === 'active') l.querySelector('.stat-value').textContent = q.active_jobs || 0;
+      if (k === 'pending') l.querySelector('.stat-value').textContent = q.pending_jobs || 0;
+      if (k === 'detached') l.querySelector('.stat-value').textContent = q.detached_jobs || 0;
+    });
+  }).catch(() => {});
+}
+
+// 更新概览页统计与最近任务（SSE 快照到达时调用）
+function updateDashboard() {
+  const tasks = pageTasks;
+  const stats = {queued:0, running:0, completed:0, failed:0, cancelled:0, total:tasks.length};
+  tasks.forEach(t => { if (stats[t.status] !== undefined) stats[t.status]++; });
+  const statsEl = document.getElementById('dash-stats');
+  if (statsEl) {
+    statsEl.innerHTML = `
+      <div class="stat-card completed"><div class="stat-value" id="dash-health-text">${document.getElementById('health-text') ? document.getElementById('health-text').textContent : 'OK'}</div><div class="stat-label">Status</div></div>
+      <div class="stat-card running"><div class="stat-value">${stats.running}</div><div class="stat-label">Running</div></div>
+      <div class="stat-card queued"><div class="stat-value">${stats.queued}</div><div class="stat-label">Queued</div></div>
+      <div class="stat-card completed"><div class="stat-value">${stats.completed}</div><div class="stat-label">Completed</div></div>
+      <div class="stat-card total"><div class="stat-value" id="dash-queue-depth">-</div><div class="stat-label">Queue Depth</div></div>
+    `;
+  }
+  const tbody = document.getElementById('dash-task-body');
+  if (!tbody) return;
+  const recent = tasks.slice(0, 5);
+  if (!recent.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="text-muted">No tasks yet. Start a download to see tasks here.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = recent.map(t => {
+    const p = t.progress || {};
+    const pct = getTaskProgressPercent(t);
+    const target = getTaskTarget(t);
+    return `<tr>
+      <td>${taskTypeIcon(t.type)}</td>
+      <td><span class="mono">${esc(t.task_id || t.id)}</span><div class="text-sm text-muted">${esc(taskTypeName(t.type))}${target ? ' - ' + esc(target) : ''}</div></td>
+      <td><span class="badge badge-${safeTaskStatus(t.status)}">${esc(t.status)}</span></td>
+      <td>
+        <div class="progress-bar-wrap"><div class="progress-bar-fill ${p.stage === 'completed' ? 'completed' : (t.status === 'failed' ? 'failed' : (t.status === 'running' ? 'pulsing' : ''))}" style="width:${pct}%"></div></div>
+        <div class="progress-detail"><span>${pct}%${esc(getStageText(p.stage))}</span>${p.current ? '<span> &middot; ' + esc(p.current) + '</span>' : ''}</div>
+      </td>
+      <td><div class="text-sm">${relativeTime(t.created_at)}</div></td>
+    </tr>`;
+  }).join('');
+}
+
 /* ---- Routing ---- */
 function navigateTo(page) {
   closeModal();
@@ -444,14 +526,14 @@ function navigateTo(page) {
   }
   if (page === currentPage) return;
   currentPage = page;
-  history.pushState({page}, '', page === 'tasks' ? '/' : '/' + page);
+  history.pushState({page}, '', page === 'overview' ? '/' : '/' + page);
   renderPage(page);
   // 移动端：导航后收起侧边栏并隐藏遮罩
   closeSidebar();
 }
 
 window.addEventListener('popstate', (e) => {
-  const page = location.pathname.replace(/^\//, '') || 'tasks';
+  const page = location.pathname.replace(/^\//, '') || 'overview';
   // 与 navigateTo 共用离开清理：浏览器前进/后退离开日志页也要断开 log SSE
   if (currentPage === 'logs' && page !== 'logs') {
     disconnectLogSSE();
@@ -463,7 +545,7 @@ window.addEventListener('popstate', (e) => {
 function renderPage(page) {
   // Update sidebar
   document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.page === page));
-  const titles = {tasks:'Tasks', data:'Data', schedules:'Schedules', system:'System', logs:'Logs'};
+  const titles = {overview:'Dashboard', tasks:'Tasks', data:'Data', schedules:'Schedules', system:'System', logs:'Logs'};
   document.getElementById('page-title').textContent = titles[page] || 'Tasks';
 
   const container = document.getElementById('page-content');
@@ -477,6 +559,7 @@ function renderPage(page) {
 
 function loadPageModule(page, container) {
   const loaders = {
+    overview:  renderDashboard,
     tasks:     renderTasksPage,
     data:      renderDataPage,
     schedules: renderSchedulesPage,
@@ -516,6 +599,9 @@ const debouncedTasksUpdate = debounce(function(tasks) {
   pageTasks = tasks;
   if (currentPage === 'tasks' && pageRenderers.tasks) {
     try { updateTasksView(); } catch(err) { console.warn('SSE tasks update error:', err); }
+  }
+  if (currentPage === 'overview' && pageRenderers.overview) {
+    try { updateDashboard(); } catch(err) { console.warn('SSE dashboard update error:', err); }
   }
   // errors 数据随任务终态变化，跟随任务事件去抖刷新（原实现每 SSE 事件直接请求，形成风暴）
   if (currentPage === 'tasks') loadErrors();
@@ -588,14 +674,33 @@ function connectSSE() {
     sseConnected = false;
     document.querySelector('.health-dot') && (document.querySelector('.health-dot').style.background = 'var(--red)');
     sseSource.close();
-    // 无条件尝试刷新 JWT（无 2 分钟窗口限制）；刷新失败且本地有 token → 会话失效，弹认证框
+    // 尝试刷新 JWT；刷新失败时用 auth/check 区分「服务器不可达（暂时故障，静默重连）」与「会话确实失效（弹认证框）」
     API._tryRefreshJWT().then(ok => {
-      if (!ok && localStorage.getItem('tmd_jwt_token')) {
-        showAuthDialog('Session expired - please re-authenticate');
+      if (ok) {
+        sseReconnectDelay = Math.min(sseReconnectDelay * 2, 30000);
+        sseReconnectTimer = setTimeout(connectSSE, sseReconnectDelay);
         return;
       }
-      sseReconnectDelay = Math.min(sseReconnectDelay * 2, 30000);
-      sseReconnectTimer = setTimeout(connectSSE, sseReconnectDelay);
+      const jwt = localStorage.getItem('tmd_jwt_token');
+      if (!jwt) {
+        // 无 token：登录前静默重连，避免反复弹框
+        sseReconnectTimer = setTimeout(connectSSE, sseReconnectDelay);
+        return;
+      }
+      // auth/check 带旧 token 探测：网络错误 = 服务器暂时不可达 → 静默重连；401 = 会话失效 → 弹框
+      fetch(apiBase() + '/api/v1/auth/check', { headers: { 'Authorization': 'Bearer ' + jwt } })
+        .then(res => {
+          if (res.status === 401) {
+            showAuthDialog('Session expired - please re-authenticate');
+            return;
+          }
+          sseReconnectDelay = Math.min(sseReconnectDelay * 2, 30000);
+          sseReconnectTimer = setTimeout(connectSSE, sseReconnectDelay);
+        })
+        .catch(() => {
+          sseReconnectDelay = Math.min(sseReconnectDelay * 2, 30000);
+          sseReconnectTimer = setTimeout(connectSSE, sseReconnectDelay);
+        });
     });
   };
 }
@@ -636,7 +741,7 @@ function renderTasksPage(container) {
       </div>
     </div>
     <div class="card mb-4" id="errors-panel">
-      <div class="card-header" onclick="toggleErrorsPanel()" style="cursor:pointer;user-select:none">
+      <div class="card-header" onclick="toggleErrorsPanel()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleErrorsPanel()}" tabindex="0" role="button" aria-expanded="false" id="errors-panel-toggle" style="cursor:pointer;user-select:none">
         <span id="errors-panel-title">Failed Records</span>
         <span id="errors-panel-badge" style="margin-left:auto"></span>
         <span id="errors-panel-arrow" style="margin-left:8px;transition:transform .2s">▶</span>
@@ -706,6 +811,96 @@ function renderTasksPage(container) {
   }).catch(() => { /* SSE 断开时静默，页面保持空态 */ });
 }
 
+function renderTaskActions(t, { canCancel, canRetry, canDelete }) {
+  return `
+          ${(t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled') ? '<button class="btn btn-xs btn-ghost" onclick="showTaskDetail(\'' + jsEsc(t.task_id) + '\')" title="View"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>' : ''}
+          ${canCancel ? '<button class="btn btn-xs btn-ghost" onclick="doCancelTask(\'' + jsEsc(t.task_id) + '\')" title="Cancel"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>' : ''}
+          ${canRetry ? '<button class="btn btn-xs btn-ghost" onclick="doRetryTask(\'' + jsEsc(t.task_id) + '\')" title="Retry"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button>' : ''}
+          ${canDelete ? '<button class="btn btn-xs btn-ghost" onclick="doDeleteTask(\'' + jsEsc(t.task_id) + '\')" title="Delete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>' : ''}`;
+}
+
+function renderTaskRow(t) {
+  const p = t.progress || {};
+  const pct = getTaskProgressPercent(t);
+  const barClass = p.stage === 'completed' ? 'completed' : (t.status === 'failed' ? 'failed' : (t.status === 'running' ? 'pulsing' : ''));
+  const stageText = getStageText(p.stage);
+  const target = getTaskTarget(t);
+  const canCancel = t.status === 'queued' || t.status === 'running';
+  const canRetry = t.status === 'failed' || t.status === 'cancelled';
+  const canDelete = t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled';
+
+  return `<tr data-status="${t.status}" data-task-id="${jsEsc(t.task_id || t.id || '')}">
+      <td>${taskTypeIcon(t.type)}</td>
+      <td><span class="mono">${esc(t.task_id || t.id)}</span><div class="text-sm text-muted">${esc(taskTypeName(t.type))}${target ? ' - ' + esc(target) : ''}</div></td>
+      <td><span class="badge badge-${safeTaskStatus(t.status)}">${esc(t.status)}</span></td>
+      <td>
+        <div class="progress-bar-wrap"><div class="progress-bar-fill ${barClass}" style="width:${pct}%"></div></div>
+        <div class="progress-detail">
+          <span>${pct}%${stageText}</span>
+          ${p.current ? '<span> &middot; ' + esc(p.current) + '</span>' : ''}
+          ${p.failed ? '<span class="fail"> &middot; ' + esc(p.failed) + ' failed</span>' : ''}
+        </div>
+      </td>
+      <td class="task-time-cell">
+        <div class="text-sm">${relativeTime(t.created_at)}</div>
+        ${t.started_at && t.ended_at ? '<div class="text-sm text-muted">' + formatDuration(t.started_at, t.ended_at) + '</div>' : ''}
+      </td>
+      <td>
+        <div class="task-actions" data-state="${canCancel}/${canRetry}/${canDelete}">${renderTaskActions(t, { canCancel, canRetry, canDelete })}</div>
+      </td>
+    </tr>`;
+}
+
+// 增量更新单行的动态部分（badge/进度/时间/操作按钮），静态部分（type/ID/target）不重建
+function updateTaskRowDynamic(tr, t) {
+  const p = t.progress || {};
+  const pct = getTaskProgressPercent(t);
+
+  if (tr.dataset.status !== t.status) tr.dataset.status = t.status;
+
+  const badge = tr.querySelector('.badge');
+  if (badge) {
+    const cls = 'badge badge-' + safeTaskStatus(t.status);
+    if (badge.className !== cls) badge.className = cls;
+    if (badge.textContent !== t.status) badge.textContent = t.status;
+  }
+
+  const barClass = p.stage === 'completed' ? 'completed' : (t.status === 'failed' ? 'failed' : (t.status === 'running' ? 'pulsing' : ''));
+  const fill = tr.querySelector('.progress-bar-fill');
+  if (fill) {
+    fill.style.width = pct + '%';
+    const cls = 'progress-bar-fill ' + barClass;
+    if (fill.className !== cls) fill.className = cls;
+  }
+
+  const detail = tr.querySelector('.progress-detail');
+  if (detail) {
+    const stageText = getStageText(p.stage);
+    let html = '<span>' + pct + '%' + esc(stageText) + '</span>';
+    if (p.current) html += '<span> &middot; ' + esc(p.current) + '</span>';
+    if (p.failed) html += '<span class="fail"> &middot; ' + esc(p.failed) + ' failed</span>';
+    if (detail.innerHTML !== html) detail.innerHTML = html;
+  }
+
+  // 相对时间会过期，纳入增量更新
+  const timeCell = tr.querySelector('.task-time-cell');
+  if (timeCell) {
+    const html = '<div class="text-sm">' + relativeTime(t.created_at) + '</div>' + (t.started_at && t.ended_at ? '<div class="text-sm text-muted">' + formatDuration(t.started_at, t.ended_at) + '</div>' : '');
+    if (timeCell.innerHTML !== html) timeCell.innerHTML = html;
+  }
+
+  // 操作按钮集随状态变化，变化时才重建
+  const canCancel = t.status === 'queued' || t.status === 'running';
+  const canRetry = t.status === 'failed' || t.status === 'cancelled';
+  const canDelete = t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled';
+  const stateKey = canCancel + '/' + canRetry + '/' + canDelete;
+  const actions = tr.querySelector('.task-actions');
+  if (actions && actions.dataset.state !== stateKey) {
+    actions.dataset.state = stateKey;
+    actions.innerHTML = renderTaskActions(t, { canCancel, canRetry, canDelete });
+  }
+}
+
 function updateTasksView() {
   const tasks = pageTasks;
   // Stats
@@ -718,7 +913,7 @@ function updateTasksView() {
   const statsEl = document.getElementById('task-stats');
   if (statsEl) statsEl.innerHTML = statsHtml;
 
-  // Table
+  // Table：keyed 增量（SSE 高频快照只 patch 动态部分，不整表重建）
   const tbody = document.getElementById('task-table-body');
   const empty = document.getElementById('task-empty');
   if (!tbody) return;
@@ -730,43 +925,25 @@ function updateTasksView() {
   }
   if (empty) empty.style.display = 'none';
 
-  tbody.innerHTML = tasks.map(t => {
-    const p = t.progress || {};
-    const r = t.result || {};
-    const pct = getTaskProgressPercent(t);
-    const barClass = p.stage === 'completed' ? 'completed' : (t.status === 'failed' ? 'failed' : (t.status === 'running' ? 'pulsing' : ''));
-    const stageText = getStageText(p.stage);
-    const target = getTaskTarget(t);
-    const canCancel = t.status === 'queued' || t.status === 'running';
-    const canRetry = t.status === 'failed' || t.status === 'cancelled';
-    const canDelete = t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled';
-
-    return `<tr data-status="${t.status}">
-      <td>${taskTypeIcon(t.type)}</td>
-      <td><span class="mono">${esc(t.task_id || t.id)}</span><div class="text-sm text-muted">${taskTypeName(t.type)}${target ? ' - ' + esc(target) : ''}</div></td>
-      <td><span class="badge badge-${safeTaskStatus(t.status)}">${esc(t.status)}</span></td>
-      <td>
-        <div class="progress-bar-wrap"><div class="progress-bar-fill ${barClass}" style="width:${pct}%"></div></div>
-        <div class="progress-detail">
-          <span>${pct}%${stageText}</span>
-          ${p.current ? '<span> &middot; ' + esc(p.current) + '</span>' : ''}
-          ${p.failed ? '<span class="fail"> &middot; ' + esc(p.failed) + ' failed</span>' : ''}
-        </div>
-      </td>
-      <td>
-        <div class="text-sm">${relativeTime(t.created_at)}</div>
-        ${t.started_at && t.ended_at ? '<div class="text-sm text-muted">' + formatDuration(t.started_at, t.ended_at) + '</div>' : ''}
-      </td>
-      <td>
-        <div class="task-actions">
-          ${(t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled') ? '<button class="btn btn-xs btn-ghost" onclick="showTaskDetail(\'' + jsEsc(t.task_id) + '\')" title="View"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>' : ''}
-          ${canCancel ? '<button class="btn btn-xs btn-ghost" onclick="doCancelTask(\'' + jsEsc(t.task_id) + '\')" title="Cancel"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>' : ''}
-          ${canRetry ? '<button class="btn btn-xs btn-ghost" onclick="doRetryTask(\'' + jsEsc(t.task_id) + '\')" title="Retry"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button>' : ''}
-          ${canDelete ? '<button class="btn btn-xs btn-ghost" onclick="doDeleteTask(\'' + jsEsc(t.task_id) + '\')" title="Delete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>' : ''}
-        </div>
-      </td>
-    </tr>`;
-  }).join('');
+  const existing = new Map();
+  tbody.querySelectorAll('tr[data-task-id]').forEach(tr => existing.set(tr.dataset.taskId, tr));
+  const seen = new Set();
+  for (const t of tasks) {
+    const id = String(t.task_id || t.id || '');
+    if (!id) continue;
+    seen.add(id);
+    const tr = existing.get(id);
+    if (tr) updateTaskRowDynamic(tr, t);
+    else {
+      const tmp = document.createElement('tbody');
+      tmp.innerHTML = renderTaskRow(t);
+      tbody.appendChild(tmp.firstElementChild);
+    }
+  }
+  // 移除已消失（取消/删除/清理）的行
+  for (const [id, tr] of existing) {
+    if (!seen.has(id)) tr.remove();
+  }
 }
 
 /* ---- Download Forms ---- */
@@ -922,8 +1099,8 @@ async function doUserDownload() {
   const follow_members = document.getElementById('dl-user-followmembers').checked;
   const skip_profile = document.getElementById('dl-user-skipprofile').checked;
   const no_retry = document.getElementById('dl-user-noretry').checked;
+  if (_actionBusy) { toast('A download is already in progress, please wait', 'warning'); return; }
   closeModal();
-  if (_actionBusy) return;
   _actionBusy = true;
   try {
     const r = await ENDPOINTS.userDownload(name, { auto_follow, follow_members, skip_profile, no_retry });
@@ -941,13 +1118,18 @@ async function doUserProfile() {
 }
 
 async function doUserMark() {
+  if (_actionBusy) { toast('A download is already in progress, please wait', 'warning'); return; }
   const name = document.getElementById('dl-user-name').value.trim();
   if (!name) return toast('Enter a screen name', 'warning');
   // 先读控件值再关弹窗（弹窗关闭后 DOM 已移除）
-  const ts = document.getElementById('dl-user-marktime').value || '';
+  const tsRaw = document.getElementById('dl-user-marktime').value || '';
+  // datetime-local 值（2026-08-03T14:30）非 RFC3339，需转 ISO 再提交（后端 Timestamp 只接受 RFC3339）
+  const ts = tsRaw ? new Date(tsRaw).toISOString() : '';
+  _actionBusy = true;
   closeModal();
   try { const r = await ENDPOINTS.userMark(name, ts || undefined); toast('Marked: ' + r.task_id, 'success'); }
   catch(e) { toast(e.message, 'error'); }
+  finally { _actionBusy = false; }
 }
 
 async function doListDownload() {
@@ -958,8 +1140,8 @@ async function doListDownload() {
   const follow_members = document.getElementById('dl-list-followmembers').checked;
   const skip_profile = document.getElementById('dl-list-skipprofile').checked;
   const no_retry = document.getElementById('dl-list-noretry').checked;
+  if (_actionBusy) { toast('A download is already in progress, please wait', 'warning'); return; }
   closeModal();
-  if (_actionBusy) return;
   _actionBusy = true;
   try {
     const r = await ENDPOINTS.listDownload(id, { auto_follow, follow_members, skip_profile, no_retry });
@@ -977,13 +1159,18 @@ async function doListProfile() {
 }
 
 async function doListMark() {
+  if (_actionBusy) { toast('A download is already in progress, please wait', 'warning'); return; }
   const id = document.getElementById('dl-list-id').value.trim();
   if (!id) return toast('Enter a list ID', 'warning');
   // 先读控件值再关弹窗（弹窗关闭后 DOM 已移除）
-  const ts = document.getElementById('dl-list-marktime').value || '';
+  const tsRaw = document.getElementById('dl-list-marktime').value || '';
+  // datetime-local 值非 RFC3339，需转 ISO 再提交
+  const ts = tsRaw ? new Date(tsRaw).toISOString() : '';
+  _actionBusy = true;
   closeModal();
   try { const r = await ENDPOINTS.listMark(id, ts || undefined); toast('Marked: ' + r.task_id, 'success'); }
   catch(e) { toast(e.message, 'error'); }
+  finally { _actionBusy = false; }
 }
 
 async function doFollowingDownload() {
@@ -994,8 +1181,8 @@ async function doFollowingDownload() {
   const follow_members = document.getElementById('dl-foll-followmembers').checked;
   const skip_profile = document.getElementById('dl-foll-skipprofile').checked;
   const no_retry = document.getElementById('dl-foll-noretry').checked;
+  if (_actionBusy) { toast('A download is already in progress, please wait', 'warning'); return; }
   closeModal();
-  if (_actionBusy) return;
   _actionBusy = true;
   try {
     const r = await ENDPOINTS.userFollowingDL(name, { auto_follow, follow_members, skip_profile, no_retry });
@@ -1005,13 +1192,18 @@ async function doFollowingDownload() {
 }
 
 async function doFollowingMark() {
+  if (_actionBusy) { toast('A download is already in progress, please wait', 'warning'); return; }
   const name = document.getElementById('dl-foll-name').value.trim();
   if (!name) return toast('Enter a screen name', 'warning');
   // 先读控件值再关弹窗（弹窗关闭后 DOM 已移除）
-  const ts = document.getElementById('dl-foll-marktime').value || '';
+  const tsRaw = document.getElementById('dl-foll-marktime').value || '';
+  // datetime-local 值非 RFC3339，需转 ISO 再提交
+  const ts = tsRaw ? new Date(tsRaw).toISOString() : '';
+  _actionBusy = true;
   closeModal();
   try { const r = await ENDPOINTS.userFollowingMark(name, ts || undefined); toast('Marked: ' + r.task_id, 'success'); }
   catch(e) { toast(e.message, 'error'); }
+  finally { _actionBusy = false; }
 }
 
 async function doBatchDownload() {
@@ -1024,8 +1216,8 @@ async function doBatchDownload() {
   const follow_members = document.getElementById('dl-batch-followmembers').checked;
   const skip_profile = document.getElementById('dl-batch-skipprofile').checked;
   const no_retry = document.getElementById('dl-batch-noretry').checked;
+  if (_actionBusy) { toast('A download is already in progress, please wait', 'warning'); return; }
   closeModal();
-  if (_actionBusy) return;
   _actionBusy = true;
   try {
     const r = await ENDPOINTS.batchDownload({
@@ -1056,8 +1248,8 @@ async function doJSONFileDownload() {
   if (!files.length && !paths.length) return toast('Select files or enter at least one path', 'warning');
   // 先读控件值再关弹窗（弹窗关闭后 DOM 已移除）
   const no_retry = document.getElementById('dl-json-noretry').checked;
+  if (_actionBusy) { toast('A download is already in progress, please wait', 'warning'); return; }
   closeModal();
-  if (_actionBusy) return;
   _actionBusy = true;
   try {
     if (files.length) {
@@ -1082,8 +1274,8 @@ async function doJSONFolderDownload() {
   if (!files.length && !paths.length) return toast('Select files or enter at least one path', 'warning');
   // 先读控件值再关弹窗（弹窗关闭后 DOM 已移除）
   const no_retry = document.getElementById('dl-json-noretry').checked;
+  if (_actionBusy) { toast('A download is already in progress, please wait', 'warning'); return; }
   closeModal();
-  if (_actionBusy) return;
   _actionBusy = true;
   try {
     if (files.length) {
@@ -1137,7 +1329,7 @@ async function showTaskDetail(id) {
   const pct = getTaskProgressPercent(task);
 
   // Timeline
-  const fmt = (t) => t ? new Date(t).toLocaleString() : '-';
+  const fmt = (t) => { if (!t) return '-'; const d = new Date(t); return isNaN(d.getTime()) ? '-' : d.toLocaleString(); };
   const started = task.started_at ? fmt(task.started_at) : null;
   const ended = task.ended_at ? fmt(task.ended_at) : null;
   const dur = (task.started_at && task.ended_at) ? formatDuration(task.started_at, task.ended_at) : null;
@@ -1162,12 +1354,12 @@ async function showTaskDetail(id) {
       <div style="background:${bg};border-radius:var(--radius);padding:12px 16px;margin-bottom:16px">
         <div style="font-weight:600;font-size:15px">${esc(target || task.task_id)}</div>
         <div class="text-sm text-muted" style="margin-top:4px">${esc(task.task_id)}</div>
-        <div style="margin-top:8px"><span class="badge badge-${safeTaskStatus(task.status)}">${esc(task.status)}</span> <span class="text-sm text-muted">${taskTypeName(task.type)}</span></div>
+        <div style="margin-top:8px"><span class="badge badge-${safeTaskStatus(task.status)}">${esc(task.status)}</span> <span class="text-sm text-muted">${esc(taskTypeName(task.type))}</span></div>
       </div>
 
       <div class="section-header"><h3>Progress</h3></div>
       <div class="progress-bar-wrap mb-2"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
-      <div class="progress-detail"><span>${pct}%${getStageText(task.progress?.stage)}</span></div>
+      <div class="progress-detail"><span>${pct}%${esc(getStageText(task.progress?.stage))}</span></div>
 
       <div class="section-header mt-4"><h3>Timeline</h3></div>
       <div class="card" style="padding:12px 16px">
@@ -1199,19 +1391,21 @@ async function cancelAllQueued() {
 
 // Quick download with Twitter URL parsing
 async function handleQuickDownload() {
+  if (_actionBusy) { toast('A download is already in progress, please wait', 'warning'); return; }
   const input = document.getElementById('quick-dl-input');
   if (!input) return;
   let value = input.value.trim();
   if (!value) return toast('Enter a Twitter username or URL', 'warning');
 
   // Parse list link: twitter.com/i/lists/123 or x.com/i/lists/123
-  const listMatch = value.match(/https?:\/\/(?:twitter\.com|x\.com)\/i\/lists\/(\d+)/);
-  if (listMatch) {
+  if (value.match(/https?:\/\/(?:twitter\.com|x\.com)\/i\/lists\/(\d+)/)) {
+    _actionBusy = true;
     try {
-      await ENDPOINTS.listDownload(listMatch[1], { auto_follow: true });
+      await ENDPOINTS.listDownload(value.match(/https?:\/\/(?:twitter\.com|x\.com)\/i\/lists\/(\d+)/)[1], { auto_follow: true });
       toast('List download task created', 'success');
       input.value = '';
     } catch(e) { toast(e.message, 'error'); }
+    finally { _actionBusy = false; }
     return;
   }
 
@@ -1229,11 +1423,13 @@ async function handleQuickDownload() {
   if (value.startsWith('@')) value = value.slice(1);
   if (!value) return toast('Could not extract username from URL', 'warning');
 
+  _actionBusy = true;
   try {
     await ENDPOINTS.userDownload(value, { auto_follow: true });
     toast('Download task created for @' + value, 'success');
     input.value = '';
   } catch(e) { toast(e.message, 'error'); }
+  finally { _actionBusy = false; }
 }
 
 /* ---- Data Page ---- */
@@ -1292,11 +1488,11 @@ function sortDB(tab, field) {
   loadDBTab(tab, 0);
 }
 
-// 排序表头：当前排序字段加箭头指示
+// 排序表头：当前排序字段加箭头指示；键盘可达（Tab 聚焦 + Enter 排序）
 function sortableTh(label, tab, field, sort) {
   const active = sort && sort.by === field;
   const arrow = active ? (sort.order === 'asc' ? ' &uarr;' : ' &darr;') : '';
-  return `<th style="cursor:pointer" onclick="sortDB('${tab}','${field}')">${label}${arrow}</th>`;
+  return `<th style="cursor:pointer" tabindex="0" role="button" onclick="sortDB('${tab}','${field}')" onkeydown="if(event.key==='Enter'){sortDB('${tab}','${field}')}">${label}${arrow}</th>`;
 }
 
 async function loadDBTab(tab, page) {
@@ -1436,7 +1632,7 @@ async function renderDBEntities(content, page, search, ep, label, sort) {
     ${renderPagination(page, totalPages, total, ep)}`;
 }
 
-// 实体/链接详情 + 删除（user-entities / list-entities / user-links）
+// 实体/链接详情 + 编辑 + 删除（user-entities / list-entities / user-links）
 async function viewEntityDetail(ep, id) {
   const getters = {
     'user-entities': ENDPOINTS.dbUserEntity,
@@ -1448,18 +1644,74 @@ async function viewEntityDetail(ep, id) {
     'list-entities': 'List Entity',
     'user-links': 'User Link'
   };
+  // 各类型的可编辑字段（对齐后端 PATCH 契约）
+  const editFields = {
+    'user-entities': [
+      { key: 'name', label: 'Name' },
+      { key: 'parent_dir', label: 'Parent Dir' },
+      { key: 'media_count', label: 'Media Count', numeric: true },
+      { key: 'latest_release_time', label: 'Latest Release Time' }
+    ],
+    'list-entities': [
+      { key: 'name', label: 'Name' },
+      { key: 'parent_dir', label: 'Parent Dir' }
+    ],
+    'user-links': [
+      { key: 'name', label: 'Name' }
+    ]
+  };
+  const updaters = {
+    'user-entities': ENDPOINTS.dbUserEntityUpdate,
+    'list-entities': ENDPOINTS.dbListEntityUpdate,
+    'user-links': ENDPOINTS.dbUserLinkUpdate
+  };
   try {
     const item = await getters[ep](id);
     if (!item) return toast('Not found', 'error');
-    const fields = Object.entries(item).map(([k, v]) =>
-      `<div class="form-row"><div class="form-group"><label>${esc(k)}</label><code>${esc(v == null ? '-' : String(v))}</code></div></div>`
+    const readonlyFields = Object.entries(item).filter(([k]) => !(editFields[ep] || []).some(f => f.key === k))
+      .map(([k, v]) =>
+        `<div class="form-row"><div class="form-group"><label>${esc(k)}</label><code>${esc(v == null ? '-' : String(v))}</code></div></div>`
+      ).join('');
+    const inputs = (editFields[ep] || []).map(f =>
+      `<div class="form-group"><label>${esc(f.label)}</label><input type="${f.numeric ? 'number' : 'text'}" id="ent-edit-${esc(f.key)}" value="${esc(item[f.key] == null ? '' : String(item[f.key]))}"></div>`
     ).join('');
     openModal(`
       <div class="modal-header"><h2>${labels[ep]}: ${esc(item.name || item.id)}</h2><button class="btn btn-ghost btn-sm" onclick="closeModal()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
-      <div class="modal-body">${fields}</div>
+      <div class="modal-body">
+        <div class="form-row">${inputs}</div>
+        ${readonlyFields}
+      </div>
       <div class="modal-footer">
         <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+        <button class="btn btn-primary" onclick="saveEntityEdit('${ep}', '${jsEsc(id)}')">Save</button>
+        <button class="btn btn-danger" onclick="if(confirm('Delete ${labels[ep]} ${jsEsc(item.name || item.id)}?')){deleteEntity('${ep}', '${jsEsc(id)}').then(()=>closeModal())}">Delete</button>
       </div>`);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// 保存实体/链接编辑（仅提交可编辑字段，PATCH 后端契约）
+async function saveEntityEdit(ep, id) {
+  const updaters = {
+    'user-entities': ENDPOINTS.dbUserEntityUpdate,
+    'list-entities': ENDPOINTS.dbListEntityUpdate,
+    'user-links': ENDPOINTS.dbUserLinkUpdate
+  };
+  const editFields = {
+    'user-entities': ['name', 'parent_dir', 'media_count', 'latest_release_time'],
+    'list-entities': ['name', 'parent_dir'],
+    'user-links': ['name']
+  };
+  const data = {};
+  for (const key of (editFields[ep] || [])) {
+    const el = document.getElementById('ent-edit-' + key);
+    if (!el) continue;
+    data[key] = key === 'media_count' ? (el.value === '' ? undefined : Number(el.value)) : el.value;
+  }
+  closeModal();
+  try {
+    await updaters[ep](id, data);
+    toast('Saved', 'success');
+    loadDBTab(currentDBTab());
   } catch(e) { toast(e.message, 'error'); }
 }
 
@@ -1493,7 +1745,7 @@ async function renderDBPrevNames(content, page, search, sort) {
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr>${sortableTh('ID', 'prevnames', 'id', sort)}${sortableTh('Screen Name', 'prevnames', 'screen_name', sort)}${sortableTh('Name', 'prevnames', 'name', sort)}${sortableTh('Date', 'prevnames', 'record_date', sort)}</tr></thead>
+        <thead><tr>${sortableTh('ID', 'prevnames', 'id', sort)}${sortableTh('User ID', 'prevnames', 'user_id', sort)}${sortableTh('Screen Name', 'prevnames', 'screen_name', sort)}${sortableTh('Name', 'prevnames', 'name', sort)}${sortableTh('Date', 'prevnames', 'record_date', sort)}<th>Current Name</th></tr></thead>
         <tbody>${items.map(i => `<tr><td><span class="mono">${esc(i.id||'')}</span></td><td>${esc(i.user_id||'')}</td><td>${esc(i.screen_name||'')}</td><td>${esc(i.name||'')}</td><td class="text-sm">${esc(i.record_date||'')}</td><td>${i.current_screen_name ? esc(i.current_screen_name) : '-'}</td></tr>`).join('')}</tbody>
       </table>
     </div>
@@ -1561,6 +1813,10 @@ async function viewUserDetail(id) {
       ENDPOINTS.dbUserLinks(id)
     ]);
     if (!u) return toast('User not found', 'error');
+    // 后端快捷端点返回 PaginatedResponse {data,total,...}，取 .data 数组
+    const prevArr = (prev && prev.data) || [];
+    const entsArr = (ents && ents.data) || [];
+    const linksArr = (links && links.data) || [];
 
     openModal(`
       <div class="modal-header"><h2>User: ${esc(u.screen_name)}</h2><button class="btn btn-ghost btn-sm" onclick="closeModal()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
@@ -1573,12 +1829,12 @@ async function viewUserDetail(id) {
           <div class="form-group"><label>Screen Name</label><input type="text" id="db-edit-screenname" value="${esc(u.screen_name)}"></div>
           <div class="form-group"><label>Name</label><input type="text" id="db-edit-name" value="${esc(u.name)}"></div>
         </div>
-        ${prev.length ? `<div class="section-header mt-4"><h3>Previous Names (${prev.length})</h3></div>
-        <table><thead><tr><th>Screen Name</th><th>Name</th><th>Date</th></tr></thead><tbody>${prev.map(p => `<tr><td>${esc(p.screen_name)}</td><td>${esc(p.name)}</td><td class="text-sm">${esc(p.record_date)}</td></tr>`).join('')}</tbody></table>` : ''}
-        ${ents.length ? `<div class="section-header mt-4"><h3>Entities (${ents.length})</h3></div>
-        <table><thead><tr><th>Name</th><th>Parent Dir</th><th>Media</th></tr></thead><tbody>${ents.map(e => `<tr><td>${esc(e.name)}</td><td>${esc(e.parent_dir)}</td><td>${e.media_count||0}</td></tr>`).join('')}</tbody></table>` : ''}
-        ${links.length ? `<div class="section-header mt-4"><h3>Links (${links.length})</h3></div>
-        <table><thead><tr><th>Name</th><th>Parent Entity</th></tr></thead><tbody>${links.map(l => `<tr><td>${esc(l.name)}</td><td>${esc(l.parent_lst_entity_name||l.parent_lst_entity_id||'-')}</td></tr>`).join('')}</tbody></table>` : ''}
+        ${prevArr.length ? `<div class="section-header mt-4"><h3>Previous Names (${prevArr.length})</h3></div>
+        <table><thead><tr><th>Screen Name</th><th>Name</th><th>Date</th></tr></thead><tbody>${prevArr.map(p => `<tr><td>${esc(p.screen_name)}</td><td>${esc(p.name)}</td><td class="text-sm">${esc(p.record_date)}</td></tr>`).join('')}</tbody></table>` : ''}
+        ${entsArr.length ? `<div class="section-header mt-4"><h3>Entities (${entsArr.length})</h3></div>
+        <table><thead><tr><th>Name</th><th>Parent Dir</th><th>Media</th></tr></thead><tbody>${entsArr.map(e => `<tr><td>${esc(e.name)}</td><td>${esc(e.parent_dir)}</td><td>${e.media_count||0}</td></tr>`).join('')}</tbody></table>` : ''}
+        ${linksArr.length ? `<div class="section-header mt-4"><h3>Links (${linksArr.length})</h3></div>
+        <table><thead><tr><th>Name</th><th>Parent Entity</th></tr></thead><tbody>${linksArr.map(l => `<tr><td>${esc(l.name)}</td><td>${esc(l.parent_lst_entity_name||l.parent_lst_entity_id||'-')}</td></tr>`).join('')}</tbody></table>` : ''}
       </div>
       <div class="modal-footer">
         <button class="btn btn-ghost" onclick="closeModal()">Close</button>
@@ -1603,6 +1859,8 @@ async function viewListDetail(id) {
   try {
     const l = await ENDPOINTS.dbList(id);
     const ents = await ENDPOINTS.dbListEntities(id);
+    // 后端快捷端点返回 PaginatedResponse {data,total,...}，取 .data 数组
+    const entsArr = (ents && ents.data) || [];
 
     openModal(`
       <div class="modal-header"><h2>List: ${esc(l.name)}</h2><button class="btn btn-ghost btn-sm" onclick="closeModal()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
@@ -1612,8 +1870,8 @@ async function viewListDetail(id) {
           <div class="form-group"><label>Owner ID</label><code>${esc(l.owner_user_id)}</code></div>
         </div>
         <div class="form-group"><label>Name</label><input type="text" id="db-edit-listname" value="${esc(l.name)}"></div>
-        ${ents.length ? `<div class="section-header mt-4"><h3>Entities (${ents.length})</h3></div>
-        <table><thead><tr><th>Name</th><th>Parent Dir</th></tr></thead><tbody>${ents.map(e => `<tr><td>${esc(e.name)}</td><td>${esc(e.parent_dir)}</td></tr>`).join('')}</tbody></table>` : ''}
+        ${entsArr.length ? `<div class="section-header mt-4"><h3>Entities (${entsArr.length})</h3></div>
+        <table><thead><tr><th>Name</th><th>Parent Dir</th></tr></thead><tbody>${entsArr.map(e => `<tr><td>${esc(e.name)}</td><td>${esc(e.parent_dir)}</td></tr>`).join('')}</tbody></table>` : ''}
       </div>
       <div class="modal-footer">
         <button class="btn btn-ghost" onclick="closeModal()">Close</button>
@@ -1677,7 +1935,7 @@ function updateSchedulesView() {
     last_run_at: e.last_run_at || e.last_run,
     next_run_at: e.next_run_at || e.next_run,
     last_error: e.last_error,
-    consecutive_failures: e.consecutive_failures
+    consecutive_failures: e.consecutive_failures || 0
   }));
 
   const stats = {
@@ -1726,7 +1984,7 @@ function updateSchedulesView() {
         <div class="schedule-item-title">
           <span class="schedule-status-dot ${e.enabled ? 'enabled' : 'disabled'}"></span>
           <strong>${esc(e.name || e.target || 'Unnamed')}</strong>
-          <span class="badge badge-${e.type === 'list' ? 'running' : 'queued'}">${esc(e.type)}</span>
+          <span class="badge badge-queued">${esc(e.type)}</span>
           ${e.consecutive_failures > 0 ? `<span class="badge badge-failed">${e.consecutive_failures} failures</span>` : ''}
           ${!hasId ? '<span class="badge badge-failed" title="Missing id field">no id</span>' : ''}
         </div>
@@ -1889,7 +2147,7 @@ async function saveNewSchedule() {
 
 async function toggleSchedule(id, enabled) {
   try { await ENDPOINTS.setScheduleEnabled(id, enabled); loadSchedules(); }
-  catch(e) { toast(e.message, 'error'); }
+  catch(e) { toast(e.message, 'error'); loadSchedules(); } // 失败回滚到服务器真实状态（乐观切换的补偿）
 }
 
 async function triggerSchedule(id) {
@@ -1941,15 +2199,15 @@ async function editSchedule(id) {
           <label>Target</label>
           <input type="text" id="sched-edit-target" value="${esc(ent.target||'')}">
         </div>
-        <div class="form-group" id="sched-edit-target-mixed" ${ent.type !== 'mixed' ? 'style="display:none"' : ''}>
+        <div class="form-group" id="sched-edit-mixed-users-group" ${ent.type !== 'mixed' ? 'style="display:none"' : ''}>
           <label>Users (one per line)</label>
           <textarea id="sched-edit-mixed-users" rows="2">${esc((ent.users||[]).join('\n'))}</textarea>
         </div>
-        <div class="form-group" id="sched-edit-mixed-lists" ${ent.type !== 'mixed' ? 'style="display:none"' : ''}>
+        <div class="form-group" id="sched-edit-mixed-lists-group" ${ent.type !== 'mixed' ? 'style="display:none"' : ''}>
           <label>Lists (one per line)</label>
           <textarea id="sched-edit-mixed-lists" rows="2">${esc((ent.lists||[]).join('\n'))}</textarea>
         </div>
-        <div class="form-group" id="sched-edit-mixed-foll" ${ent.type !== 'mixed' ? 'style="display:none"' : ''}>
+        <div class="form-group" id="sched-edit-mixed-foll-group" ${ent.type !== 'mixed' ? 'style="display:none"' : ''}>
           <label>Following (one per line)</label>
           <textarea id="sched-edit-mixed-foll" rows="2">${esc((ent.following_names||[]).join('\n'))}</textarea>
         </div>
@@ -2015,8 +2273,9 @@ function toggleEditSchedTargetFields() {
   const type = document.getElementById('sched-edit-type').value;
   document.getElementById('sched-edit-target-single').style.display = type === 'mixed' ? 'none' : '';
   document.getElementById('sched-edit-target-mixed').style.display = type !== 'mixed' ? 'none' : '';
-  document.getElementById('sched-edit-mixed-lists').style.display = type !== 'mixed' ? 'none' : '';
-  document.getElementById('sched-edit-mixed-foll').style.display = type !== 'mixed' ? 'none' : '';
+  document.getElementById('sched-edit-mixed-users-group').style.display = type !== 'mixed' ? 'none' : '';
+  document.getElementById('sched-edit-mixed-lists-group').style.display = type !== 'mixed' ? 'none' : '';
+  document.getElementById('sched-edit-mixed-foll-group').style.display = type !== 'mixed' ? 'none' : '';
 }
 
 async function deleteSchedule(id) {
@@ -2071,6 +2330,7 @@ function renderSystemPage(container) {
 }
 
 async function loadSystemData() {
+  let loadErr = null;
   try {
     const [health, queue] = await Promise.all([ENDPOINTS.health(), ENDPOINTS.queueStatus()]);
     const qEl = document.getElementById('sys-queue');
@@ -2083,11 +2343,11 @@ async function loadSystemData() {
         ['Detached', queue.detached_jobs || 0, 'cancelled'],
       ].map(([k, v, cls]) => `<div class="stat-card ${cls}"><div class="stat-value">${v}</div><div class="stat-label">${k}</div></div>`).join('');
     }
-  } catch(e) { /* ignore */ }
+  } catch(e) { loadErr = e; }
   // 队列状态加载失败时给出可重试提示（原实现静默吞错）
   const qEl = document.getElementById('sys-queue');
   if (qEl && !qEl.children.length) {
-    qEl.innerHTML = '<div class="empty-state"><p>Failed to load queue status: ' + esc(e && e.message || 'unknown error') + '</p><button class="btn btn-ghost btn-sm mt-2" onclick="loadSystemData()">Retry</button></div>';
+    qEl.innerHTML = '<div class="empty-state"><p>Failed to load queue status: ' + esc(loadErr && loadErr.message || 'unknown error') + '</p><button class="btn btn-ghost btn-sm mt-2" onclick="loadSystemData()">Retry</button></div>';
   }
 }
 
@@ -2120,20 +2380,22 @@ async function renderConfigFields(content) {
           ${f.type === 'number'
             ? `<input type="number" id="cf-${esc(f.name)}" value="${esc(f.value||f.default||'')}" placeholder="${esc(f.placeholder||'')}">`
             : f.type === 'password'
-              ? `<input type="password" id="cf-${esc(f.name)}" value="" placeholder="${esc(f.value||'')}">`
+              ? `<input type="password" id="cf-${esc(f.name)}" value="" placeholder="${f.value ? 'Leave empty to keep current' : ''}" autocomplete="off">`
               : `<input type="text" id="cf-${esc(f.name)}" value="${esc(f.value||f.default||'')}" placeholder="${esc(f.placeholder||'')}">`
           }
           ${f.prompt ? '<div class="hint">' + esc(f.prompt) + '</div>' : ''}
         </div>`).join('')}
       <div class="form-actions">
-        <button class="btn btn-primary" onclick="saveConfigFields()">Save</button>
+        <button class="btn btn-primary" id="btn-save-config-fields" onclick="saveConfigFields()">Save</button>
       </div>
     </div>`;
 }
 
 async function saveConfigFields() {
+  const saveBtn = document.getElementById('btn-save-config-fields');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
   try {
-    await ENDPOINTS.configFields();
+    const r = await ENDPOINTS.configFields();
     const fields = r.fields || [];
     const data = {};
     let clearingApiKey = false;
@@ -2160,6 +2422,7 @@ async function saveConfigFields() {
     }
     toast('Configuration saved (restart to apply)', 'success');
   } catch(e) { toast(e.message, 'error'); }
+  finally { if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; } }
 }
 
 async function renderConfigRaw(content) {
@@ -2171,45 +2434,75 @@ async function renderConfigRaw(content) {
       <div class="hint">Path: ${esc(r.path)}</div>
     </div>
     <div class="form-actions">
-      <button class="btn btn-primary" onclick="saveConfigRaw()">Save</button>
+      <button class="btn btn-primary" id="btn-save-config-raw" onclick="saveConfigRaw()">Save</button>
     </div>`;
 }
 
 async function saveConfigRaw() {
   const el = document.getElementById('config-raw-text');
   if (!el) return toast('Configuration form not found', 'error');
+  const saveBtn = document.getElementById('btn-save-config-raw');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
   const text = el.value;
   try { await ENDPOINTS.saveConfigRaw(text); toast('Configuration saved (restart to apply)', 'success'); }
   catch(e) { toast(e.message, 'error'); }
+  finally { if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; } }
 }
 
 async function renderCookies(content) {
   let cookies;
-  try { cookies = await ENDPOINTS.cookies(); } catch(e) { cookies = []; }
+  try { cookies = await ENDPOINTS.cookies(); }
+  catch(e) {
+    // 网络/认证错误不伪装成空配置
+    toast(e.message, 'error');
+    content.innerHTML = '<div class="empty-state"><p>Failed to load cookies: ' + esc(e.message) + '</p><button class="btn btn-ghost btn-sm mt-2" onclick="loadConfigTab(\'cookies\')">Retry</button></div>';
+    return;
+  }
   const cArr = cookies && Array.isArray(cookies) ? cookies : (cookies && cookies.items) || [];
   content.innerHTML = `
     <div id="cookies-form">
       ${cArr.length === 0 ? '<p class="text-muted">No additional cookies configured.</p>' : ''}
       ${cArr.map((c, i) => `
         <div class="form-row" style="margin-bottom:8px">
-          <input type="text" id="cookie-at-${i}" value="${esc(c.auth_token||'')}" placeholder="auth_token" style="font-family:var(--font-mono);font-size:12px">
-          <input type="text" id="cookie-ct0-${i}" value="${esc(c.ct0||'')}" placeholder="ct0" style="font-family:var(--font-mono);font-size:12px">
+          <input type="text" id="cookie-at-${i}" value="${esc(c.auth_token||'')}" data-orig-at="${esc(c.auth_token||'')}" placeholder="auth_token (empty = keep current)" style="font-family:var(--font-mono);font-size:12px">
+          <input type="text" id="cookie-ct0-${i}" value="${esc(c.ct0||'')}" data-orig-ct0="${esc(c.ct0||'')}" placeholder="ct0 (empty = keep current)" style="font-family:var(--font-mono);font-size:12px">
         </div>`).join('')}
       <div class="form-actions">
         <button class="btn btn-ghost btn-sm" onclick="addCookieRow()">+ Add Account</button>
-        <button class="btn btn-primary" onclick="saveCookies()">Save</button>
+        <button class="btn btn-primary" id="btn-save-cookies" onclick="saveCookies()">Save</button>
       </div>
     </div>`;
 }
 
 async function saveCookies() {
-  const cArr = document.querySelectorAll('[id^="cookie-at-"]');
-  const cookies = Array.from(cArr).map((el, i) => ({
-    auth_token: el.value,
-    ct0: document.getElementById('cookie-ct0-' + i) ? document.getElementById('cookie-ct0-' + i).value : ''
-  }));
-  try { await ENDPOINTS.saveCookies(cookies); toast('Cookies saved', 'success'); }
+  const saveBtn = document.getElementById('btn-save-cookies');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
+  try {
+    const cArr = document.querySelectorAll('[id^="cookie-at-"]');
+    const cookies = [];
+    for (let i = 0; i < cArr.length; i++) {
+      const el = cArr[i];
+      const at = el.value;
+      const ct0El = document.getElementById('cookie-ct0-' + i);
+      const ct0 = ct0El ? ct0El.value : '';
+      const origAt = el.dataset.origAt || '';
+      const origCt0 = ct0El ? (ct0El.dataset.origCt0 || '') : '';
+      // 未修改的字段发 __KEEP_OLD__：后端按数组索引取原值（掩码值原样回传会被拒绝）
+      const keepAt = origAt !== '' && at === origAt;
+      const keepCt0 = origCt0 !== '' && ct0 === origCt0;
+      // 新增空行（无原始值且全空）忽略
+      if (origAt === '' && origCt0 === '' && !at.trim() && !ct0.trim()) continue;
+      if (!keepAt && !keepCt0 && !at.trim() && !ct0.trim()) {
+        toast('Account #' + (i + 1) + ': auth_token and ct0 cannot both be empty', 'error');
+        return;
+      }
+      cookies.push({ auth_token: keepAt ? '__KEEP_OLD__' : at, ct0: keepCt0 ? '__KEEP_OLD__' : ct0 });
+    }
+    if (!cookies.length) { toast('Nothing to save', 'warning'); return; }
+    await ENDPOINTS.saveCookies(cookies); toast('Cookies saved', 'success');
+  }
   catch(e) { toast(e.message, 'error'); }
+  finally { if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; } }
 }
 
 function addCookieRow() {
@@ -2272,8 +2565,8 @@ function renderSecurityEditor(content) {
         Enter it below to start a session.
       </p>
       <div class="flex gap-2 items-center" style="flex-wrap:wrap">
-        <input type="text" id="sec-api-key" style="flex:1;min-width:200px"
-          placeholder="Enter API Key" />
+        <input type="password" id="sec-api-key" style="flex:1;min-width:200px"
+          placeholder="Enter API Key" autocomplete="off" />
       </div>
       <div class="flex gap-2 mt-2">
         <button class="btn btn-primary btn-sm" onclick="saveSecKey()">Login &amp; Save</button>
@@ -2333,7 +2626,11 @@ async function refreshSecJWT() {
   const ok = await API._tryRefreshJWT();
   if (ok) {
     const expiry = localStorage.getItem('tmd_jwt_expiry');
-    const remaining = expiry ? Math.round((new Date(expiry) - new Date()) / 60000) : '?';
+    let remaining = '?';
+    if (expiry) {
+      const ms = new Date(expiry) - new Date();
+      remaining = isNaN(ms) ? '?' : Math.max(1, Math.round(ms / 60000));
+    }
     updateSecStatus(`✅ Session refreshed (expires in ~${remaining} min)`);
   } else {
     updateSecStatus('❌ Session refresh failed, please re-login');
@@ -2491,8 +2788,31 @@ async function exportLogs() {
   } catch(e) { toast(e.message, 'error'); }
 }
 
+// 日志行 HTML（loadLogsReplace/loadMoreLogs/SSE 追加共用）；tweet id 行加显式复制按钮
+function renderLogEntryHTML(clean, tweetId, color) {
+  let html = '<div class="log-entry" style="color:' + color + '"';
+  if (tweetId) html += ' data-tweet-id="' + tweetId + '"';
+  html += '>' + highlightLogTimestamp(esc(clean));
+  if (tweetId) html += ' <button class="log-copy-btn" onclick="copyLogTweetId(this)" title="Copy tweet ID" aria-label="Copy tweet ID">&#128203;</button>';
+  html += '</div>';
+  return html;
+}
+
+// 显式复制按钮触发（不再整行点击复制，避免框选误触覆盖剪贴板）
+function copyLogTweetId(btn) {
+  const entry = btn.closest('.log-entry');
+  const id = entry && entry.dataset.tweetId;
+  if (!id) return;
+  navigator.clipboard.writeText(id).then(() => {
+    toast('已复制推文 ID: ' + id, 'success');
+  }).catch(() => {
+    toast('复制失败，请手动选择文本复制', 'warning');
+  });
+}
+
 function setLogLevel() {
   _logPage = 1;
+  _logGen++; // 代际递增：丢弃在途 loadMore 旧响应
   // 先断开旧 SSE，避免 refresh 前旧流追加的行被 innerHTML 重置清掉（丢行窗口）
   disconnectLogSSE();
   refreshLogs();
@@ -2503,10 +2823,10 @@ function setLogDomain() {
   const sel = document.getElementById('log-domain');
   logDomain = sel ? sel.value : '';
   _logPage = 1;
-  // 先断开旧 SSE，避免丢行窗口
+  _logGen++; // 代际递增：丢弃在途 loadMore 旧响应
+  // 先断开旧 SSE，避免丢行窗口；await 刷新完成再重连，防止 REST 重建前 SSE 行被清掉
   disconnectLogSSE();
-  refreshLogs();
-  connectLogSSE();
+  refreshLogs().then(() => connectLogSSE());
 }
 
 function toggleLogPause() {
@@ -2521,10 +2841,10 @@ function toggleLogPause() {
 
 function doLogSearch() {
   _logPage = 1;
+  _logGen++; // 代际递增：丢弃在途 loadMore 旧响应
   // 先断开旧 SSE，避免 refresh 前旧流追加的行被 innerHTML 重置清掉（丢行窗口）
   disconnectLogSSE();
-  refreshLogs();
-  connectLogSSE();
+  refreshLogs().then(() => connectLogSSE());
 }
 
 function scrollLogToBottom() {
@@ -2538,6 +2858,7 @@ function scrollLogToBottom() {
 }
 
 async function refreshLogs() {
+  _logGen++; // 代际递增：丢弃在途 loadMore 旧响应
   _logPage = 1;
   _logLoadingMore = false;
   _prependedCount = 0; // 重置前置页计数
@@ -2559,7 +2880,7 @@ async function loadLogsReplace() {
       const clean = stripAnsi(l);
       const color = getLogLineColor(clean);
       const tweetId = getTweetId(clean);
-      return '<div class="log-entry" style="color:' + color + '"' + (tweetId ? ' data-tweet-id="' + tweetId + '"' : '') + '>' + highlightLogTimestamp(esc(clean)) + '</div>';
+      return renderLogEntryHTML(clean, tweetId, color);
     }).join('');
     // 仅在自动滚动开启时滚到底部（关闭时保留用户阅读位置）
     if (logAutoScroll) stream.scrollTop = stream.scrollHeight;
@@ -2572,6 +2893,7 @@ async function loadMoreLogs() {
   if (_logLoadingMore) return;
   if (_logPage >= _logTotalPages) return;
   _logLoadingMore = true;
+  const gen = _logGen; // 捕获发起时代际：期间筛选/刷新变化则丢弃响应
   const stream = document.getElementById('log-stream');
   if (!stream) { _logLoadingMore = false; return; }
   const nextPage = _logPage + 1;
@@ -2580,13 +2902,18 @@ async function loadMoreLogs() {
   const q = document.getElementById('log-search-input') ? document.getElementById('log-search-input').value.trim() : '';
   try {
     const r = await ENDPOINTS.logs({ page: nextPage, pageSize: 200, level: level || undefined, domain: logDomain || undefined, q: q || undefined });
+    if (gen !== _logGen) {
+      // 期间发生了筛选/刷新：丢弃旧响应并回退页码
+      _logPage--;
+      return;
+    }
     const lines = (r.logs || []).reverse();
     const oldHeight = stream.scrollHeight;
     const newLines = lines.map(l => {
       const clean = stripAnsi(l);
       const color = getLogLineColor(clean);
       const tweetId = getTweetId(clean);
-      return '<div class="log-entry" style="color:' + color + '"' + (tweetId ? ' data-tweet-id="' + tweetId + '"' : '') + '>' + highlightLogTimestamp(esc(clean)) + '</div>';
+      return renderLogEntryHTML(clean, tweetId, color);
     }).join('');
     stream.innerHTML = newLines + stream.innerHTML;
     // 记录前置页行数：SSE trim 时保留，防止刚加载的旧页被立即削掉
@@ -2595,6 +2922,7 @@ async function loadMoreLogs() {
     stream.scrollTop = (stream.scrollHeight - oldHeight) + stream.scrollTop;
     _logTotalPages = r.totalPages || 1;
   } catch(e) {
+    if (gen !== _logGen) return; // 代际过期：不回退（刷新已重置页码）
     _logPage--;
   } finally {
     _logLoadingMore = false;
@@ -2646,15 +2974,12 @@ function connectLogSSE() {
       _logBatch = [];
       const frag = document.createDocumentFragment();
       for (const raw of lines) {
-        const el = document.createElement('div');
-        el.className = 'log-entry';
         const clean = stripAnsi(raw);
         const tweetId = getTweetId(clean);
-        if (tweetId) el.dataset.tweetId = tweetId;
         const color = getLogLineColor(clean);
-        el.innerHTML = highlightLogTimestamp(esc(clean));
-        el.style.color = color;
-        frag.appendChild(el);
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = renderLogEntryHTML(clean, tweetId, color);
+        frag.appendChild(wrapper.firstChild);
       }
       stream.appendChild(frag);
       if (logAutoScroll) {
@@ -2697,20 +3022,6 @@ function disconnectLogSSE() {
   if (_logSSETimer) { clearTimeout(_logSSETimer); _logSSETimer = null; }
   _logReconnectAttempts = 0;
 }
-
-// 点击日志行任意位置复制推文 ID
-document.addEventListener('click', (e) => {
-  const entry = e.target.closest('.log-entry[data-tweet-id]');
-  if (!entry) return;
-  const id = entry.dataset.tweetId;
-  if (id) {
-    navigator.clipboard.writeText(id).then(() => {
-      toast('已复制推文 ID: ' + id, 'success');
-    }).catch(() => {
-      toast('复制失败，请手动选择文本复制', 'warning');
-    });
-  }
-});
 
 /* ---- Sidebar ---- */
 function toggleSidebar() {
@@ -2856,8 +3167,16 @@ async function submitAuthKey() {
 // Proactive auth check: if the server requires auth and no key is stored,
 // show the auth dialog. Called from DOMContentLoaded.
 async function checkAuth() {
-  // If JWT already exists and is valid, this will succeed silently
-  if (localStorage.getItem('tmd_jwt_token')) return;
+  const jwt = localStorage.getItem('tmd_jwt_token');
+  if (jwt) {
+    // 有 token 也做一次轻量校验（auth/check）：过期/损坏的 token 启动即引导重新登录，
+    // 而不是等首个 API 请求 401 才弹框。401 由 _fetch 统一处理（清 token + 弹框）。
+    try {
+      await ENDPOINTS.authCheck();
+    } catch(e) { /* 401 已由 _fetch 弹框；网络失败不阻塞启动 */ }
+    connectSSE();
+    return;
+  }
   try {
     await ENDPOINTS.tasks();
     // 无需认证或 JWT 有效，建立推迟的 SSE 连接
@@ -2884,7 +3203,7 @@ window.addEventListener('unhandledrejection', (e) => {
 });
 document.addEventListener('DOMContentLoaded', () => {
   // Determine initial page
-  const path = location.pathname.replace(/^\//, '') || 'tasks';
+  const path = location.pathname.replace(/^\//, '') || 'overview';
   currentPage = path;
 
   // Proactive JWT refresh

@@ -36,6 +36,11 @@
   --danger: #dc2626; /* 认证失败/过期提示红字（原引用未定义） */
 
   --green: #16a34a;
+
+  /* Animation durations (unified; loop animations keep literals) */
+  --duration-fast: .12s;
+  --duration-normal: .2s;
+  --duration-slow: .35s;
   --green-bg: #f0fdf4;
   --green-border: #bbf7d0;
   --red: #dc2626;
@@ -94,7 +99,7 @@ a:hover { text-decoration: underline; }
 .sidebar-logo svg { flex-shrink: 0; }
 .sidebar-subtitle {
   font-size: 11px;
-  color: #71717a;
+  color: #a1a1aa;
   margin-top: 2px;
   padding-left: 32px;
 }
@@ -102,7 +107,7 @@ a:hover { text-decoration: underline; }
 .nav-section-label {
   font-size: 11px;
   font-weight: 600;
-  color: #71717a;
+  color: #a1a1aa;
   text-transform: uppercase;
   letter-spacing: .6px;
   padding: 16px 12px 6px;
@@ -117,7 +122,7 @@ a:hover { text-decoration: underline; }
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
-  transition: all .12s ease;
+  transition: all var(--duration-fast) ease;
   border: none;
   background: none;
   width: 100%;
@@ -130,7 +135,7 @@ a:hover { text-decoration: underline; }
   padding: 12px;
   border-top: 1px solid #27272a;
   font-size: 11px;
-  color: #71717a;
+  color: #a1a1aa;
   text-align: center;
 }
 
@@ -237,7 +242,7 @@ a:hover { text-decoration: underline; }
   border-radius: var(--radius);
   padding: 16px;
   text-align: center;
-  transition: transform .15s ease, box-shadow .15s ease;
+  transition: transform var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
 }
 .stat-card:hover {
   transform: translateY(-2px);
@@ -280,7 +285,7 @@ a:hover { text-decoration: underline; }
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all .12s ease;
+  transition: all var(--duration-fast) ease;
   white-space: nowrap;
   line-height: 1.4;
 }
@@ -338,7 +343,7 @@ input[type="text"], input[type="url"], input[type="number"], input[type="passwor
   border-radius: var(--radius-sm);
   background: var(--bg-card);
   color: var(--text);
-  transition: border-color .12s ease;
+  transition: border-color var(--duration-fast) ease;
   outline: none;
 }
 input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
@@ -413,7 +418,7 @@ tbody tr[data-status="cancelled"] td:first-child { border-left-color: #d4d4d8; }
 .progress-bar-fill {
   height: 100%;
   border-radius: 999px;
-  transition: width .3s ease;
+  transition: width var(--duration-slow) ease;
   background: linear-gradient(90deg, var(--accent), #3b82f6);
 }
 .progress-bar-fill.completed { background: var(--green); }
@@ -446,7 +451,7 @@ tbody tr[data-status="cancelled"] td:first-child { border-left-color: #d4d4d8; }
   align-items: flex-start;
   gap: 10px;
   font-size: 13px;
-  animation: toastIn .2s ease;
+  animation: toastIn var(--duration-normal) ease;
   max-width: 100%;
 }
 .toast-success { border-left: 3px solid var(--green); }
@@ -472,7 +477,7 @@ tbody tr[data-status="cancelled"] td:first-child { border-left-color: #d4d4d8; }
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: fadeIn .12s ease;
+  animation: fadeIn var(--duration-fast) ease;
 }
 .modal {
   background: var(--bg-card);
@@ -483,7 +488,7 @@ tbody tr[data-status="cancelled"] td:first-child { border-left-color: #d4d4d8; }
   max-height: 80vh;
   display: flex;
   flex-direction: column;
-  animation: modalIn .15s ease;
+  animation: modalIn var(--duration-fast) ease;
 }
 .modal-header {
   padding: 16px 20px;
@@ -519,7 +524,7 @@ tbody tr[data-status="cancelled"] td:first-child { border-left-color: #d4d4d8; }
   color: var(--text-secondary);
   cursor: pointer;
   border-bottom: 2px solid transparent;
-  transition: all .12s ease;
+  transition: all var(--duration-fast) ease;
   background: none;
   border-top: none;
   border-left: none;
@@ -624,7 +629,7 @@ pre { font-family: var(--font-mono); font-size: 12px; background: var(--sidebar-
   border: 1px solid var(--border);
   border-radius: var(--radius);
   margin-bottom: 8px;
-  transition: background .12s ease;
+  transition: background var(--duration-fast) ease;
 }
 .schedule-item:hover { background: var(--bg-hover); }
 .schedule-item.has-failure { border-left: 3px solid var(--red); }
@@ -661,13 +666,14 @@ pre { font-family: var(--font-mono); font-size: 12px; background: var(--sidebar-
   flex-shrink: 0;
 }
 .toggle input { opacity: 0; width: 0; height: 0; }
+.toggle:focus-within .toggle-slider { outline: 2px solid var(--accent); outline-offset: 2px; }
 .toggle-slider {
   position: absolute;
   cursor: pointer;
   inset: 0;
   background: #d4d4d8;
   border-radius: 999px;
-  transition: .2s;
+  transition: var(--duration-normal);
 }
 .toggle-slider::before {
   content: "";
@@ -678,7 +684,7 @@ pre { font-family: var(--font-mono); font-size: 12px; background: var(--sidebar-
   bottom: 2px;
   background: #fff;
   border-radius: 50%;
-  transition: .2s;
+  transition: var(--duration-normal);
 }
 .toggle input:checked + .toggle-slider { background: var(--accent); }
 .toggle input:checked + .toggle-slider::before { transform: translateX(16px); }
@@ -714,7 +720,7 @@ pre { font-family: var(--font-mono); font-size: 12px; background: var(--sidebar-
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-all;
-  transition: background .1s ease;
+  transition: background var(--duration-fast) ease;
 }
 .log-entry:hover { background: #fafafa; }
 .log-entry .log-timestamp { color: var(--info); font-weight: 500; }
@@ -752,7 +758,7 @@ pre { font-family: var(--font-mono); font-size: 12px; background: var(--sidebar-
   border-radius: var(--radius-sm);
   cursor: pointer;
   box-shadow: var(--shadow);
-  transition: all .12s ease;
+  transition: all var(--duration-fast) ease;
   white-space: nowrap;
   line-height: 1.4;
 }
@@ -778,5 +784,34 @@ pre { font-family: var(--font-mono); font-size: 12px; background: var(--sidebar-
   .card-header { flex-direction: column; align-items: flex-start; gap: 8px; }
   .filter-bar { flex-direction: column; }
   .filter-bar input { min-width: auto; }
+  /* 触控目标最小 36px（WCAG 2.5.5 建议 ≥44px，36 为紧凑折中） */
+  .btn-xs { min-width: 36px; min-height: 36px; padding: 6px 10px; }
+  .btn-sm { min-height: 38px; }
+  .page-btn { min-width: 36px; min-height: 36px; }
 }
 
+
+/* Log entry copy button（显式复制，避免整行点击误触） */
+.log-copy-btn {
+  margin-left: 8px;
+  padding: 0 4px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  opacity: .6;
+}
+.log-copy-btn:hover { opacity: 1; }
+
+/* Modal 内表格横向滚动（窄屏不裁剪） */
+.modal-body .table-wrap { overflow-x: auto; }
+.modal-body table { display: block; overflow-x: auto; max-width: 100%; }
+
+/* ---- Reduced Motion ---- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0s !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
