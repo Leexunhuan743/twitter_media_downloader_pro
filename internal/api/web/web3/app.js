@@ -1228,7 +1228,8 @@ async function renderConfigFields(body) {
         <div class="form-group">
           <label>${esc(f.name || f.key || '')}</label>
           ${f.type === 'password'
-            ? `<input type="password" id="cf-${i}" data-fname="${esc(f.name)}" autocomplete="off" placeholder="${f.value ? 'Leave empty to keep current' : ''}">`
+            ? `<div><input type="password" id="cf-${i}" data-fname="${esc(f.name)}" autocomplete="off" placeholder="${f.value ? 'Leave empty to keep current' : ''}">
+               ${f.name === 'api_key' && f.value ? `<label class="checkbox-line mt-1" style="font-size:12px"><input type="checkbox" id="cf-clear-${i}"> Clear API key (disables auth)</label>` : ''}</div>`
             : f.type === 'number'
               ? `<input type="number" id="cf-${i}" data-fname="${esc(f.name)}" value="${esc(f.value ?? '')}">`
               : f.type === 'bool'
@@ -1252,8 +1253,9 @@ async function saveConfigFields() {
     if (el.type === 'password') {
       const v = el.value.trim();
       if (v === '') {
-        // api_key 清空 = 关闭认证（__CLEAR__）；其它密码字段留空 = 保留旧值（不发送）
-        if (fname === 'api_key') data[fname] = '__CLEAR__';
+        // 留空 = 保留旧值（不发）；仅当显式勾选 Clear 复选框才清空 api_key（关闭认证）
+        const clearBox = document.getElementById('cf-clear-' + el.id.slice(3));
+        if (clearBox && clearBox.checked) data[fname] = '__CLEAR__';
         continue;
       }
       if (v.includes('•••')) return toast('Password field: masked placeholder detected, leave empty to keep current', 'warn');
