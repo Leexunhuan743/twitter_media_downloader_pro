@@ -918,17 +918,10 @@ const pages = {
           </div>
         </div>
         <div class="stat-card">
-          <div class="stat-icon" style="color: var(--info);">🚀</div>
+          <div class="stat-icon" style="color: var(--info);">📊</div>
           <div class="stat-content">
-            <div class="stat-value" data-overview-stat="running">${taskStats.running}</div>
-            <div class="stat-label">运行中任务</div>
-          </div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon" style="color: var(--success);">✓</div>
-          <div class="stat-content">
-            <div class="stat-value" data-overview-stat="completed">${taskStats.completed}</div>
-            <div class="stat-label">已完成任务</div>
+            <div class="stat-value" data-overview-stat="tasks" style="font-size:16px;line-height:1.4">运行中 ${taskStats.running} · 排队 ${taskStats.queued} · 完成 ${taskStats.completed}</div>
+            <div class="stat-label">任务统计（运行 / 排队 / 完成）</div>
           </div>
         </div>
         <div class="stat-card">
@@ -6193,11 +6186,8 @@ function getTaskStats(tasks) {
 function updateOverviewStatsUI(tasks) {
   const taskStats = getTaskStats(tasks);
 
-  const runningStat = document.querySelector('[data-overview-stat="running"]');
-  if (runningStat) runningStat.textContent = taskStats.running;
-
-  const completedStat = document.querySelector('[data-overview-stat="completed"]');
-  if (completedStat) completedStat.textContent = taskStats.completed;
+  const tasksStat = document.querySelector('[data-overview-stat="tasks"]');
+  if (tasksStat) tasksStat.textContent = `运行中 ${taskStats.running} · 排队 ${taskStats.queued} · 完成 ${taskStats.completed}`;
 }
 
 // Update overview page recent tasks without full re-render
