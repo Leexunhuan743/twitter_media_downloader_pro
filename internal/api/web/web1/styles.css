@@ -16,8 +16,10 @@
   /* Text */
   --text-primary: #e6e8ec;
   --text-secondary: #8b949e;
-  --text-tertiary: #6e7681;
-  --text-disabled: #484f58;
+  /* 对比度 ≥4.5:1（WCAG AA）：#8b949e 在 --bg-primary 上 ≈6.4:1，在 --bg-tertiary 上 ≈5.5:1 */
+  --text-tertiary: #8b949e;
+  /* 对比度 ≈4.25:1，仅用于禁用态（装饰性），不再用于关键信息 */
+  --text-disabled: #6e7681;
   
   /* Accent */
   --accent-primary: #2f81f7;
