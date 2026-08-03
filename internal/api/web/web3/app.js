@@ -1271,7 +1271,8 @@ function settingsSwitch(tab) {
   const labels = { config: 'Configuration', cookies: 'Cookies', security: 'Security', theme: 'Theme', raw: 'Raw YAML' };
   document.querySelectorAll('#settingsTabs .tab').forEach(t => t.classList.toggle('active', t.textContent === labels[tab]));
   const body = document.getElementById('settingsBody');
-  const wrap = (renderFn) => { const p = renderFn(body); if (p && p.then) p.then(() => { if (gen !== settingsGen) body.innerHTML = ''; }).catch(() => {}); };
+  // 旧响应晚到时：重新渲染当前 tab 自愈（不可清空 body——会误删新 tab 内容）
+  const wrap = (renderFn) => { const p = renderFn(body); if (p && p.then) p.then(() => { if (gen !== settingsGen) settingsSwitch(settingsTab); }).catch(() => {}); };
   if (tab === 'config') wrap(renderConfigFields);
   else if (tab === 'cookies') wrap(renderCookies);
   else if (tab === 'security') wrap(renderSecurity);
@@ -1405,9 +1406,10 @@ async function saveCookies() {
     const keepCt0 = origCt0 !== '' && ct0 === origCt0;
     if (origAt === '' && origCt0 === '' && !at.trim() && !ct0.trim()) continue;
     if (!keepAt && !keepCt0 && !at.trim() && !ct0.trim()) return toast('Account #' + (i + 1) + ': auth_token and ct0 cannot both be empty', 'warn');
-    // 携带服务器 index（后端 __KEEP_OLD__ 按 index 优先，位置兜底）
+    // 携带服务器 index（后端 __KEEP_OLD__ 按 index 优先，位置兜底）；*int 需数字
     const idx = atEl.dataset.index || ct0El?.dataset.index || '';
-    list.push({ index: idx || undefined, auth_token: keepAt ? '__KEEP_OLD__' : at, ct0: keepCt0 ? '__KEEP_OLD__' : ct0 });
+    const idxNum = idx === '' ? undefined : Number(idx);
+    list.push({ index: idxNum, auth_token: keepAt ? '__KEEP_OLD__' : at, ct0: keepCt0 ? '__KEEP_OLD__' : ct0 });
   }
   if (!list.length) return toast('Nothing to save', 'warn');
   try { await ENDPOINTS.saveCookies(list); toast('Cookies saved', 'ok'); settingsSwitch('cookies'); } catch (e) { toast(e.message, 'err'); }
@@ -1524,9 +1526,7 @@ function logLineInWindow(clean) {
 }
 
 function renderLogs(root) {
-  // 重新进入页面时重置过滤/暂停状态（避免旧条件隐形残留，控件显示与请求条件一致）
-  logState.level = ''; logState.domain = ''; logState.q = ''; logState.startTime = ''; logState.endTime = ''; logState.paused = false;
-  logState.page = 1; logState.gen++;
+  // 重新进入页面：控件回填当前过滤状态（与 web2 一致——保留用户筛选意图，显示与请求条件一致）
   root.innerHTML = `
     <div class="page">
       <div class="page-header">
@@ -1542,7 +1542,7 @@ function renderLogs(root) {
           <div class="tabs" id="logStatsBar" style="display:none"></div>
           <select id="logLevel" onchange="logApplyFilters()">
             <option value="">All levels</option>
-            ${['DEBUG','INFO','WARN','ERROR','FATA'].map(l => `<option value="${l}">${l}</option>`).join('')}
+            ${['debug','info','warn','error','fatal'].map(l => `<option value="${l}">${l.toUpperCase()}</option>`).join('')}
           </select>
           <select id="logDomain" onchange="logApplyFilters()">
             <option value="">All domains</option>
@@ -1658,8 +1658,10 @@ async function logLoadMore() {
 function trimLogStream() {
   const stream = document.getElementById('logStream');
   if (!stream) return;
-  // 固定上限：前置页（loadMore 插入的旧行）不随次数膨胀 DOM 总量
-  while (stream.children.length > LOG_MAX_LINES) stream.removeChild(stream.firstChild);
+  // 上限 = 基础行数 + 前置页配额（最多再借 LOG_MAX_LINES）：既保护 loadMore 旧页不被立即削掉，
+  // 又避免 prepended 随回翻次数无限膨胀 DOM
+  const cap = LOG_MAX_LINES + Math.min(logState.prepended, LOG_MAX_LINES);
+  while (stream.children.length > cap) stream.removeChild(stream.firstChild);
 }
 
 function toggleLogPause() {
@@ -1713,6 +1715,15 @@ function disconnectLogSSE() {
   logReconnectAttempts = 0;
 }
 function logStartStream() {
+  // 控件回填当前过滤状态（重进页面后显示与请求条件一致，不丢用户筛选意图）
+  const lvl = document.getElementById('logLevel'); if (lvl) lvl.value = logState.level;
+  const dom = document.getElementById('logDomain'); if (dom) dom.value = logState.domain;
+  const q = document.getElementById('logQ'); if (q) q.value = logState.q;
+  const toLocalInput = (iso) => { const d = new Date(iso); if (isNaN(d.getTime())) return ''; const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()); };
+  const st = document.getElementById('logStart'); if (st) st.value = toLocalInput(logState.startTime);
+  const en = document.getElementById('logEnd'); if (en) en.value = toLocalInput(logState.endTime);
+  const pauseBtn = document.getElementById('logPauseBtn');
+  if (pauseBtn) pauseBtn.textContent = logState.paused ? 'Resume' : 'Pause';
   logRefresh();
   logLoadStats();
   const stream = document.getElementById('logStream');
