@@ -7,14 +7,11 @@
 /* ---------- 工具函数 ---------- */
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const jsEsc = (s) => String(s ?? '').replace(/[\\'"\n\r&<>]/g, (c) => ({ '\\': '\\\\', "'": "\\'", '"': '&quot;', '\n': '\\n', '\r': '', '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 const throttle = (fn, ms) => { let last = 0, t; return (...a) => { const now = Date.now(); clearTimeout(t); if (now - last >= ms) { last = now; fn(...a); } else { t = setTimeout(() => fn(...a), ms - (now - last)); } }; };
-const fmtBytes = (n) => { if (n == null || isNaN(n)) return '-'; if (n < 1024) return n + ' B'; const u = ['KB','MB','GB','TB']; let i = -1; do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1); return n.toFixed(1) + ' ' + u[i]; };
 const fmtDur = (a, b) => { const ms = new Date(b) - new Date(a); if (isNaN(ms) || ms < 0) return ''; const s = Math.floor(ms / 1000); if (s < 60) return s + 's'; const m = Math.floor(s / 60); return m + 'm ' + (s % 60) + 's'; };
 const relTime = (t) => { if (!t) return '-'; const d = new Date(t); if (isNaN(d.getTime())) return '-'; const s = (Date.now() - d.getTime()) / 1000; if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + 'm ago'; if (s < 86400) return Math.floor(s / 3600) + 'h ago'; return Math.floor(s / 86400) + 'd ago'; };
 const stripAnsi = (s) => String(s ?? '').replace(/\x1b\[[0-9;]*m/g, '');
 const toRFC3339 = (v) => { if (!v) return ''; const t = new Date(v); return isNaN(t.getTime()) ? '' : t.toISOString().replace(/\.\d{3}Z$/, 'Z'); };
-const css = (el, style) => Object.assign(el.style, style);
 
 /* ---------- API 层 ---------- */
 const apiBase = () => ((window.TMD_DEV_BASE) || '');
@@ -37,7 +34,8 @@ const API = {
   async request(method, url, body, options = {}) {
     const headers = { ...(options.headers || {}) };
     const jwt = localStorage.getItem('tmd_jwt_token');
-    if (jwt) headers['Authorization'] = 'Bearer ' + jwt;
+    // 仅在调用方未显式提供 Authorization 时附加 JWT（如 authLogin 用输入的 key 探测）
+    if (jwt && !headers['Authorization']) headers['Authorization'] = 'Bearer ' + jwt;
     if (body && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
 
     const res = await fetchWithTimeout(url, { method, headers, body: body instanceof FormData ? body : (body ? JSON.stringify(body) : undefined) });
@@ -130,24 +128,17 @@ const ENDPOINTS = {
   retryTask: (id) => API.post(apiBase() + '/api/v1/tasks/' + encodeURIComponent(id) + '/retry'),
   deleteTask: (id) => API.delete(apiBase() + '/api/v1/tasks/' + encodeURIComponent(id)),
   cancelAllQueued: () => API.post(apiBase() + '/api/v1/tasks/cancel-queued'),
-  taskStats: () => API.get(apiBase() + '/api/v1/tasks/stats'),
   // Downloads
-  quickDownload: (body) => API.post(apiBase() + '/api/v1/quick-download', body),
   userDownload: (name, opts) => API.post(apiBase() + '/api/v1/users/' + encodeURIComponent(name) + '/download', opts || {}),
   userProfile: (name) => API.post(apiBase() + '/api/v1/users/' + encodeURIComponent(name) + '/profile'),
   userFollowingDownload: (name, opts) => API.post(apiBase() + '/api/v1/users/' + encodeURIComponent(name) + '/following/download', opts || {}),
-  userFollowingProfile: (name) => API.post(apiBase() + '/api/v1/users/' + encodeURIComponent(name) + '/following/profile'),
-  userMark: (name, ts) => API.post(apiBase() + '/api/v1/users/' + encodeURIComponent(name) + '/mark', ts ? { timestamp: ts } : {}),
   listDownload: (id, opts) => API.post(apiBase() + '/api/v1/lists/' + encodeURIComponent(id) + '/download', opts || {}),
   listProfile: (id) => API.post(apiBase() + '/api/v1/lists/' + encodeURIComponent(id) + '/profile'),
-  listMark: (id, ts) => API.post(apiBase() + '/api/v1/lists/' + encodeURIComponent(id) + '/mark', ts ? { timestamp: ts } : {}),
-  followingDownload: (name, opts) => API.post(apiBase() + '/api/v1/following/' + encodeURIComponent(name) + '/download', opts || {}),
-  followingProfile: (name) => API.post(apiBase() + '/api/v1/following/' + encodeURIComponent(name) + '/profile'),
-  followingMark: (name, ts) => API.post(apiBase() + '/api/v1/following/' + encodeURIComponent(name) + '/mark', ts ? { timestamp: ts } : {}),
+  followingDownload: (name, opts) => API.post(apiBase() + '/api/v1/users/' + encodeURIComponent(name) + '/following/download', opts || {}),
   batchDownload: (body) => API.post(apiBase() + '/api/v1/batch/download', body),
   batchMark: (body) => API.post(apiBase() + '/api/v1/batch/mark', body),
-  jsonFile: (formData) => API.post(apiBase() + '/api/v1/json-file', formData),
-  jsonFolder: (formData) => API.post(apiBase() + '/api/v1/json-folder', formData),
+  jsonFile: (formData) => API.post(apiBase() + '/api/v1/json/file/download', formData),
+  jsonFolder: (body) => API.post(apiBase() + '/api/v1/json/folder/download', body),
   // Schedules
   schedules: () => API.get(apiBase() + '/api/v1/schedules'),
   schedulesRaw: () => API.get(apiBase() + '/api/v1/schedules/raw'),
@@ -191,7 +182,7 @@ const ENDPOINTS = {
   logStats: () => API.get(apiBase() + '/api/v1/logs/stats'),
   logExport: () => apiBase() + '/api/v1/logs/export',
   // Server
-  shutdown: () => API.post(apiBase() + '/api/v1/shutdown'),
+  shutdown: () => API.post(apiBase() + '/api/v1/server/shutdown'),
 };
 
 /* ---------- 状态 ---------- */
@@ -203,7 +194,6 @@ const state = {
   errors: null,
   schedules: [],
   sseConnected: false,
-  sidebarOpen: false,
 };
 const listeners = new Set();
 const setState = (patch) => { Object.assign(state, patch); listeners.forEach(fn => fn(state)); };
@@ -240,6 +230,7 @@ function openModal(html) {
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
   document.body.appendChild(overlay);
   currentModal = overlay;
+  document.body.style.overflow = 'hidden'; // 背景锁滚动
   const focusable = overlay.querySelector('input, select, textarea, button');
   if (focusable) setTimeout(() => focusable.focus(), 60);
 }
@@ -248,9 +239,25 @@ function closeModal() {
     const opener = currentModal._lastFocused;
     currentModal.remove();
     currentModal = null;
+    document.body.style.overflow = '';
     if (opener && opener.isConnected) opener.focus();
   }
 }
+// Esc 关闭弹窗/认证框；Tab 焦点陷阱（弹窗打开时循环约束在容器内）
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (currentModal) { closeModal(); return; }
+    if (document.getElementById('authOverlay').classList.contains('open')) { hideAuth(); return; }
+    return;
+  }
+  if (e.key !== 'Tab' || !currentModal) return;
+  const focusables = currentModal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+  if (!focusables.length) { e.preventDefault(); return; }
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
 
 /* ---------- Sidebar（移动端） ---------- */
 function openSidebar() { document.getElementById('sidebar').classList.add('open'); document.getElementById('sidebarOverlay').classList.add('open'); }
@@ -271,6 +278,11 @@ function showAuth(message) {
 function hideAuth() {
   _authDialogOpen = false;
   document.getElementById('authOverlay').classList.remove('open');
+  // 认证框关闭后若 SSE 已停止（无 token 暂停分支），恢复重连
+  if (!sseSource && !_authDialogOpen) {
+    sseReconnectDelay = 2000;
+    connectSSE();
+  }
 }
 async function submitAuth() {
   const key = document.getElementById('authKey').value.trim();
@@ -305,7 +317,8 @@ function getTaskPct(t) {
   if (p.stage === 'completed') return 100;
   if (p.stage === 'preparing') return 10;
   if (p.stage === 'finalizing') return 95;
-  if (p.percent != null) return Math.min(100, Math.max(0, Math.round(p.percent)));
+  // TaskProgress 无 percent 字段：用 completed/total 计算
+  if (p.completed != null && p.total > 0) return Math.min(100, Math.max(0, Math.round((p.completed / p.total) * 100)));
   const m = String(p.stage || '').match(/(\d+)\s*\/\s*(\d+)/);
   if (m) return Math.min(100, Math.round((+m[1] / +m[2]) * 100));
   return 5;
@@ -354,10 +367,12 @@ function normalizeEntry(item) {
     no_retry: !!item.no_retry,
   };
 }
-function schedFingerprint(item) { return JSON.stringify(normalizeEntry(item)); }
 function schedToForm(s) {
   const e = s.entry || s;
-  const [mode = 'interval', value = ''] = String(e.schedule || 'interval:1h').split(':');
+  const sch = String(e.schedule || 'interval:1h');
+  const colon = sch.indexOf(':');
+  const mode = colon === -1 ? 'interval' : sch.slice(0, colon);
+  const value = colon === -1 ? sch : sch.slice(colon + 1); // daily:07:00 保留完整时间
   return {
     id: e.id, type: e.type, target: e.target || '', name: e.name || '',
     users: e.users || [], lists: e.lists || [], following_names: e.following_names || [],
@@ -368,7 +383,6 @@ function schedToForm(s) {
 }
 
 /* ---------- Tasks 页 ---------- */
-let _taskForm = 'user';
 let _errorsData = null;
 function renderTasks(root) {
   root.innerHTML = `
@@ -437,7 +451,11 @@ function updateTasksUI() {
       const tbody = card.querySelector('tbody');
       const tmp = document.createElement('tbody');
       tmp.innerHTML = taskRowHTML(t);
-      tbody.appendChild(tmp.firstElementChild);
+      const node = tmp.firstElementChild;
+      // 快照按 created_at 倒序，新任务总是最新 → 插到首位（appendChild 会落到末尾造成顺序错乱）
+      const first = tbody.firstElementChild;
+      if (first) tbody.insertBefore(node, first);
+      else tbody.appendChild(node);
     }
   }
   for (const [id, tr] of existing) if (!seen.has(id)) tr.remove();
@@ -491,6 +509,7 @@ async function cancelAllQueued() { try { await ENDPOINTS.cancelAllQueued(); toas
 /* ---------- 任务表单 ---------- */
 const TASK_FORM_TABS = [
   { id: 'user', label: 'User', fields: ['name'] },
+  { id: 'profile', label: 'Profile', fields: ['name'] },
   { id: 'list', label: 'List', fields: ['listId'] },
   { id: 'following', label: 'Following', fields: ['name'] },
   { id: 'batch', label: 'Batch', fields: ['users', 'lists', 'following'] },
@@ -514,6 +533,7 @@ function openTaskForm() {
 function openTaskTypeForm(type) {
   const forms = {
     user: `<div class="form-group"><label>Screen Name</label><input type="text" id="tf-target" placeholder="@username"></div>`,
+    profile: `<div class="form-group"><label>Screen Name</label><input type="text" id="tf-target" placeholder="@username"></div>`,
     list: `<div class="form-group"><label>List ID</label><input type="text" id="tf-listid" placeholder="List ID (numeric)"></div>`,
     following: `<div class="form-group"><label>Screen Name</label><input type="text" id="tf-target" placeholder="@username"></div>`,
     batch: `<div class="form-group"><label>Users (one per line)</label><textarea id="tf-users"></textarea></div>
@@ -554,6 +574,9 @@ function checkedOpts() {
 function areaLines(id) { const v = document.getElementById(id)?.value || ''; return v.split('\n').map(s => s.trim()).filter(Boolean); }
 
 async function submitTaskForm(type) {
+  const submitBtn = [...document.querySelectorAll('.modal-footer .btn.primary')].find(b => b.textContent === 'Create' || b.textContent === 'Mark');
+  if (submitBtn && submitBtn.disabled) return;
+  if (submitBtn) submitBtn.disabled = true;
   const tsRaw = document.getElementById('tf-marktime')?.value || '';
   const ts = tsRaw ? toRFC3339(tsRaw) : undefined;
   try {
@@ -562,6 +585,11 @@ async function submitTaskForm(type) {
         const name = document.getElementById('tf-target').value.trim();
         if (!name) return toast('Enter a screen name', 'warn');
         await ENDPOINTS.userDownload(name, checkedOpts()); break;
+      }
+      case 'profile': {
+        const name = document.getElementById('tf-target').value.trim();
+        if (!name) return toast('Enter a screen name', 'warn');
+        await ENDPOINTS.userProfile(name); break;
       }
       case 'list': {
         const id = document.getElementById('tf-listid').value.trim();
@@ -573,8 +601,7 @@ async function submitTaskForm(type) {
         const name = document.getElementById('tf-target').value.trim();
         if (!name) return toast('Enter a screen name', 'warn');
         await ENDPOINTS.followingDownload(name, checkedOpts()); break;
-      }
-      case 'batch': {
+      }      case 'batch': {
         const users = areaLines('tf-users'), lists = areaLines('tf-lists'), following_names = areaLines('tf-following');
         if (!users.length && !lists.length && !following_names.length) return toast('Enter at least one target', 'warn');
         await ENDPOINTS.batchDownload({ users, lists, following_names, ...checkedOpts() }); break;
@@ -590,7 +617,7 @@ async function submitTaskForm(type) {
       case 'jsonFolder': {
         const path = document.getElementById('tf-path').value.trim();
         if (!path) return toast('Enter a folder path', 'warn');
-        await ENDPOINTS.jsonFolder({ folder_path: path }); break;
+        await ENDPOINTS.jsonFolder({ paths: [path] }); break;
       }
       case 'mark': {
         const users = areaLines('tf-users'), lists = areaLines('tf-lists'), following_names = areaLines('tf-following');
@@ -601,6 +628,7 @@ async function submitTaskForm(type) {
     closeModal();
     toast(type === 'mark' ? 'Mark task created' : 'Download task created', 'ok');
   } catch (e) { toast(e.message, 'err'); }
+  finally { if (submitBtn) submitBtn.disabled = false; }
 }
 
 /* ---------- 失败记录 ---------- */
@@ -705,6 +733,7 @@ const DB_EDIT_FIELDS = {
   'user-links': [{ key: 'name', label: 'Name' }],
 };
 let dbState = { tab: 'users', page: 1, pageSize: 50, q: '', sortBy: 'id', sortOrder: 'desc', total: 0, totalPages: 1, data: [], loading: false };
+let dbGen = 0;
 
 function renderData(root) {
   root.innerHTML = `
@@ -740,6 +769,7 @@ function dbRefresh() { dbState.page = 1; dbLoad(); }
 
 async function dbLoad() {
   const tab = DB_TABS.find(t => t.id === dbState.tab);
+  const gen = ++dbGen; // 代际递增：快速切 tab/翻页/搜索时旧响应作废
   dbState.loading = true;
   const wrap = document.getElementById('dbTableWrap');
   if (wrap) wrap.innerHTML = '<div class="loading-block"><div class="spinner"></div></div>';
@@ -747,14 +777,18 @@ async function dbLoad() {
     const params = new URLSearchParams({ page: dbState.page, pageSize: dbState.pageSize, sortBy: dbState.sortBy, sortOrder: dbState.sortOrder });
     if (dbState.q) params.append('q', dbState.q);
     const r = await ENDPOINTS[tab.endpoint](params.toString());
+    if (gen !== dbGen) return; // 期间发生了新的加载，丢弃过期响应
     dbState.data = r.data || [];
     dbState.total = r.total || 0;
     dbState.totalPages = r.totalPages || 1;
     renderDBTable();
     renderDBPagination();
   } catch (e) {
+    if (gen !== dbGen) return;
     if (wrap) wrap.innerHTML = '<div class="empty"><div class="empty-title">Load failed</div><div class="empty-desc">' + esc(e.message) + '</div></div>';
-  } finally { dbState.loading = false; }
+  } finally {
+    if (gen === dbGen) dbState.loading = false;
+  }
   ENDPOINTS.dbStats().then(s => {
     const el = document.getElementById('dbStats');
     if (el && s) el.textContent = Object.entries(s).map(([k, v]) => k + ': ' + v).join(' · ');
@@ -782,7 +816,8 @@ function dbRowHTML(tab, row) {
     return `<td class="${c === 'id' ? 'mono' : ''}">${esc(String(v))}</td>`;
   }).join('');
   const id = row.id;
-  const detail = tab.id === 'users' ? `<button class="btn xs ghost" onclick="openDBDetail('users','${jsEsc(id)}')">View</button>` : '';
+  const detail = tab.id === 'users' ? `<button class="btn xs ghost" onclick="openDBDetail('users','${jsEsc(id)}')">View</button>`
+    : tab.id === 'lists' ? `<button class="btn xs ghost" onclick="openDBListDetail('${jsEsc(id)}')">View</button>` : '';
   const edit = DB_EDIT_FIELDS[tab.id] ? `<button class="btn xs ghost" onclick="openDBEdit('${tab.id}','${jsEsc(id)}')">Edit</button>` : '';
   const del = `<button class="btn xs ghost" onclick="dbDelete('${tab.id}','${jsEsc(id)}')">Del</button>`;
   return `<tr>${cells}<td><div class="flex gap-2">${detail}${edit}${del}</div></td></tr>`;
@@ -849,6 +884,33 @@ async function dbSaveUserDetail(id) {
   try { await ENDPOINTS.dbUserUpdate(id, data); toast('Saved', 'ok'); dbLoad(); } catch (e) { toast(e.message, 'err'); }
 }
 
+async function openDBListDetail(id) {
+  try {
+    const l = await ENDPOINTS.dbList(id);
+    const ents = await ENDPOINTS.dbListRelatedEntities(id).catch(() => ({ data: [] }));
+    const entsArr = (ents && ents.data) || [];
+    openModal(`
+      <div class="modal-header"><h2>List: ${esc(l.name)}</h2><button class="icon-btn" onclick="closeModal()" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-group"><label>ID</label><span class="mono">${esc(l.id)}</span></div>
+          <div class="form-group"><label>Owner</label><span class="mono text-sm">${esc(l.owner_user_id || '-')}</span></div>
+        </div>
+        <div class="form-group"><label>Name</label><input type="text" id="dbEditName" value="${esc(l.name || '')}"></div>
+        ${entsArr.length ? `<div class="section-title mt-3">Entities (${entsArr.length})</div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Parent Dir</th><th>Media</th></tr></thead><tbody>${entsArr.map(e => `<tr><td>${esc(e.name)}</td><td class="mono text-sm">${esc(e.parent_dir)}</td><td>${e.media_count || 0}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      </div>
+      <div class="modal-footer">
+        <button class="btn ghost" onclick="closeModal()">Close</button>
+        <button class="btn primary" onclick="dbSaveListDetail('${jsEsc(id)}')">Save</button>
+      </div>`);
+  } catch (e) { toast(e.message, 'err'); }
+}
+async function dbSaveListDetail(id) {
+  const data = { name: document.getElementById('dbEditName').value.trim() };
+  closeModal();
+  try { await ENDPOINTS.dbListUpdate(id, data); toast('Saved', 'ok'); dbLoad(); } catch (e) { toast(e.message, 'err'); }
+}
+
 async function openDBEdit(tab, id) {
   const getters = { 'users': ENDPOINTS.dbUser, 'lists': ENDPOINTS.dbList, 'user-entities': ENDPOINTS.dbUserEntity, 'list-entities': ENDPOINTS.dbListEntity, 'user-links': ENDPOINTS.dbUserLink };
   try {
@@ -865,7 +927,6 @@ async function openDBEdit(tab, id) {
         <button class="btn ghost" onclick="closeModal()">Cancel</button>
         <button class="btn primary" onclick="dbSaveEdit('${tab}','${jsEsc(id)}')">Save</button>
       </div>`);
-    window._dbEditTab = tab;
   } catch (e) { toast(e.message, 'err'); }
 }
 async function dbSaveEdit(tab, id) {
@@ -932,7 +993,10 @@ function renderSchedView() {
   const view = document.getElementById('schedView');
   if (!view) return;
   if (schedState.mode === 'raw') {
+    const modeSnapshot = 'raw';
     ENDPOINTS.schedulesRaw().then(r => {
+      // 竞态守卫：期间用户切回 form 则丢弃 raw 响应
+      if (schedState.mode !== modeSnapshot) return;
       view.innerHTML = `<div style="padding:16px">
         <textarea id="schedRawText" rows="18" style="font-family:var(--mono);font-size:12.5px">${esc(r.content || '')}</textarea>
         <div class="flex gap-2" style="justify-content:flex-end;margin-top:12px"><button class="btn ghost" onclick="schedToggleMode()">Cancel</button><button class="btn primary" onclick="saveSchedRaw()">Save</button></div>
@@ -1080,6 +1144,8 @@ function navigateTo(page, replace = false) {
 }
 function renderPage() {
   const page = state.page;
+  // 离开 Logs 页时断开日志 SSE（避免旧流跨页空转）
+  if (page !== 'logs' && logSSE) disconnectLogSSE();
   document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.page === page));
   document.getElementById('pageTitle').textContent = PAGE_TITLES[page] || 'Dashboard';
   closeSidebar();
@@ -1106,6 +1172,7 @@ function renderSettings(root) {
             <button class="tab ${settingsTab === 'config' ? 'active' : ''}" onclick="settingsSwitch('config')">Configuration</button>
             <button class="tab ${settingsTab === 'cookies' ? 'active' : ''}" onclick="settingsSwitch('cookies')">Cookies</button>
             <button class="tab ${settingsTab === 'security' ? 'active' : ''}" onclick="settingsSwitch('security')">Security</button>
+            <button class="tab ${settingsTab === 'theme' ? 'active' : ''}" onclick="settingsSwitch('theme')">Theme</button>
             <button class="tab ${settingsTab === 'raw' ? 'active' : ''}" onclick="settingsSwitch('raw')">Raw YAML</button>
           </div>
         </div>
@@ -1117,13 +1184,37 @@ function renderSettings(root) {
 
 function settingsSwitch(tab) {
   settingsTab = tab;
-  const labels = { config: 'Configuration', cookies: 'Cookies', security: 'Security', raw: 'Raw YAML' };
+  const labels = { config: 'Configuration', cookies: 'Cookies', security: 'Security', theme: 'Theme', raw: 'Raw YAML' };
   document.querySelectorAll('#settingsTabs .tab').forEach(t => t.classList.toggle('active', t.textContent === labels[tab]));
   const body = document.getElementById('settingsBody');
   if (tab === 'config') renderConfigFields(body);
   else if (tab === 'cookies') renderCookies(body);
   else if (tab === 'security') renderSecurity(body);
+  else if (tab === 'theme') renderTheme(body);
   else renderRawConfig(body);
+}
+
+/* ---- 主题切换 ---- */
+async function renderTheme(body) {
+  try {
+    const r = await ENDPOINTS.configThemes();
+    const themes = r.themes || [];
+    const current = r.current || 'web1';
+    body.innerHTML = `<div style="padding:18px 20px;max-width:520px">
+      <div class="section-title">Interface Theme</div>
+      <div class="checkbox-grid">${themes.map(t => `
+        <button class="btn ${t === current ? 'primary' : 'ghost'}" style="justify-content:flex-start" onclick="switchTheme('${jsEsc(t)}')">
+          <span style="flex:1">${esc(t)}</span>${t === current ? ' ✓' : ''}
+        </button>`).join('')}</div>
+      <div class="form-hint mt-2">Switching reloads the page.</div>
+    </div>`;
+  } catch (e) { body.innerHTML = '<div class="empty">Load failed: ' + esc(e.message) + '</div>'; }
+}
+async function switchTheme(theme) {
+  try {
+    await ENDPOINTS.setTheme(theme);
+    location.reload();
+  } catch (e) { toast(e.message, 'err'); }
 }
 
 /* ---- 配置字段（password 字段掩码哨兵；数值/布尔类型按后端契约） ---- */
@@ -1137,12 +1228,12 @@ async function renderConfigFields(body) {
         <div class="form-group">
           <label>${esc(f.name || f.key || '')}</label>
           ${f.type === 'password'
-            ? `<input type="password" id="cf-${i}" autocomplete="off" placeholder="${f.value ? 'Leave empty to keep current' : ''}">`
+            ? `<input type="password" id="cf-${i}" data-fname="${esc(f.name)}" autocomplete="off" placeholder="${f.value ? 'Leave empty to keep current' : ''}">`
             : f.type === 'number'
-              ? `<input type="number" id="cf-${i}" value="${esc(f.value ?? '')}">`
+              ? `<input type="number" id="cf-${i}" data-fname="${esc(f.name)}" value="${esc(f.value ?? '')}">`
               : f.type === 'bool'
-                ? `<label class="checkbox-line"><input type="checkbox" id="cf-${i}" ${f.value ? 'checked' : ''}> Enabled</label>`
-                : `<input type="text" id="cf-${i}" value="${esc(f.value ?? '')}">`}
+                ? `<label class="checkbox-line"><input type="checkbox" id="cf-${i}" data-fname="${esc(f.name)}" ${f.value ? 'checked' : ''}> Enabled</label>`
+                : `<input type="text" id="cf-${i}" data-fname="${esc(f.name)}" value="${esc(f.value ?? '')}">`}
           ${f.prompt ? `<div class="form-hint">${esc(f.prompt)}</div>` : ''}
         </div>`).join('')}
       </div>
@@ -1152,24 +1243,31 @@ async function renderConfigFields(body) {
 }
 
 async function saveConfigFields() {
-  // 收集方式：{ index: value } 与 { index: {clear:true} }——后端按字段顺序逐项应用
+  // 后端契约：{fields: {fieldName: stringValue}}——缺失字段/空值/__KEEP_OLD__ 均保留旧值；__CLEAR__ 清空；掩码值拒绝
   const data = {};
   const inputs = document.querySelectorAll('#settingsBody [id^="cf-"]');
   for (const el of inputs) {
-    const idx = Number(el.id.slice(3));
+    const fname = el.dataset.fname;
+    if (!fname) continue;
     if (el.type === 'password') {
       const v = el.value.trim();
-      if (v === '') data[idx] = { keep: true };
-      else if (v.includes('•••')) return toast('Password field: masked placeholder detected, leave empty to keep current', 'warn');
-      else data[idx] = { value: v };
+      if (v === '') {
+        // api_key 清空 = 关闭认证（__CLEAR__）；其它密码字段留空 = 保留旧值（不发送）
+        if (fname === 'api_key') data[fname] = '__CLEAR__';
+        continue;
+      }
+      if (v.includes('•••')) return toast('Password field: masked placeholder detected, leave empty to keep current', 'warn');
+      data[fname] = v;
+      // api_key 变更后旧 JWT 失效，清掉本地会话
+      if (fname === 'api_key') { localStorage.removeItem('tmd_jwt_token'); localStorage.removeItem('tmd_jwt_expiry'); }
     } else if (el.type === 'checkbox') {
-      data[idx] = { value: el.checked };
+      data[fname] = el.checked ? 'true' : 'false';
     } else {
-      data[idx] = { value: el.value };
+      data[fname] = el.value;
     }
   }
   try {
-    await ENDPOINTS.saveConfigFields(data);
+    await ENDPOINTS.saveConfigFields({ fields: data });
     toast('Configuration saved (restart to apply)', 'ok');
   } catch (e) { toast(e.message, 'err'); }
 }
@@ -1250,6 +1348,7 @@ async function renderSecurity(body) {
     </div>
     <div class="form-hint mt-2" id="secStatus"></div>
   </div>`;
+  renderServerSection(body);
 }
 function secStatus(msg, cls) { const el = document.getElementById('secStatus'); if (el) { el.textContent = msg; el.style.color = cls ? 'var(--' + cls + ')' : ''; } }
 async function secLogin() {
@@ -1262,6 +1361,8 @@ async function secLogin() {
     document.getElementById('secKey').value = '';
     secStatus('Authenticated', 'ok');
     renderSecurity(document.getElementById('settingsBody'));
+    // 建立/恢复 SSE（此前可能因无 token 暂停）
+    if (!sseSource) connectSSE();
   } catch (e) { secStatus(e.message, 'err'); }
 }
 async function secTest() {
@@ -1286,6 +1387,21 @@ function secClear() {
   renderSecurity(document.getElementById('settingsBody'));
 }
 
+// Server 控制（Settings → Security tab 底部）
+function renderServerSection(body) {
+  const div = document.createElement('div');
+  div.className = 'form-group';
+  div.style.cssText = 'margin-top:28px;padding-top:20px;border-top:1px solid var(--glass-border)';
+  div.innerHTML = `<div class="section-title" style="margin-bottom:10px">Server</div>
+    <button class="btn danger" onclick="shutdownServer()">Shut Down Server</button>
+    <div class="form-hint" style="margin-top:6px">Stops the server process. The web UI will disconnect.</div>`;
+  body.appendChild(div);
+}
+async function shutdownServer() {
+  if (!confirm('Shut down the server now?')) return;
+  try { await ENDPOINTS.shutdown(); toast('Shutdown requested', 'warn', 10000); } catch (e) { toast(e.message, 'err'); }
+}
+
 /* ---- Raw config ---- */
 async function renderRawConfig(body) {
   try {
@@ -1308,7 +1424,8 @@ const LOG_MAX_LINES = 5000;
 
 function logLineInWindow(clean) {
   if (!logState.startTime && !logState.endTime) return true;
-  const m = clean.match(/\[(\d{4}-\d{2}-\d{2}T[^\]]+)\]/);
+  // logrus TextFormatter：time="2026-08-03T20:00:00+08:00" 或 [2026-08-03T...] 两种格式都匹配
+  const m = clean.match(/(?:time="|\[)(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[^"\]\s]*)?)/);
   if (!m) return true;
   const t = new Date(m[1]).getTime();
   if (isNaN(t)) return true;
@@ -1330,6 +1447,7 @@ function renderLogs(root) {
       </div>
       <div class="glass card">
         <div class="filter-bar">
+          <div class="tabs" id="logStatsBar" style="display:none"></div>
           <select id="logLevel" onchange="logApplyFilters()">
             <option value="">All levels</option>
             ${['DEBUG','INFO','WARN','ERROR','FATA'].map(l => `<option value="${l}">${l}</option>`).join('')}
@@ -1363,6 +1481,8 @@ function logApplyFilters() {
 async function logRefresh() {
   logState.page = 1;
   logState.prepended = 0;
+  logState.gen++; // 代际递增：作废在途 loadMore（Refresh 与筛选一致）
+  logState.loadingMore = false;
   await logLoadReplace();
   if (!logSSE) logConnect();
 }
@@ -1399,7 +1519,8 @@ async function logLoadReplace() {
     const r = await ENDPOINTS.logs(logParams(1));
     if (gen !== logState.gen) return;
     logState.totalPages = r.totalPages || 1;
-    stream.innerHTML = (r.logs || []).map(l => {
+    // 后端返回 newest-first，反转成 oldest→newest（与 loadMore 前置页、SSE 追加方向一致）
+    stream.innerHTML = (r.logs || []).reverse().map(l => {
       const clean = stripAnsi(l);
       const tweetId = (clean.match(/tweet_id=(\d+)/) || [])[1];
       const color = clean.includes('ERROR') || clean.includes('FATA') ? 'var(--err)' : clean.includes('WARN') ? 'var(--warn)' : '';
@@ -1500,11 +1621,30 @@ function disconnectLogSSE() {
 }
 function logStartStream() {
   logRefresh();
+  logLoadStats();
   const stream = document.getElementById('logStream');
   if (stream && !stream.dataset.scrollBound) {
     stream.dataset.scrollBound = '1';
     stream.addEventListener('scroll', () => { if (stream.scrollTop < 60) logLoadMore(); });
   }
+}
+
+// 日志级别统计条（/api/v1/logs/stats）
+async function logLoadStats() {
+  try {
+    const r = await ENDPOINTS.logStats();
+    const counts = r && (r.counts || r.levels) ? (r.counts || r.levels) : r;
+    if (!counts || typeof counts !== 'object') return;
+    const bar = document.getElementById('logStatsBar');
+    if (!bar) return;
+    const entries = Object.entries(counts).filter(([, v]) => v > 0);
+    if (!entries.length) { bar.style.display = 'none'; return; }
+    bar.style.display = '';
+    bar.innerHTML = entries.map(([level, n]) => {
+      const cls = level === 'ERROR' || level === 'FATA' ? 'err' : level === 'WARN' ? 'warn' : '';
+      return `<span class="chip ${cls}">${esc(level)} ${n}</span>`;
+    }).join('');
+  } catch (e) { /* 统计非关键路径 */ }
 }
 async function logExport() {
   try {
@@ -1595,13 +1735,18 @@ function progressHTML(t) {
   return `<div class="progress"><div class="progress-track"><div class="progress-fill ${cls}" style="width:${pct}%"></div></div><span class="progress-text">${pct}%${esc(getStageText(t.progress && t.progress.stage))}</span></div>`;
 }
 
+let _dlBusy = false;
 async function quickDownload() {
+  if (_dlBusy) return;
   const input = document.getElementById('quickDlInput');
   if (!input) return;
   let value = input.value.trim();
   if (!value) return toast('Enter a Twitter username or URL', 'warn');
-  const listMatch = value.match(/https?:\/\/(?:twitter\.com|x\.com)\/i\/lists\/(\d+)/);
+  _dlBusy = true;
+  const btn = [...document.querySelectorAll('button')].find(b => b.textContent.includes('Quick Download'));
+  if (btn) { btn.disabled = true; }
   try {
+    const listMatch = value.match(/https?:\/\/(?:twitter\.com|x\.com)\/i\/lists\/(\d+)/);
     if (listMatch) {
       await ENDPOINTS.listDownload(listMatch[1], { auto_follow: true });
       toast('List download task created', 'ok');
@@ -1618,6 +1763,10 @@ async function quickDownload() {
     }
     input.value = '';
   } catch (e) { toast(e.message, 'err'); }
+  finally {
+    _dlBusy = false;
+    if (btn) { btn.disabled = false; }
+  }
 }
 
 /* ---------- Health ---------- */
@@ -1678,14 +1827,14 @@ function connectSSE() {
         .catch(() => { sseReconnectTimer = setTimeout(connectSSE, Math.min(sseReconnectDelay *= 2, 30000)); });
     });
   };
-  sseSource.addEventListener('tasks', (e) => {
+  sseSource.addEventListener('tasks', throttle((e) => {
     try {
       pageTasks = JSON.parse(e.data) || [];
       refreshStats();
       if (state.page === 'dashboard') renderRecentTasks();
       if (state.page === 'tasks') updateTasksUI();
     } catch (err) { /* 忽略坏帧 */ }
-  });
+  }, 300));
   sseSource.addEventListener('notification', (e) => {
     try { const n = JSON.parse(e.data); if (n && n.message) toast(n.message, n.level === 'error' ? 'err' : 'info'); } catch (err) {}
   });
@@ -1713,15 +1862,20 @@ async function init() {
   setState({ page: currentPageFromHash() });
   renderPage();
 
-  // 认证探测：有 JWT 先轻量校验，无 JWT 探测 tasks
+  // 认证探测：有 JWT 先轻量校验，无 JWT 探测 tasks；均用 REST 兜底填充初始任务快照（SSE 未建立时不显示误导空态）
   const jwt = localStorage.getItem('tmd_jwt_token');
-  if (jwt) {
-    try { await ENDPOINTS.authCheck(); } catch (e) { /* 401 已由 _fetch 弹框 */ }
-    connectSSE();
-  } else {
-    try { await ENDPOINTS.tasks(); connectSSE(); }
-    catch (e) { if (e.status === 401) showAuth(); else connectSSE(); }
-  }
+  try {
+    if (jwt) {
+      await ENDPOINTS.authCheck();
+    } else {
+      await ENDPOINTS.tasks();
+    }
+  } catch (e) { /* 401 已由 _fetch 统一弹框；网络失败不阻塞启动 */ }
+  try {
+    const t = await ENDPOINTS.tasks();
+    if (Array.isArray(t)) { pageTasks = t; refreshStats(); if (state.page === 'dashboard') renderRecentTasks(); if (state.page === 'tasks') updateTasksUI(); }
+  } catch (e) { /* 忽略 */ }
+  connectSSE();
 }
 
 document.addEventListener('DOMContentLoaded', init);
