@@ -41,7 +41,7 @@
 | `03-data-tabs` | 6 表 tab 的 dataSubPage 切换 |
 | `04-task-tabs` | 7 任务表单渲染 |
 | `05-schedules` | 添加/删除/撤销规则、无变化保存 dirty 清理（回归点）、raw 编辑器 |
-| `06-logs` | 暂停/继续、级别筛选、搜索、导出按钮 |
+| `06-logs` | 级别筛选、导出按钮 |
 | `07-drawer-a11y` | 抽屉焦点、Tab 陷阱、Shift+Tab 反向、Esc |
 | `08-theme-switch` | 切换器选项 + 往返切换（最后跑，含自动切回） |
 | `09-task-lifecycle` | mark 任务创建→渲染→详情抽屉→Esc（不消耗 Twitter 配额） |

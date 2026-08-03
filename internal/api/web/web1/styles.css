@@ -1281,6 +1281,14 @@ ul, ol {
   margin-bottom: var(--space-5);
 }
 
+.tasks-layout .tabs {
+  gap: 0;
+}
+
+.tasks-layout .tab {
+  padding: var(--space-3) 13px;
+}
+
 .tab {
   padding: var(--space-3) var(--space-4);
   font-size: var(--text-sm);
@@ -1409,10 +1417,7 @@ ul, ol {
   width: 240px;
 }
 
-/* Log page: 有筛选按钮占用空间，搜索框窄一些 */
-#logViewerCard .search-input {
-  width: 160px;
-}
+/* Log page: 有筛选按钮占用空间 */
 #logViewerCard .toolbar {
   padding: var(--space-3) var(--space-5);
 }
@@ -1420,7 +1425,7 @@ ul, ol {
 /* Grid Layout for Tasks Page */
 .tasks-layout {
   display: grid;
-  grid-template-columns: 488px 1fr;
+  grid-template-columns: 425px 1fr;
   gap: var(--space-6);
   align-items: stretch;
   height: calc(100vh - var(--header-height) - var(--space-6) * 2);

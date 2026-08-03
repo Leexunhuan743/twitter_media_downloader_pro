@@ -109,7 +109,6 @@ const store = {
     dataSubPage: 'users',
     taskFilter: 'all',
     taskStageFilter: 'all',
-    taskSearch: '',
     // Database pagination state
     dbData: {
       users: { data: [], total: 0, page: 1, pageSize: 200 },
@@ -154,9 +153,6 @@ const store = {
     configFieldsLoading: false,
     logLevel: 'all',
     logDomain: 'all',
-    logPaused: false,
-    logPausedCount: 0,
-    logSearch: '',
     logStats: { debug: 0, info: 0, warn: 0, error: 0, total: 0 },
     logPage: 1,
     logTotalPages: 1,
@@ -1052,7 +1048,6 @@ const pages = {
                   <option value="profile">资料下载</option>
                   <option value="marking">标记中</option>
                 </select>
-                <input type="text" class="form-input search-input" id="taskSearch" placeholder="搜索任务..." data-binding="taskSearch">
               </div>
               <div class="toolbar-right">
                 <button class="btn btn-secondary btn-sm" data-action="cancelQueuedTasks">取消排队中任务</button>
@@ -3639,7 +3634,7 @@ function renderCookiesRawEditor(raw, saving, exists) {
 }
 
 function renderLogViewer() {
-  const { logLevel, logStats, logDomain, logPaused, logPausedCount } = store.state;
+  const { logLevel, logStats, logDomain } = store.state;
 
   return `
     <div class="card card-page" id="logViewerCard">
@@ -3647,14 +3642,8 @@ function renderLogViewer() {
         <div class="toolbar-left">
           ${renderLogFilterButtons(logLevel, logStats)}
           ${renderLogDomainSelect(logDomain)}
-          <input type="text" id="log-search-input" class="form-input search-input" placeholder="搜索日志..." value="${escapeAttr(store.state.logSearch)}">
-          <button class="btn btn-ghost btn-sm" data-action="logSearch">🔍</button>
         </div>
         <div class="toolbar-right">
-          <button class="btn ${logPaused ? 'btn-primary' : 'btn-ghost'} btn-sm" id="log-pause-toggle" data-action="toggleLogPause">
-            ${logPaused ? '继续' : '暂停'}${logPausedCount > 0 ? ` (${logPausedCount})` : ''}
-          </button>
-          <button class="btn btn-ghost btn-sm" data-action="logRefresh">刷新</button>
           <button class="btn btn-ghost btn-sm" data-action="logExport">导出</button>
           <label class="form-checkbox" style="font-size:12px;white-space:nowrap">
             <input type="checkbox" id="log-auto-scroll-toggle" ${logAutoScroll ? 'checked' : ''} data-action="toggleLogAutoScroll">
@@ -3789,7 +3778,7 @@ async function exportLogs() {
 }
 
 async function setLogLevel(level) {
-  store.setState({ logLevel: level, logPage: 1, logPausedCount: 0 });
+  store.setState({ logLevel: level, logPage: 1 });
   await refreshLogs();
   // 重连 SSE 以应用新的 level 过滤
   disconnectLogSSE();
@@ -3797,36 +3786,10 @@ async function setLogLevel(level) {
 }
 
 async function setLogDomain(domain) {
-  store.setState({ logDomain: domain || 'all', logPage: 1, logPausedCount: 0 });
+  store.setState({ logDomain: domain || 'all', logPage: 1 });
   await refreshLogs();
   disconnectLogSSE();
   connectLogSSE();
-}
-
-async function doLogSearch() {
-  const q = document.getElementById('log-search-input')?.value?.trim() || '';
-  store.setState({ logSearch: q, logPage: 1, logPausedCount: 0 });
-  await refreshLogs();
-  // 重连 SSE 以应用搜索过滤
-  disconnectLogSSE();
-  connectLogSSE();
-}
-
-async function toggleLogPause() {
-  const nextPaused = !store.state.logPaused;
-  store.setState({ logPaused: nextPaused, logPausedCount: nextPaused ? store.state.logPausedCount : 0 });
-  updateLogPauseButton();
-  if (!nextPaused) {
-    await refreshLogs();
-  }
-}
-
-function updateLogPauseButton() {
-  const btn = document.getElementById('log-pause-toggle');
-  if (!btn) return;
-  const { logPaused, logPausedCount } = store.state;
-  btn.textContent = (logPaused ? '继续' : '暂停') + (logPausedCount > 0 ? ` (${logPausedCount})` : '');
-  btn.className = 'btn ' + (logPaused ? 'btn-primary' : 'btn-ghost') + ' btn-sm';
 }
 
 function scrollLogToBottom() {
@@ -3865,13 +3828,13 @@ function buildLogQuery({ page = null, pageSize = 200, level = 'all', domain = 'a
 async function loadLogsReplace() {
   const stream = document.getElementById('log-stream');
   if (!stream) return;
-  const { logLevel, logSearch, logPage, logDomain } = store.state;
+  const { logLevel, logPage, logDomain } = store.state;
   try {
-    const { logLevel, logSearch, logPage, logDomain } = store.state;
-    const p = buildLogQuery({ page: logPage, level: logLevel, domain: logDomain, q: logSearch });
+    const { logLevel, logPage, logDomain } = store.state;
+    const p = buildLogQuery({ page: logPage, level: logLevel, domain: logDomain });
     const d = await api.getLogs('?' + p.toString());
     const lines = (d.logs || []).reverse();
-    stream.innerHTML = lines.length ? renderLogLines(lines) : renderLogEmptyHint('没有匹配日志', '调整级别或搜索条件后重试');
+    stream.innerHTML = lines.length ? renderLogLines(lines) : renderLogEmptyHint('没有匹配日志', '调整级别或域后重试');
     stream.scrollTop = stream.scrollHeight;
     store.setState({ logTotalPages: d.totalPages || 1 });
     loadLogStats();
@@ -3891,9 +3854,9 @@ async function loadMoreLogs() {
   if (!stream) { _logLoadingMore = false; return; }
   const nextPage = logPage + 1;
   store.setState({ logPage: nextPage });
-  const { logLevel, logSearch, logDomain } = store.state;
+  const { logLevel, logDomain } = store.state;
   try {
-    const p = buildLogQuery({ page: nextPage, level: logLevel, domain: logDomain, q: logSearch });
+    const p = buildLogQuery({ page: nextPage, level: logLevel, domain: logDomain });
     const d = await api.getLogs('?' + p.toString());
     // 代际过期：期间发生了刷新/筛选变化，丢弃本次响应（防止旧筛选条件下的老页混入）
     if (gen !== _logGen) {
@@ -5365,8 +5328,8 @@ function connectLogSSE() {
   if (logSSESource) { logSSESource.close(); logSSESource = null; }
   if (_logSSETimer) { clearTimeout(_logSSETimer); _logSSETimer = null; }
   _logIntentionalDisconnect = false;
-  const { logLevel, logSearch, logDomain } = store.state;
-  const params = buildLogQuery({ level: logLevel, domain: logDomain, q: logSearch }); // SSE 流不分页
+  const { logLevel, logDomain } = store.state;
+  const params = buildLogQuery({ level: logLevel, domain: logDomain }); // SSE 流不分页
   appendJWTToken(params);
   const qs = params.toString();
   const url = '/api/v1/logs/stream' + (qs ? '?' + qs : '');
@@ -5383,11 +5346,6 @@ function connectLogSSE() {
     const stream = document.getElementById('log-stream');
     if (!stream) return;
     const clean = stripAnsi(e.data);
-    if (store.state.logPaused) {
-      store.setState({ logPausedCount: (store.state.logPausedCount || 0) + 1 });
-      updateLogPauseButton();
-      return;
-    }
     // 批量追加：同帧内的多条日志合并为一次 DOM 插入，避免逐行 insertAdjacentHTML + scrollTop 强制布局
     _logBatch.push(clean);
     if (_logFlushRAF) return;
@@ -5431,8 +5389,8 @@ function connectLogSSE() {
     _logReconnectAttempts++;
     if (_logReconnectAttempts > 60) {
       _logReconnectAttempts = 0;
-      // 放弃自动重连：提示用户手动点「刷新」复活实时流（refreshLogs 会重建连接）
-      toast.show('日志实时流已断开，点击「刷新」可重新连接', 'warning');
+      // 放弃自动重连：提示用户刷新页面复活实时流
+      toast.show('日志实时流已断开，刷新页面可重新连接', 'warning');
       return;
     }
     const delay = Math.min(2000 * Math.pow(1.5, _logReconnectAttempts - 1), 30000);
@@ -5702,7 +5660,6 @@ function render() {
     // Restore filter and search values
       restoreSearchValue('taskFilter', 'taskFilter');
       restoreSearchValue('taskStageFilter', 'taskStageFilter');
-      restoreSearchValue('taskSearch', 'taskSearch');
 
     // Restore search value for data page
     if (page === 'data') {
@@ -5734,7 +5691,7 @@ function render() {
   }
 }
 
-// Filter tasks based on status and search
+// Filter tasks based on status and stage
 function filterTasks() {
   // Reuse updateTaskListUI to render filtered tasks
   updateTaskListUI(store.state.tasks);
@@ -6255,10 +6212,9 @@ function updateTaskListUI(tasks) {
   
   const filter = store.state.taskFilter;
   const stageFilter = store.state.taskStageFilter;
-  const search = store.state.taskSearch.toLowerCase();
-  
+
   let filtered = tasks;
-  
+
   if (filter !== 'all') {
     filtered = filtered.filter(t => t.status === filter);
   }
@@ -6267,29 +6223,13 @@ function updateTaskListUI(tasks) {
     filtered = filtered.filter(t => getTaskStage(t) === stageFilter);
   }
   
-  if (search) {
-    filtered = filtered.filter(t => {
-      const target = (t.data?.screen_name || t.data?.list_id || '').toString().toLowerCase();
-      const batchTargets = [
-        ...(t.data?.users || []),
-        ...(t.data?.lists || []),
-        ...(t.data?.following_names || [])
-      ].join(' ').toLowerCase();
-      const shortId = shortTaskID(t.task_id).toLowerCase();
-      const stage = getTaskStage(t).toLowerCase();
-      return target.includes(search) || batchTargets.includes(search) ||
-        t.task_id.toLowerCase().includes(search) || shortId.includes(search) ||
-        stage.includes(search) || (t.type || '').toLowerCase().includes(search);
-    });
-  }
-  
   if (filtered.length === 0) {
     if (!taskList.classList.contains('empty-state')) {
       taskList.className = 'empty-state';
       taskList.innerHTML = `
         <div class="empty-icon">🔍</div>
         <div class="empty-title">没有找到匹配的任务</div>
-        <div class="empty-desc">尝试调整筛选条件或搜索关键词</div>
+        <div class="empty-desc">尝试调整筛选条件</div>
       `;
     }
   } else {
@@ -6335,7 +6275,6 @@ document.getElementById('contentContainer').addEventListener('keydown', (e) => {
   const id = e.target.id;
   if (id === 'quickDownloadInput') handleQuickDownload();
   else if (id === 'dbSearchInput') searchDB();
-  else if (id === 'log-search-input') doLogSearch();
 });
 
 // Esc 关闭：抽屉优先，其次认证弹窗（键盘可达性）
@@ -6380,19 +6319,13 @@ document.getElementById('app').addEventListener('keydown', (e) => {
   if (e.target.id === 'authDialogKey') submitAuthKey();
 });
 
-// 防抖任务搜索：每次击键不立即全量重建列表
-const debouncedFilterTasks = debounce(filterTasks, 200);
-
 // Delegated input/change/blur for data-binding elements (replaces inline on* handlers)
 document.getElementById('contentContainer').addEventListener('input', (e) => {
   const el = e.target.closest('[data-binding]');
   if (!el) return;
   const binding = el.dataset.binding;
   const idx = el.dataset.idx;
-  if (binding === 'taskSearch') {
-    updateSearchState('taskSearch', null, el.value);
-    debouncedFilterTasks();
-  } else if (binding === 'dbSearch') {
+  if (binding === 'dbSearch') {
     updateSearchState('dbSearch', store.state.dataSubPage, el.value);
   } else if (binding === 'sf_field' && idx !== undefined) {
     scheduleFieldChanged(Number(idx));
@@ -6528,9 +6461,6 @@ document.addEventListener('click', (e) => {
 
     // Logs
     case 'logSetLevel':       setLogLevel(el.dataset.level); break;
-    case 'toggleLogPause':    toggleLogPause(); break;
-    case 'logSearch':         doLogSearch(); break;
-    case 'logRefresh':        refreshLogs(); break;
     case 'logExport':         exportLogs(); break;
     case 'logScrollToBottom': scrollLogToBottom(); break;
     case 'toggleLogAutoScroll':     toggleLogAutoScroll(); break;
