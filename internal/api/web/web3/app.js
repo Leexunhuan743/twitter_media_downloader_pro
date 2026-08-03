@@ -150,7 +150,7 @@ const ENDPOINTS = {
   updateSchedule: (id, entry) => API.put(apiBase() + '/api/v1/schedules/' + encodeURIComponent(id), entry),
   deleteSchedule: (id) => API.delete(apiBase() + '/api/v1/schedules/' + encodeURIComponent(id)),
   reloadSchedules: () => API.post(apiBase() + '/api/v1/schedules/reload'),
-  setScheduleEnabled: (id, enabled) => API.put(apiBase() + '/api/v1/schedules/' + encodeURIComponent(id) + '/enabled', { enabled }),
+  setScheduleEnabled: (id, enabled) => API.patch(apiBase() + '/api/v1/schedules/' + encodeURIComponent(id) + '/enabled', { enabled }),
   triggerSchedule: (id) => API.post(apiBase() + '/api/v1/schedules/' + encodeURIComponent(id) + '/trigger'),
   triggerAllSchedules: () => API.post(apiBase() + '/api/v1/schedules/trigger-all'),
   // DB
@@ -317,6 +317,7 @@ function getStageText(stage) {
 }
 function getTaskPct(t) {
   const p = t.progress || {};
+  if (t.status === 'queued' || p.stage === 'queueing' || p.stage === 'queued') return 0; // 排队中不显示假进度
   if (p.stage === 'completed') return 100;
   if (p.stage === 'preparing') return 10;
   if (p.stage === 'finalizing') return 95;
@@ -476,7 +477,7 @@ function taskRowHTML(t) {
   const canDelete = t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled';
   return `<tr data-task-id="${jsEsc(t.task_id)}" data-status="${jsEsc(safeStatus(t.status))}">
     <td>${esc(taskTypeIcon(t))}</td>
-    <td><span class="mono">${esc(t.task_id)}</span><div class="text-sm text-muted">${esc(taskTypeName(t))}${target ? ' · ' + esc(target) : ''}</div></td>
+    <td><span class="mono">${esc(t.task_id)}</span><div class="text-sm text-muted ellipsis">${esc(taskTypeName(t))}${target ? ' · ' + esc(target) : ''}</div></td>
     <td><span class="badge badge-${safeStatus(t.status)}">${esc(t.status)}</span></td>
     <td style="min-width:180px">${progressHTML(t)}</td>
     <td><span class="text-sm">${esc(relTime(t.created_at))}</span>${t.started_at && t.ended_at ? '<div class="text-sm text-muted">' + esc(fmtDur(t.started_at, t.ended_at)) + '</div>' : ''}</td>
@@ -692,11 +693,16 @@ async function submitTaskForm(type, action = 'download') {
 }
 
 /* ---------- 失败记录 ---------- */
+let errorsGen = 0;
 async function loadErrors() {
+  const gen = ++errorsGen;
   try {
     _errorsData = await ENDPOINTS.errors();
-    updateErrorsPanel();
-  } catch (e) { /* 401 已统一处理 */ }
+    if (gen === errorsGen) updateErrorsPanel();
+  } catch (e) {
+    // 加载失败：渲染空态而非永久 spinner
+    if (gen === errorsGen) updateErrorsPanel();
+  }
 }
 function toggleErrorsPanel() {
   const body = document.getElementById('errorsBody');
@@ -801,7 +807,7 @@ function renderData(root) {
       <div class="page-header">
         <h2>Data</h2>
         <div class="page-actions">
-          <input type="text" id="dbSearch" placeholder="Search..." style="width:220px" onkeydown="if(event.key==='Enter')dbSearchSubmit()">
+          <input type="text" id="dbSearch" placeholder="Search..." style="width:220px" value="${esc(dbState.q)}" onkeydown="if(event.key==='Enter')dbSearchSubmit()">
           <button class="btn ghost sm" onclick="dbSearchSubmit()">Search</button>
           <button class="btn ghost sm" onclick="dbRefresh()">Refresh</button>
         </div>
@@ -864,7 +870,7 @@ function renderDBTable() {
     return;
   }
   wrap.innerHTML = `<table>
-    <thead><tr>${tab.columns.map(c => `<th${tab.sortable.includes(c) ? ' role="button" tabindex="0" onclick="dbSort(\'' + c + '\')" onkeydown="if(event.key===\'Enter\')dbSort(\'' + c + '\')"' : ''}>${esc(c)}${dbState.sortBy === c ? (dbState.sortOrder === 'asc' ? ' ↑' : ' ↓') : ''}</th>`).join('')}<th>Actions</th></tr></thead>
+    <thead><tr>${tab.columns.map(c => `<th${tab.sortable.includes(c) ? ` role="button" tabindex="0" aria-sort="${dbState.sortBy === c ? (dbState.sortOrder === 'asc' ? 'ascending' : 'descending') : 'none'}" onclick="dbSort('${c}')" onkeydown="if(event.key==='Enter'||event.key===' ')dbSort('${c}')"` : ''}>${esc(c)}${dbState.sortBy === c ? (dbState.sortOrder === 'asc' ? ' ↑' : ' ↓') : ''}</th>`).join('')}<th>Actions</th></tr></thead>
     <tbody>${dbState.data.map(row => dbRowHTML(tab, row)).join('')}</tbody></table>`;
 }
 function dbRowHTML(tab, row) {
@@ -999,7 +1005,17 @@ async function dbSaveEdit(tab, id) {
     else if (f.key === 'latest_release_time') {
       const v = el.value.trim();
       if (v === '') data[f.key] = '';
-      else { const t = new Date(v); data[f.key] = isNaN(t.getTime()) ? undefined : toRFC3339(v); }
+      else {
+        // GET 返回 "2006-01-02 15:04:05"（本地无时区）；按本地时区补偏移输出 RFC3339，避免 toISOString 的 UTC 漂移
+        const t = new Date(v);
+        if (isNaN(t.getTime())) data[f.key] = undefined;
+        else {
+          const off = -t.getTimezoneOffset();
+          const pad2 = (n) => String(n).padStart(2, '0');
+          data[f.key] = t.getFullYear() + '-' + pad2(t.getMonth() + 1) + '-' + pad2(t.getDate()) + 'T' + pad2(t.getHours()) + ':' + pad2(t.getMinutes()) + ':' + pad2(t.getSeconds())
+            + (off >= 0 ? '+' : '-') + pad2(Math.floor(Math.abs(off) / 60)) + ':' + pad2(Math.abs(off) % 60);
+        }
+      }
     } else data[f.key] = el.value;
   }
   closeModal();
@@ -1013,6 +1029,7 @@ async function dbDelete(tab, id) {
 
 /* ---------- Schedules 页 ---------- */
 let schedState = { mode: 'form', items: [] };
+let schedGen = 0;
 
 function renderSchedules(root) {
   root.innerHTML = `
@@ -1032,13 +1049,16 @@ function renderSchedules(root) {
 }
 
 async function schedLoad() {
+  const gen = ++schedGen;
   const view = document.getElementById('schedView');
   if (!view) return;
   try {
     const r = await ENDPOINTS.schedules();
+    if (gen !== schedGen) return; // 期间发生了新的加载/导航，丢弃过期响应
     schedState.items = (r.entries || []).map(schedToForm);
     renderSchedView();
   } catch (e) {
+    if (gen !== schedGen) return;
     view.innerHTML = '<div class="empty"><div class="empty-title">Load failed</div><div class="empty-desc">' + esc(e.message) + '</div></div>';
   }
 }
@@ -1073,7 +1093,7 @@ function renderSchedView() {
     <thead><tr><th>Type</th><th>Target</th><th>Name</th><th>Schedule</th><th>Enabled</th><th>Actions</th></tr></thead>
     <tbody>${items.map(i => `<tr data-sched-id="${jsEsc(i.id || '')}">
       <td><span class="badge badge-${i.type === 'mixed' ? 'warn' : 'queued'}">${esc(i.type)}</span></td>
-      <td>${i.type === 'mixed' ? '<span class="text-sm">' + esc((i.users || []).length) + ' users · ' + esc((i.lists || []).length) + ' lists · ' + esc((i.following_names || []).length) + ' foll</span>' : esc(i.target || '')}</td>
+      <td>${i.type === 'mixed' ? '<span class="text-sm">' + esc((i.users || []).length) + ' users · ' + esc((i.lists || []).length) + ' lists · ' + esc((i.following_names || []).length) + ' following</span>' : esc(i.target || '')}</td>
       <td>${esc(i.name || '-')}</td>
       <td><span class="mono text-sm">${esc(i.scheduleMode)}:${esc(i.scheduleValue)}</span></td>
       <td><label class="toggle"><input type="checkbox" ${i.enabled ? 'checked' : ''} onchange="toggleSchedule('${jsEsc(i.id || '')}', this.checked)"><span class="toggle-track"></span></label></td>
@@ -1197,12 +1217,14 @@ function currentPageFromHash() {
 }
 function navigateTo(page, replace = false) {
   if (!PAGES[page]) page = 'dashboard';
+  // 只改 hash：renderPage 由 hashchange 监听器统一执行（避免此处与监听器双重渲染）
   if (replace) history.replaceState(null, '', '#/' + page);
   else if (location.hash !== '#/' + page) location.hash = '#/' + page;
-  setState({ page });
-  renderPage();
+  else { setState({ page }); renderPage(); } // hash 相同（如 logo 重复点击）：直接渲染
 }
 function renderPage() {
+  // 导航时关闭残留模态（弹窗挂 body，不关会压在新区块上）
+  if (currentModal) closeModal();
   const page = state.page;
   // 离开 Logs 页时断开日志 SSE（避免旧流跨页空转）
   if (page !== 'logs' && logSSE) disconnectLogSSE();
@@ -1221,6 +1243,7 @@ function renderPage() {
 
 /* ---------- Settings 页 ---------- */
 let settingsTab = 'config';
+let settingsGen = 0;
 
 function renderSettings(root) {
   root.innerHTML = `
@@ -1244,14 +1267,16 @@ function renderSettings(root) {
 
 function settingsSwitch(tab) {
   settingsTab = tab;
+  const gen = ++settingsGen; // 代际守卫：快速切换 tab 时旧响应不覆盖新内容
   const labels = { config: 'Configuration', cookies: 'Cookies', security: 'Security', theme: 'Theme', raw: 'Raw YAML' };
   document.querySelectorAll('#settingsTabs .tab').forEach(t => t.classList.toggle('active', t.textContent === labels[tab]));
   const body = document.getElementById('settingsBody');
-  if (tab === 'config') renderConfigFields(body);
-  else if (tab === 'cookies') renderCookies(body);
-  else if (tab === 'security') renderSecurity(body);
-  else if (tab === 'theme') renderTheme(body);
-  else renderRawConfig(body);
+  const wrap = (renderFn) => { const p = renderFn(body); if (p && p.then) p.then(() => { if (gen !== settingsGen) body.innerHTML = ''; }).catch(() => {}); };
+  if (tab === 'config') wrap(renderConfigFields);
+  else if (tab === 'cookies') wrap(renderCookies);
+  else if (tab === 'security') wrap(renderSecurity);
+  else if (tab === 'theme') wrap(renderTheme);
+  else wrap(renderRawConfig);
 }
 
 /* ---- 主题切换 ---- */
@@ -1347,8 +1372,8 @@ async function renderCookies(body) {
     ${cArr.length === 0 ? '<div class="empty" style="padding:20px">No additional cookies configured.</div>' : ''}
     <div id="cookiesForm">${cArr.map((c, i) => `
       <div class="form-row">
-        <div class="form-group"><label>auth_token</label><input type="text" id="ck-at-${i}" value="${jsEsc(c.auth_token || '')}" data-orig="${jsEsc(c.auth_token || '')}" placeholder="empty = clear" style="font-family:var(--mono);font-size:12px"></div>
-        <div class="form-group"><label>ct0</label><input type="text" id="ck-ct0-${i}" value="${jsEsc(c.ct0 || '')}" data-orig="${jsEsc(c.ct0 || '')}" placeholder="empty = clear" style="font-family:var(--mono);font-size:12px"></div>
+        <div class="form-group"><label>auth_token</label><input type="text" id="ck-at-${i}" value="${jsEsc(c.auth_token || '')}" data-orig="${jsEsc(c.auth_token || '')}" data-index="${jsEsc(c.index != null ? c.index : '')}" placeholder="empty = clear" style="font-family:var(--mono);font-size:12px"></div>
+        <div class="form-group"><label>ct0</label><input type="text" id="ck-ct0-${i}" value="${jsEsc(c.ct0 || '')}" data-orig="${jsEsc(c.ct0 || '')}" data-index="${jsEsc(c.index != null ? c.index : '')}" placeholder="empty = clear" style="font-family:var(--mono);font-size:12px"></div>
       </div>`).join('')}</div>
     <div class="flex gap-2" style="margin-top:12px">
       <button class="btn ghost sm" onclick="addCookieRow()">+ Add Account</button>
@@ -1380,7 +1405,9 @@ async function saveCookies() {
     const keepCt0 = origCt0 !== '' && ct0 === origCt0;
     if (origAt === '' && origCt0 === '' && !at.trim() && !ct0.trim()) continue;
     if (!keepAt && !keepCt0 && !at.trim() && !ct0.trim()) return toast('Account #' + (i + 1) + ': auth_token and ct0 cannot both be empty', 'warn');
-    list.push({ auth_token: keepAt ? '__KEEP_OLD__' : at, ct0: keepCt0 ? '__KEEP_OLD__' : ct0 });
+    // 携带服务器 index（后端 __KEEP_OLD__ 按 index 优先，位置兜底）
+    const idx = atEl.dataset.index || ct0El?.dataset.index || '';
+    list.push({ index: idx || undefined, auth_token: keepAt ? '__KEEP_OLD__' : at, ct0: keepCt0 ? '__KEEP_OLD__' : ct0 });
   }
   if (!list.length) return toast('Nothing to save', 'warn');
   try { await ENDPOINTS.saveCookies(list); toast('Cookies saved', 'ok'); settingsSwitch('cookies'); } catch (e) { toast(e.message, 'err'); }
@@ -1497,6 +1524,9 @@ function logLineInWindow(clean) {
 }
 
 function renderLogs(root) {
+  // 重新进入页面时重置过滤/暂停状态（避免旧条件隐形残留，控件显示与请求条件一致）
+  logState.level = ''; logState.domain = ''; logState.q = ''; logState.startTime = ''; logState.endTime = ''; logState.paused = false;
+  logState.page = 1; logState.gen++;
   root.innerHTML = `
     <div class="page">
       <div class="page-header">
@@ -1628,7 +1658,8 @@ async function logLoadMore() {
 function trimLogStream() {
   const stream = document.getElementById('logStream');
   if (!stream) return;
-  while (stream.children.length > LOG_MAX_LINES + logState.prepended) stream.removeChild(stream.firstChild);
+  // 固定上限：前置页（loadMore 插入的旧行）不随次数膨胀 DOM 总量
+  while (stream.children.length > LOG_MAX_LINES) stream.removeChild(stream.firstChild);
 }
 
 function toggleLogPause() {
@@ -1649,7 +1680,7 @@ function logConnect() {
   if (logState.endTime) params.append('end_time', logState.endTime);
   const jwt = localStorage.getItem('tmd_jwt_token');
   if (jwt) params.append('token', jwt);
-  const source = new EventSource('/api/v1/logs/stream?' + params.toString());
+  const source = new EventSource(apiBase() + '/api/v1/logs/stream?' + params.toString());
   logSSE = source;
   source.onopen = () => { logReconnectAttempts = 0; };
   source.addEventListener('log', (e) => {
@@ -1703,7 +1734,8 @@ async function logLoadStats() {
     if (!entries.length) { bar.style.display = 'none'; return; }
     bar.style.display = '';
     bar.innerHTML = entries.map(([level, n]) => {
-      const cls = level === 'ERROR' || level === 'FATA' ? 'err' : level === 'WARN' ? 'warn' : '';
+      const lv = String(level).toLowerCase();
+      const cls = lv === 'error' || lv === 'fatal' ? 'err' : lv === 'warn' ? 'warn' : '';
       return `<span class="chip ${cls}">${esc(level)} ${n}</span>`;
     }).join('');
   } catch (e) { /* 统计非关键路径 */ }
@@ -1815,8 +1847,11 @@ async function quickDownload() {
     } else {
       const userMatch = value.match(/https?:\/\/(?:twitter\.com|x\.com)\/([^/\s?]+)/);
       if (userMatch) {
-        const reserved = ['i','search','status','home','explore','notifications','messages','settings','compose','bookmarks','lists'];
-        if (!reserved.includes(userMatch[1].toLowerCase())) value = userMatch[1];
+        const reserved = ['i','search','status','home','explore','notifications','messages','settings','compose','bookmarks','lists','following'];
+        if (reserved.includes(userMatch[1].toLowerCase())) {
+          return toast('Could not extract username from URL', 'warn'); // 保留字路径（如 /i/status/…）不当作用户名提交
+        }
+        value = userMatch[1];
       }
       if (value.startsWith('@')) value = value.slice(1);
       if (!value) return toast('Could not extract username from URL', 'warn');
@@ -1866,8 +1901,8 @@ function connectSSE() {
   const jwt = localStorage.getItem('tmd_jwt_token');
   const params = new URLSearchParams();
   if (jwt) params.append('token', jwt);
-  sseSource = new EventSource('/api/v1/sse/tasks?' + params.toString());
-  sseSource.onopen = () => { sseReconnectDelay = 2000; updateSseBadge(true); };
+  sseSource = new EventSource(apiBase() + '/api/v1/sse/tasks?' + params.toString());
+  sseSource.onopen = () => { sseReconnectDelay = 2000; updateSseBadge(true); checkHealth(); };
   sseSource.onerror = () => {
     updateSseBadge(false);
     if (sseSource) { sseSource.close(); sseSource = null; }
@@ -1917,6 +1952,10 @@ async function init() {
   document.getElementById('menuToggle').onclick = openSidebar;
   document.getElementById('sidebarClose').onclick = closeSidebar;
   document.getElementById('sidebarOverlay').onclick = closeSidebar;
+  // brand logo：走 hash 路由而非整页刷新（避免丢 SSE/状态，兼容 TMD_DEV_BASE）
+  document.querySelectorAll('[data-page-link]').forEach(el => {
+    el.addEventListener('click', (e) => { e.preventDefault(); navigateTo(el.dataset.pageLink); });
+  });
   document.getElementById('authSubmit').onclick = submitAuth;
   document.getElementById('authCancel').onclick = hideAuth;
   document.getElementById('authKey').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAuth(); });
@@ -1933,7 +1972,11 @@ async function init() {
     } else {
       await ENDPOINTS.tasks();
     }
-  } catch (e) { /* 401 已由 _fetch 统一弹框；网络失败不阻塞启动 */ }
+  } catch (e) {
+    // 无 JWT 且服务器要求认证：必须弹登录框（401 在有 JWT 时由 _fetch 处理，无 JWT 时这里兜底）
+    if (!jwt && (e.status === 401 || e.message === 'unauthorized')) showAuth('Authentication required');
+    /* 网络失败不阻塞启动 */
+  }
   try {
     const t = await ENDPOINTS.tasks();
     if (Array.isArray(t)) { pageTasks = t; refreshStats(); if (state.page === 'dashboard') renderRecentTasks(); if (state.page === 'tasks') updateTasksUI(); }
