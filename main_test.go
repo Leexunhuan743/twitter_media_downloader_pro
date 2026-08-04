@@ -1,7 +1,11 @@
 package main
 
 import (
+	"errors"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -70,6 +74,33 @@ func TestRunReturnsBootstrapErrors(t *testing.T) {
 	err := run([]string{"-port", "invalid"})
 
 	assert.EqualError(t, err, `invalid -port "invalid": must be an integer from 1 to 65535`)
+}
+
+func TestRunLogsFinalStartupError(t *testing.T) {
+	const helperEnv = "TMD_TEST_RUN_STARTUP_ERROR"
+	if os.Getenv(helperEnv) == "1" {
+		err := run(nil)
+		var logged *loggedError
+		if err == nil || !errors.As(err, &logged) {
+			os.Exit(2)
+		}
+		os.Exit(0)
+	}
+
+	appRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(appRoot, "conf.yaml"), []byte("root_path: ["), 0600))
+	t.Setenv(helperEnv, "1")
+	t.Setenv("TMD_HOME", appRoot)
+	t.Setenv("TMD_PORT", "")
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestRunLogsFinalStartupError$")
+	output, err := cmd.CombinedOutput()
+	require.NoErrorf(t, err, "helper process failed: %s", output)
+
+	logData, err := os.ReadFile(filepath.Join(appRoot, "tmd2.log"))
+	require.NoError(t, err)
+	assert.Contains(t, string(logData), "[startup] Process failed")
+	assert.Contains(t, string(logData), "config load failed")
 }
 
 func TestValidateConfigRequiresRootPath(t *testing.T) {

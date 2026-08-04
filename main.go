@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -58,20 +57,28 @@ func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		var reported *reportedError
-		if !errors.As(err, &reported) {
+		var logged *loggedError
+		if !errors.As(err, &logged) {
 			_, _ = fmt.Fprintln(os.Stderr, err)
 		}
 		os.Exit(1)
 	}
 }
 
-type reportedError struct {
+type loggedError struct {
 	err error
 }
 
-func (e *reportedError) Error() string { return e.err.Error() }
-func (e *reportedError) Unwrap() error { return e.err }
+func (e *loggedError) Error() string { return e.err.Error() }
+func (e *loggedError) Unwrap() error { return e.err }
+
+func logRunError(err error) error {
+	if err == nil {
+		return nil
+	}
+	log.Errorf("[startup] Process failed error=%q", err.Error())
+	return &loggedError{err: err}
+}
 
 func run(args []string) (runErr error) {
 	var serverPort int
@@ -121,10 +128,7 @@ func run(args []string) (runErr error) {
 		}
 	}()
 	defer func() {
-		if runErr != nil {
-			log.Errorf("[startup] Process failed error=%q", runErr.Error())
-			runErr = &reportedError{err: runErr}
-		}
+		runErr = logRunError(runErr)
 	}()
 
 	loadResult, err := config.LoadStartupConfig(confPath, bootstrap.confArg, os.Stderr)
@@ -198,18 +202,11 @@ func run(args []string) (runErr error) {
 		cli.SetClientLogger(c, cliLogWriter)
 	}
 
-	// 信号处理
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, shutdownSignals()...)
-	defer close(sigChan)
-	defer signal.Stop(sigChan)
-	go func() {
-		sig, ok := <-sigChan
-		if ok {
-			log.Warnf("[listener] Signal caught signal=%s", sig)
-			cancel()
-		}
-	}()
+	stopSignals := notifyOnShutdownSignal(func(sig os.Signal) {
+		log.Warnf("[listener] Signal caught signal=%s", sig)
+		cancel()
+	})
+	defer stopSignals()
 
 	// 构造依赖
 	deps := &cli.Dependencies{
@@ -374,12 +371,11 @@ func runServer(conf *config.Config, appRootPath string, port int, loginOpts twit
 	}
 	defer server.GracefulShutdown("server-exit")
 
-	// 信号处理
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, shutdownSignals()...)
-	defer close(sigChan)
-	defer signal.Stop(sigChan)
-	startServerSignalHandler(sigChan, server.GracefulShutdown)
+	stopSignals := notifyOnShutdownSignal(func(sig os.Signal) {
+		log.Warnf("[server] Signal caught signal=%s", sig)
+		server.GracefulShutdown("signal:" + sig.String())
+	})
+	defer stopSignals()
 
 	// Bot 初始化
 	botConfPath := filepath.Join(appRootPath, "bot_config.yaml")
@@ -405,18 +401,6 @@ func runServer(conf *config.Config, appRootPath string, port int, loginOpts twit
 		server.GracefulShutdown("server-closed")
 	}
 	return nil
-}
-
-func startServerSignalHandler(sigChan <-chan os.Signal, shutdown func(string)) {
-	go func() {
-		sig, ok := <-sigChan
-		if !ok {
-			return
-		}
-		log.Warnf("[server] Signal caught signal=%s", sig)
-		// SIGKILL 无法捕获；这里只处理可拦截的退出信号，确保数据库等资源优雅关闭。
-		shutdown("signal:" + sig.String())
-	}()
 }
 
 func isEmptyBotConfigError(err error) bool {

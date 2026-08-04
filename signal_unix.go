@@ -9,9 +9,7 @@ import (
 
 func shutdownSignals() []os.Signal {
 	return []os.Signal{
-		syscall.SIGHUP,
-		syscall.SIGINT,
+		os.Interrupt,
 		syscall.SIGTERM,
-		syscall.SIGQUIT,
 	}
 }

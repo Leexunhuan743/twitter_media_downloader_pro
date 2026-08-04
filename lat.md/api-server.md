@@ -252,4 +252,6 @@ Three independent rebuild functions (`rebuildConfigPanel` / `rebuildCookiesPanel
 
 Handles SIGINT/SIGTERM: drains DownloadQueue (15s max), waits for active tasks, closes DB, then exits.
 
+`[[signal.go#notifyOnShutdownSignal]]` stops notification immediately after the first signal, restoring default handling so a second signal can force termination during a slow drain. Its returned stop function also makes normal Server exit release signal resources idempotently.
+
 Server construction returns dependency errors to `[[main.go#runServer]]`. Once construction succeeds, `runServer` invokes idempotent graceful shutdown on normal listener closure and startup failure, so partially started schedulers, bots, background cleanup loops, and database resources are released before the process exits.
