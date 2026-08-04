@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"encoding/json"
 	log "github.com/sirupsen/logrus"
 	"net/http"
 	"os"
@@ -247,4 +248,47 @@ var d=await r.json();
 if(d.success)window.location.reload(true)}
 </script>
 </div>`
+}
+
+// 主题 API HTTP 处理器
+
+func (s *Server) handleGetTheme(w http.ResponseWriter, r *http.Request) {
+	s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]string{
+		"theme": getFrontendTheme(),
+	}))
+}
+
+func (s *Server) handleSetTheme(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Theme string `json:"theme"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Debugf("[theme] Invalid request body error=%q", err.Error())
+		s.writeError(w, http.StatusBadRequest, "Invalid JSON body")
+		return
+	}
+
+	if !setFrontendTheme(req.Theme) {
+		log.Warnf("[theme] Invalid theme directory theme=%q", req.Theme)
+		s.writeError(w, http.StatusBadRequest, "Invalid theme: directory not found or missing index.html")
+		return
+	}
+
+	log.Infof("[theme] Switched theme=%s", req.Theme)
+	s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]string{
+		"theme": getFrontendTheme(),
+	}))
+}
+
+func (s *Server) handleGetThemes(w http.ResponseWriter, r *http.Request) {
+	themes := listThemes()
+	if themes == nil {
+		log.Error("[theme] List failed")
+		s.writeError(w, http.StatusInternalServerError, "Failed to list themes")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]interface{}{
+		"themes":  themes,
+		"current": getFrontendTheme(),
+	}))
 }
