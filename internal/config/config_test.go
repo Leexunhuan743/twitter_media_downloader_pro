@@ -19,6 +19,17 @@ func clearConfigEnv(t *testing.T) {
 	}
 }
 
+func TestWriteDefaultBotConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "bot_config.yaml")
+
+	require.NoError(t, WriteDefaultBotConfig(configPath))
+	written, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, defaultBotConfig, written)
+	assert.Contains(t, string(written), "# --- Telegram ---")
+	assert.Contains(t, string(written), "# --- Feishu / Lark ---")
+}
+
 func TestMaxDownloadRoutineFieldUsesConfigDefault(t *testing.T) {
 	want := strconv.Itoa(DefaultMaxDownloadRoutine())
 

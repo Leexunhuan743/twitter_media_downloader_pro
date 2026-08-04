@@ -10,6 +10,8 @@ Bootstrap flags are consumed by `main.go` before the remaining arguments are pas
 
 Port selection is layered: explicit `-port` wins, then `TMD_PORT`, then default `25556`. Invalid ports fail before config loading so server startup cannot proceed with an ambiguous listener.
 
+`main` delegates to `[[main.go#run]]`, which returns startup and CLI execution errors to the process boundary. After logging is initialized, final errors are recorded before rotating-log closure and marked as reported to avoid duplicate stderr output. The process exits non-zero only after deferred context cancellation, database closure, request reporting, and log closure execute.
+
 ## App Root and Config
 
 The app root determines where config, logs, cookies, and schedules live.
@@ -24,7 +26,7 @@ Proxy setup is centralized in startup: `proxy_url` from config sets both `HTTP_P
 
 Twitter clients and the database are initialized once and injected downward.
 
-`[[main.go#initializeClients]]` logs in the master Twitter client, enables rate limiting, loads `additional_cookies.yaml`, initializes the download store path, and opens the SQLite database. CLI mode closes the DB directly; server mode delegates cleanup to graceful shutdown.
+`[[main.go#initializeClients]]` logs in the master Twitter client, enables rate limiting, loads `additional_cookies.yaml`, initializes the download store path, and opens the SQLite database. Initialization failures are returned as errors instead of terminating the process. CLI mode closes the DB directly; server mode delegates cleanup to graceful shutdown.
 
 ## CLI Argument Model
 

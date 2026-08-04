@@ -112,7 +112,8 @@ func setupTestServerWithAppRoot(t *testing.T, appRoot string) (*Server, *sqlx.DB
 	}
 
 	client := resty.New()
-	server := NewServer(client, []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(client, []*resty.Client{}, db, cfg, appRoot, nil)
+	require.NoError(t, err)
 	t.Cleanup(server.taskManager.Close)
 	t.Cleanup(func() {
 		if server.downloadQueue != nil {
@@ -201,7 +202,8 @@ func TestNewServer(t *testing.T) {
 	}
 
 	client := resty.New()
-	server := NewServer(client, []*resty.Client{}, db, cfg, "/app", nil)
+	server, err := NewServer(client, []*resty.Client{}, db, cfg, "/app", nil)
+	require.NoError(t, err)
 	defer server.taskManager.Close()
 
 	assert.NotNil(t, server)
@@ -212,6 +214,13 @@ func TestNewServer(t *testing.T) {
 	assert.NotNil(t, server.downloadService)
 	assert.NotNil(t, server.downloadQueue)
 	assert.Equal(t, "/app", server.appRootPath)
+}
+
+func TestNewServerReturnsDependencyErrors(t *testing.T) {
+	server, err := NewServer(resty.New(), nil, nil, nil, t.TempDir(), nil)
+
+	assert.Nil(t, server)
+	assert.EqualError(t, err, "download service create failed: config is nil")
 }
 
 func TestHandleUpdateSchedulesRawInitializesSchedulerAfterStartupParseFailure(t *testing.T) {
@@ -229,7 +238,8 @@ func TestHandleUpdateSchedulesRawInitializesSchedulerAfterStartupParseFailure(t 
 		MaxDownloadRoutine: 5,
 		MaxFileNameLen:     100,
 	}
-	server := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	require.NoError(t, err)
 	defer server.taskManager.Close()
 	assert.Nil(t, server.scheduler)
 
@@ -279,7 +289,8 @@ func TestHandleGetSchedulesReturnsFrontendFieldNames(t *testing.T) {
 		MaxDownloadRoutine: 5,
 		MaxFileNameLen:     100,
 	}
-	server := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	require.NoError(t, err)
 	defer server.taskManager.Close()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/schedules", nil)
@@ -309,7 +320,8 @@ func TestStructuredScheduleCRUDUsesStableID(t *testing.T) {
 		MaxDownloadRoutine: 5,
 		MaxFileNameLen:     100,
 	}
-	server := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	require.NoError(t, err)
 	defer server.taskManager.Close()
 
 	createBody := `{"type":"list","target":"12345","name":"List A","schedule":"interval:1h","enabled":true,"run_on_start":false,"auto_follow":true}`
@@ -389,7 +401,8 @@ func TestStructuredScheduleCRUDSupportsMixedAndNormalizesShape(t *testing.T) {
 		MaxDownloadRoutine: 5,
 		MaxFileNameLen:     100,
 	}
-	server := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	require.NoError(t, err)
 	defer server.taskManager.Close()
 
 	createBody := `{"type":"mixed","target":"should-drop","users":["@alice"],"lists":["12345"],"following_names":[" bob "],"name":"Mixed A","schedule":"interval:1h","enabled":true}`
@@ -951,7 +964,8 @@ func TestServer_PutRoutesForConfigFieldsAndCookies(t *testing.T) {
 		MaxFileNameLen:     100,
 	}
 
-	server := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	require.NoError(t, err)
 	defer server.taskManager.Close()
 	handler := server.buildHandler()
 
@@ -999,7 +1013,8 @@ func TestServer_UpdateConfigRawRejectsInvalidSemanticConfig(t *testing.T) {
 	appRoot := t.TempDir()
 	cfg := &config.Config{RootPath: appRoot}
 
-	server := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	require.NoError(t, err)
 	defer server.taskManager.Close()
 	handler := server.buildHandler()
 
@@ -1023,7 +1038,8 @@ func TestServer_UpdateConfigRawPersistsNormalizedConfig(t *testing.T) {
 	appRoot := t.TempDir()
 	cfg := &config.Config{RootPath: appRoot}
 
-	server := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	require.NoError(t, err)
 	defer server.taskManager.Close()
 	handler := server.buildHandler()
 
@@ -1062,7 +1078,8 @@ func TestServer_SaveCookiesFailsWhenExistingCookiesUnreadable(t *testing.T) {
 		MaxFileNameLen:     100,
 	}
 
-	server := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	require.NoError(t, err)
 	defer server.taskManager.Close()
 	handler := server.buildHandler()
 
@@ -1091,7 +1108,8 @@ func TestServer_SaveCookiesKeepsOldValuesByOriginalIndex(t *testing.T) {
 		MaxFileNameLen:     100,
 	}
 
-	server := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	require.NoError(t, err)
 	defer server.taskManager.Close()
 	handler := server.buildHandler()
 

@@ -66,6 +66,12 @@ func TestParseBootstrapArgsPassesUnknownFlagsToCLI(t *testing.T) {
 	assert.Equal(t, []string{"-unknown", "value", "-user", "alice"}, parsed.cliArgs)
 }
 
+func TestRunReturnsBootstrapErrors(t *testing.T) {
+	err := run([]string{"-port", "invalid"})
+
+	assert.EqualError(t, err, `invalid -port "invalid": must be an integer from 1 to 65535`)
+}
+
 func TestValidateConfigRequiresRootPath(t *testing.T) {
 	err := config.Validate(nil)
 	assert.EqualError(t, err, "config is nil")

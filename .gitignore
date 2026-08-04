@@ -55,7 +55,7 @@ logs/
 tmp/
 temp/
 downloads/
-config/
+/config/
 data/
 
 # === Migration / Temp Files ===

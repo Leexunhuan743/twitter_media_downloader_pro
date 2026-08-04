@@ -49,13 +49,16 @@ type Server struct {
 	authRateLimit     *authRateLimiter
 }
 
-func NewServer(client *resty.Client, additionalClients []*resty.Client, db *sqlx.DB, config *config.Config, appRootPath string, logWriter io.Closer) *Server {
+func NewServer(client *resty.Client, additionalClients []*resty.Client, db *sqlx.DB, config *config.Config, appRootPath string, logWriter io.Closer) (*Server, error) {
 	return NewServerWithConsoleLogHub(client, additionalClients, db, config, appRootPath, logWriter, consolelog.DefaultHub())
 }
 
-func NewServerWithConsoleLogHub(client *resty.Client, additionalClients []*resty.Client, db *sqlx.DB, config *config.Config, appRootPath string, logWriter io.Closer, logHub *consolelog.Hub) *Server {
+func NewServerWithConsoleLogHub(client *resty.Client, additionalClients []*resty.Client, db *sqlx.DB, config *config.Config, appRootPath string, logWriter io.Closer, logHub *consolelog.Hub) (*Server, error) {
 	if logHub == nil {
 		logHub = consolelog.DefaultHub()
+	}
+	if config == nil {
+		return nil, fmt.Errorf("download service create failed: config is nil")
 	}
 
 	eventBus := NewEventBus()
@@ -78,8 +81,6 @@ func NewServerWithConsoleLogHub(client *resty.Client, additionalClients []*resty
 		},
 	}
 
-	s.authRateLimit.startCleanupLoop()
-
 	// 配置副本：使 service.Dependencies 持有独立的 Config 副本，
 	// 避免与 Server.config 共享同一指针。这样 handleUpdateConfigRaw
 	// 的 *s.config = *testConf 只影响 Server 显示用配置，不影响运行时依赖，
@@ -94,10 +95,13 @@ func NewServerWithConsoleLogHub(client *resty.Client, additionalClients []*resty
 		ListSyncManager:   downloading.NewListSyncManager(db),
 	})
 	if err != nil {
-		log.Fatalf("[server] Download service create failed error=%q", err.Error())
+		s.taskManager.Close()
+		eventBus.Close()
+		return nil, fmt.Errorf("download service create failed: %w", err)
 	}
 	s.downloadService = downloadService
 	s.downloadQueue = NewDownloadQueue(s)
+	s.authRateLimit.startCleanupLoop()
 
 	schedulesPath := filepath.Join(appRootPath, "schedules.yaml")
 	sched, err := scheduler.New(schedulesPath, s.scheduledDownload)
@@ -108,7 +112,7 @@ func NewServerWithConsoleLogHub(client *resty.Client, additionalClients []*resty
 		s.scheduler = sched
 	}
 
-	return s
+	return s, nil
 }
 
 func (s *Server) getScheduler() *scheduler.Scheduler {

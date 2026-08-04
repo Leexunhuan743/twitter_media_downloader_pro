@@ -251,3 +251,5 @@ Three independent rebuild functions (`rebuildConfigPanel` / `rebuildCookiesPanel
 ## Graceful Shutdown
 
 Handles SIGINT/SIGTERM: drains DownloadQueue (15s max), waits for active tasks, closes DB, then exits.
+
+Server construction returns dependency errors to `[[main.go#runServer]]`. Once construction succeeds, `runServer` invokes idempotent graceful shutdown on normal listener closure and startup failure, so partially started schedulers, bots, background cleanup loops, and database resources are released before the process exits.

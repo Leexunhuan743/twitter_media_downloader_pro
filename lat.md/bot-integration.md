@@ -8,6 +8,8 @@ Bots are created only in server mode after `bot_config.yaml` is loaded from the 
 
 `main.go` checks each provider config for its required credential fields, constructs enabled bots with server-owned services, and passes them into `server.InitBot`. Feishu also registers its HTTP callback route before the server handler is built.
 
+When `bot_config.yaml` is absent, `[[internal/config/bot_config.go#WriteDefaultBotConfig]]` writes the embedded commented template from `internal/config/default_bot_config.yaml`. Configuration owns this starter content while `main.go` retains Bot runtime attachment.
+
 Command-capable providers receive `TaskManager`, `EventBus`, `LogHub`, and `server.EnqueueTask`. Push-only providers receive `EventBus` and `LogHub`.
 
 ## Provider Matrix
