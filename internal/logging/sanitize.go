@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 var (
@@ -73,8 +74,12 @@ func StripANSI(text string) string {
 		case '\x9b':
 			index = skipANSIControlSequence(text, index+1)
 		default:
-			sanitized.WriteByte(text[index])
-			index++
+			_, size := utf8.DecodeRuneInString(text[index:])
+			if size <= 0 {
+				size = 1
+			}
+			sanitized.WriteString(text[index : index+size])
+			index += size
 		}
 	}
 
@@ -193,7 +198,7 @@ func isSensitiveFieldName(name string) bool {
 // SanitizeLogText removes terminal control sequences and redacts credentials
 // while preserving line breaks used by multiline logs.
 func SanitizeLogText(text string) string {
-	text = StripANSI(RedactSensitiveText(text))
+	text = RedactSensitiveText(StripANSI(text))
 	return strings.Map(func(value rune) rune {
 		if value == '\n' || value == '\t' || !unicode.IsControl(value) {
 			return value
@@ -209,13 +214,20 @@ func SanitizeURL(raw string) string {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return SanitizeLogText(raw)
+		return url.Values{"invalid-url": {MaskSecret(raw)}}.Encode()
 	}
 	if u.User != nil {
 		u.User = url.User(MaskSecret(u.User.String()))
 	}
 
-	query := u.Query()
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		u.RawQuery = url.Values{"malformed_query": {MaskSecret(u.RawQuery)}}.Encode()
+		if u.Fragment != "" {
+			u.Fragment = RedactSensitiveText(u.Fragment)
+		}
+		return u.String()
+	}
 	queryChanged := false
 	for key, values := range query {
 		for index, value := range values {

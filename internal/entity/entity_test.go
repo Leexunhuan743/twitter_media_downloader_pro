@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
@@ -79,7 +80,7 @@ func TestConstructorsRejectNilDatabase(t *testing.T) {
 }
 
 func TestSyncRejectsUnsafeEntityNames(t *testing.T) {
-	unsafeNames := []string{"", ".", "..", "../escape", `child/name`, `child\name`}
+	unsafeNames := []string{"", ".", "..", "../escape", `child/name`, `child\name`, "windows.", "windows "}
 
 	for _, fixture := range entityFixtures {
 		t.Run(fixture.name, func(t *testing.T) {
@@ -221,6 +222,7 @@ func TestRenameRollsBackWhenDatabaseRecordIsMissing(t *testing.T) {
 			err = result.Rename("new")
 
 			assert.Error(t, err)
+			assert.ErrorIs(t, err, entity.ErrNotFound)
 			assert.DirExists(t, filepath.Join(parentDir, "old"))
 			assert.NoDirExists(t, filepath.Join(parentDir, "new"))
 			name, nameErr := result.Name()
@@ -228,6 +230,51 @@ func TestRenameRollsBackWhenDatabaseRecordIsMissing(t *testing.T) {
 			assert.Equal(t, "old", name)
 		})
 	}
+}
+
+func TestRenameRefreshesStaleEntityBeforeMovingDirectory(t *testing.T) {
+	for _, fixture := range entityFixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			db := openEntityTestDB(t)
+			parentDir := t.TempDir()
+			first := newFixtureEntity(t, fixture, db, parentDir)
+			require.NoError(t, first.Create("old"))
+			require.NoError(t, os.WriteFile(filepath.Join(parentDir, "old", "data.txt"), []byte("data"), 0600))
+
+			stale, err := fixture.newEntity(db, parentDir)
+			require.NoError(t, err)
+			require.NoError(t, first.Rename("first"))
+
+			require.NoError(t, stale.Rename("second"))
+
+			assert.NoDirExists(t, filepath.Join(parentDir, "first"))
+			assert.FileExists(t, filepath.Join(parentDir, "second", "data.txt"))
+			name, nameErr := stale.Name()
+			require.NoError(t, nameErr)
+			assert.Equal(t, "second", name)
+		})
+	}
+}
+
+func TestUserRenamePreservesFreshStatistics(t *testing.T) {
+	db := openEntityTestDB(t)
+	parentDir := t.TempDir()
+	result := newFixtureEntity(t, entityFixtures[0], db, parentDir)
+	require.NoError(t, result.Create("old"))
+	id, err := result.Id()
+	require.NoError(t, err)
+	releaseTime := time.Date(2026, time.August, 9, 12, 30, 0, 0, time.UTC)
+	require.NoError(t, database.UpdateUserEntityTweetStat(db, id, releaseTime, 42))
+
+	require.NoError(t, result.Rename("new"))
+
+	record, err := database.GetUserEntity(db, id)
+	require.NoError(t, err)
+	require.NotNil(t, record)
+	assert.True(t, record.LatestReleaseTime.Valid)
+	assert.True(t, record.LatestReleaseTime.Time.Equal(releaseTime))
+	assert.Equal(t, int32(42), record.MediaCount.Int32)
+	assert.True(t, record.MediaCount.Valid)
 }
 
 func TestRemoveRestoresDirectoryWhenDatabaseDeleteFails(t *testing.T) {

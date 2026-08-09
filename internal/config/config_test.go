@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 
@@ -21,6 +22,7 @@ func clearConfigEnv(t *testing.T) {
 
 func TestWriteDefaultBotConfig(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "bot_config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte("partial"), 0644))
 
 	require.NoError(t, WriteDefaultBotConfig(configPath))
 	written, err := os.ReadFile(configPath)
@@ -28,6 +30,14 @@ func TestWriteDefaultBotConfig(t *testing.T) {
 	assert.Equal(t, defaultBotConfig, written)
 	assert.Contains(t, string(written), "# --- Telegram ---")
 	assert.Contains(t, string(written), "# --- Feishu / Lark ---")
+	if runtime.GOOS != "windows" {
+		info, statErr := os.Stat(configPath)
+		require.NoError(t, statErr)
+		assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	}
+	tempFiles, err := filepath.Glob(configPath + ".tmp-*")
+	require.NoError(t, err)
+	assert.Empty(t, tempFiles)
 }
 
 func TestMaxDownloadRoutineFieldUsesConfigDefault(t *testing.T) {
@@ -97,6 +107,20 @@ func TestProxyURLFieldNormalizesAndValidates(t *testing.T) {
 	}
 
 	t.Fatal("proxy_url field not found")
+}
+
+func TestNormalizeProxyURLDoesNotExposeCredentialsInErrors(t *testing.T) {
+	for _, raw := range []string{
+		"ftp://proxy-user:proxy-password@example.invalid:21",
+		"http://proxy-user:proxy-password@%zz",
+	} {
+		_, err := normalizeProxyURL(raw)
+
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "proxy-user")
+		assert.NotContains(t, err.Error(), "proxy-password")
+		assert.Contains(t, err.Error(), "redacted")
+	}
 }
 
 func TestApplyEnvOverridesConfig(t *testing.T) {

@@ -13,14 +13,15 @@ import (
 	"strings"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/unkmonster/tmd/internal/logging"
 	"github.com/unkmonster/tmd/internal/utils"
 	"gopkg.in/yaml.v3"
 )
 
 const (
-	MinFileNameLen       = 50
-	MaxFileNameLen       = 245
-	MaxDownloadRoutine    = 100
+	MinFileNameLen     = 50
+	MaxFileNameLen     = 245
+	MaxDownloadRoutine = 100
 )
 
 // DefaultMaxDownloadRoutine 返回默认的最大下载并发数
@@ -35,20 +36,20 @@ type Cookie struct {
 }
 
 type Config struct {
-	RootPath           string      `yaml:"root_path"`
-	Cookie             Cookie      `yaml:"cookie"`
-	MaxDownloadRoutine int         `yaml:"max_download_routine"`
-	MaxFileNameLen     int         `yaml:"max_file_name_len"`
-	ProxyURL           string      `yaml:"proxy_url"`
-	APIKey             string      `yaml:"api_key"`
+	RootPath           string `yaml:"root_path"`
+	Cookie             Cookie `yaml:"cookie"`
+	MaxDownloadRoutine int    `yaml:"max_download_routine"`
+	MaxFileNameLen     int    `yaml:"max_file_name_len"`
+	ProxyURL           string `yaml:"proxy_url"`
+	APIKey             string `yaml:"api_key"`
 }
 type BotConfig struct {
-	Telegram *TelegramBotConfig  `yaml:"telegram,omitempty"`
-	Discord  *DiscordBotConfig   `yaml:"discord,omitempty"`
-	Gotify   *GotifyBotConfig    `yaml:"gotify,omitempty"`
-	Pushover *PushoverBotConfig  `yaml:"pushover,omitempty"`
-	WeChat   *WeChatBotConfig    `yaml:"wechat,omitempty"`
-	Feishu   *FeishuBotConfig    `yaml:"feishu,omitempty"`
+	Telegram *TelegramBotConfig `yaml:"telegram,omitempty"`
+	Discord  *DiscordBotConfig  `yaml:"discord,omitempty"`
+	Gotify   *GotifyBotConfig   `yaml:"gotify,omitempty"`
+	Pushover *PushoverBotConfig `yaml:"pushover,omitempty"`
+	WeChat   *WeChatBotConfig   `yaml:"wechat,omitempty"`
+	Feishu   *FeishuBotConfig   `yaml:"feishu,omitempty"`
 }
 type TelegramBotConfig struct {
 	Token        string  `yaml:"token"`
@@ -199,14 +200,14 @@ func GetFieldDefs() []FieldDef {
 			Prompt:  "enter API key for HTTP auth (leave empty to disable)",
 			Default: "",
 			Getter:  func(c *Config) string { return c.APIKey },
-		Setter: func(c *Config, v string) error {
-			v = strings.TrimSpace(v)
-			if v != "" && len(v) < 8 {
-				return fmt.Errorf("api_key must be at least 8 characters when set")
-			}
-			c.APIKey = v
-			return nil
-		},
+			Setter: func(c *Config, v string) error {
+				v = strings.TrimSpace(v)
+				if v != "" && len(v) < 8 {
+					return fmt.Errorf("api_key must be at least 8 characters when set")
+				}
+				c.APIKey = v
+				return nil
+			},
 		},
 	}
 }
@@ -217,22 +218,29 @@ func normalizeProxyURL(raw string) (string, error) {
 		return "", nil
 	}
 	if !strings.Contains(raw, "://") {
-		return "", fmt.Errorf("invalid proxy URL %q: missing scheme or host", raw)
+		return "", fmt.Errorf("invalid proxy URL %q: missing scheme or host", proxyURLForError(raw))
 	}
 
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return "", fmt.Errorf("invalid proxy URL %q: %w", raw, err)
+		return "", fmt.Errorf("invalid proxy URL %q: malformed URL", proxyURLForError(raw))
 	}
 	if parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("invalid proxy URL %q: missing scheme or host", raw)
+		return "", fmt.Errorf("invalid proxy URL %q: missing scheme or host", proxyURLForError(raw))
 	}
 	switch strings.ToLower(parsed.Scheme) {
 	case "http", "https", "socks5":
 		return parsed.String(), nil
 	default:
-		return "", fmt.Errorf("invalid proxy URL %q: unsupported scheme %q", raw, parsed.Scheme)
+		return "", fmt.Errorf("invalid proxy URL %q: unsupported scheme %q", proxyURLForError(raw), parsed.Scheme)
 	}
+}
+
+func proxyURLForError(raw string) string {
+	if strings.Contains(raw, "@") {
+		return logging.SanitizeURL(raw)
+	}
+	return logging.RedactSensitiveText(raw)
 }
 
 func normalizeRootPath(raw string) (string, error) {
@@ -389,7 +397,6 @@ func NormalizeLoadedConf(conf *Config) error {
 	conf.MaxFileNameLen = normalizeInt(conf.MaxFileNameLen, 0, MinFileNameLen, MaxFileNameLen)
 
 	conf.APIKey = strings.TrimSpace(conf.APIKey)
-
 
 	return nil
 }

@@ -36,3 +36,11 @@ func TestBot_StatusConstants(t *testing.T) {
 	assert.Equal(t, api.TaskStatus("completed"), api.TaskStatusCompleted)
 	assert.Equal(t, api.TaskStatus("failed"), api.TaskStatusFailed)
 }
+func TestBotStopIsIdempotent(t *testing.T) {
+	bot := &Bot{stopCh: make(chan struct{})}
+
+	assert.NotPanics(t, func() {
+		bot.Stop()
+		bot.Stop()
+	})
+}

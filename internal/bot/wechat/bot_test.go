@@ -67,3 +67,11 @@ func TestBot_NotifyTaskChanges(t *testing.T) {
 	bot.notifyTaskChanges(nil)
 	bot.notifyTaskChanges("bad type")
 }
+func TestBotStopIsIdempotent(t *testing.T) {
+	bot := &Bot{stopCh: make(chan struct{})}
+
+	assert.NotPanics(t, func() {
+		bot.Stop()
+		bot.Stop()
+	})
+}

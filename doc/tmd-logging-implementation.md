@@ -85,7 +85,7 @@ logrus 全局 logger
 | `github.com/gookit/color` | `v1.6.1` | 少量终端彩色文本 |
 | `gopkg.in/natefinch/lumberjack.v2` | `v2.2.1` indirect | 间接依赖，不是主日志实现入口 |
 
-当前不使用 `github.com/rifflock/lfshook`。文件日志通过 `internal/logging.LumberjackHook` 写入，Hook 写入前会调用 `logging.StripANSI()`，避免彩色控制符进入 `tmd2.log`。
+当前不使用 `github.com/rifflock/lfshook`。文件日志通过 `internal/logging.LumberjackHook` 写入，Hook 写入前调用 `logging.SanitizeLogText()`：按完整 UTF-8 rune 去除 ANSI/C1 控制序列，再脱敏凭据并清理不安全控制字符，避免彩色控制符、秘密或多字节文本截断进入 `tmd2.log`。
 
 主日志文件（实际由 `logging.NewRotatingWriter` 工厂构造，`internal/logging/rotation.go:11-21`，单文件 2MB、2 份备份、14 天、gzip 压缩）：
 
@@ -209,7 +209,7 @@ WARN[...] [consolelog] Slow subscriber closed reason=queue_overflow
 - `handleGetLogs()` 从 Hub 快照中逆序过滤，最新日志优先。
 - `handleLogExport()` 导出的是当前 `tmd2.log`，不是 Hub 的 5000 行快照。
 - `handleLogStats()` 将 fatal 计入 error 统计，避免错误类告警被漏到 info。
-- Access log 使用 `logging.RequestTarget()`，会脱敏 `?token=` 等查询参数。
+- Access log 使用 `logging.RequestTarget()`，会脱敏 `?token=` 等查询参数；无法解析的查询串整体替换为稳定指纹，不保留部分解析结果。
 
 ---
 

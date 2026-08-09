@@ -42,6 +42,7 @@ func (s *shutdownSignalSubscription) listen(handler func(os.Signal)) {
 func (s *shutdownSignalSubscription) stop() {
 	s.unsubscribe()
 	// Do not let callers release resources while the shutdown callback is still using them.
+	// The callback itself must not call stop, because it cannot wait for its own return.
 	<-s.done
 }
 

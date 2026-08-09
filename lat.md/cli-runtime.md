@@ -20,7 +20,7 @@ The app root determines where config, logs, cookies, and schedules live.
 
 Release binaries, Docker entrypoints, and user-facing command examples use the `tmdp` executable name. Existing `TMD_*` environment variables and `.tmd2` config paths remain compatibility interfaces.
 
-Proxy setup is centralized in startup: `proxy_url` from config sets both `HTTP_PROXY` and `HTTPS_PROXY`; otherwise a single existing proxy environment variable is mirrored to the missing pair.
+Proxy setup is centralized in startup: `proxy_url` from config sets both `HTTP_PROXY` and `HTTPS_PROXY`; otherwise a single existing proxy environment variable is mirrored to the missing pair. Validation errors sanitize URL userinfo and known credential forms before they can reach startup logs.
 
 ## Client Initialization
 

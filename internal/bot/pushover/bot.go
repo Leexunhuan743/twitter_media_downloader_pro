@@ -24,6 +24,7 @@ type Bot struct {
 	mu            sync.Mutex
 	stopCh        chan struct{}
 	wg            sync.WaitGroup
+	stopOnce      sync.Once
 }
 
 // NewBot 创建 Pushover bot 实例
@@ -51,8 +52,10 @@ func (b *Bot) Start() error {
 
 // Stop 停止 bot
 func (b *Bot) Stop() {
-	close(b.stopCh)
-	b.wg.Wait()
+	b.stopOnce.Do(func() {
+		close(b.stopCh)
+		b.wg.Wait()
+	})
 }
 
 // Name 返回 bot 名称

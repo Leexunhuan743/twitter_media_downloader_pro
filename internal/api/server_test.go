@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/unkmonster/tmd/internal/bot"
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/database"
 	"github.com/unkmonster/tmd/internal/scheduler"
@@ -37,6 +38,22 @@ type batchDownloadCall struct {
 type fakeDownloadService struct {
 	batchCalls chan batchDownloadCall
 }
+
+type blockingStartBot struct {
+	started chan struct{}
+	release chan struct{}
+	stopped chan struct{}
+}
+
+func (b *blockingStartBot) Start() error {
+	close(b.started)
+	<-b.release
+	return nil
+}
+
+func (b *blockingStartBot) Stop() { close(b.stopped) }
+
+func (b *blockingStartBot) Name() string { return "blocking-test" }
 
 func (f *fakeDownloadService) UserDownload(context.Context, string, string, service.DownloadOptions, service.ProgressReporter) error {
 	return errors.New("unexpected UserDownload call")
@@ -220,7 +237,86 @@ func TestNewServerReturnsDependencyErrors(t *testing.T) {
 	server, err := NewServer(resty.New(), nil, nil, nil, t.TempDir(), nil)
 
 	assert.Nil(t, server)
-	assert.EqualError(t, err, "download service create failed: config is nil")
+	assert.EqualError(t, err, "server config is nil")
+}
+
+func TestShutdownMutationMiddleware(t *testing.T) {
+	server := &Server{shuttingDown: true}
+
+	for _, method := range []string{
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodPatch,
+		http.MethodDelete,
+	} {
+		t.Run(method, func(t *testing.T) {
+			called := false
+			handler := server.shutdownMutationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+			}))
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, httptest.NewRequest(method, "/api/v1/schedules", nil))
+
+			assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+			assert.False(t, called)
+			assert.Contains(t, recorder.Body.String(), "Server is shutting down")
+		})
+	}
+
+	t.Run("read request", func(t *testing.T) {
+		called := false
+		handler := server.shutdownMutationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			called = true
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/schedules", nil))
+
+		assert.Equal(t, http.StatusNoContent, recorder.Code)
+		assert.True(t, called)
+	})
+}
+
+func TestGracefulShutdownWaitsForAdmittedMutation(t *testing.T) {
+	server := &Server{shutdownDone: make(chan struct{})}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	requestDone := make(chan struct{})
+	handler := server.shutdownMutationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	go func() {
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPut, "/api/v1/schedules", nil))
+		close(requestDone)
+	}()
+	<-entered
+
+	shutdownReturned := make(chan struct{})
+	go func() {
+		server.GracefulShutdown("test")
+		close(shutdownReturned)
+	}()
+
+	select {
+	case <-shutdownReturned:
+		t.Fatal("shutdown completed while an admitted mutation was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case <-requestDone:
+	case <-time.After(time.Second):
+		t.Fatal("admitted mutation did not finish")
+	}
+	select {
+	case <-shutdownReturned:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not continue after the mutation finished")
+	}
 }
 
 func TestHandleUpdateSchedulesRawInitializesSchedulerAfterStartupParseFailure(t *testing.T) {
@@ -2177,6 +2273,63 @@ func TestServer_StartAfterShutdownReturnsServerClosed(t *testing.T) {
 
 	assert.ErrorIs(t, err, http.ErrServerClosed)
 	assert.Nil(t, server.httpServer)
+}
+
+func TestServer_StartDoesNotHoldLifecycleLockWhileBotStarts(t *testing.T) {
+	testBot := &blockingStartBot{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		stopped: make(chan struct{}),
+	}
+	server := &Server{
+		shutdownDone: make(chan struct{}),
+		botCallbacks: make(map[string]http.HandlerFunc),
+		bots:         []bot.Bot{testBot},
+	}
+	startDone := make(chan error, 1)
+	go func() { startDone <- server.Start(0) }()
+
+	select {
+	case <-testBot.started:
+	case <-time.After(time.Second):
+		t.Fatal("bot startup did not begin")
+	}
+
+	lockAvailable := make(chan struct{})
+	go func() {
+		server.lifecycleMu.Lock()
+		server.lifecycleMu.Unlock()
+		close(lockAvailable)
+	}()
+	select {
+	case <-lockAvailable:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("server held lifecycle lock while bot startup was blocked")
+	}
+
+	shutdownDone := make(chan struct{})
+	go func() {
+		server.GracefulShutdown("during-start")
+		close(shutdownDone)
+	}()
+	close(testBot.release)
+
+	select {
+	case err := <-startDone:
+		assert.ErrorIs(t, err, http.ErrServerClosed)
+	case <-time.After(2 * time.Second):
+		t.Fatal("server startup did not stop after shutdown")
+	}
+	select {
+	case <-shutdownDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server shutdown did not complete")
+	}
+	select {
+	case <-testBot.stopped:
+	default:
+		t.Fatal("started bot was not stopped")
+	}
 }
 
 func TestServer_GracefulShutdownWaitsForDetachedTaskExit(t *testing.T) {

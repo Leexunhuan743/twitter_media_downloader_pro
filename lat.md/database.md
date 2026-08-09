@@ -30,9 +30,12 @@ users ──1:N── user_links (user symlinked into lists, FK: user_links.user
 User and list entity models keep database records and their filesystem directories consistent across lifecycle operations.
 
 - [[internal/entity/user.go#NewUserEntity]] and [[internal/entity/list.go#NewListEntity]] require a database, normalize the parent to an absolute path, and return either a recorded entity or an unrecorded value ready for creation.
-- Names must be non-empty single path components; [[internal/entity/storage.go#ValidateName]] rejects path traversal, separators, absolute paths, and NUL bytes before filesystem changes.
+- Names must be non-empty single path components; [[internal/entity/storage.go#ValidateName]] rejects path traversal, separators, absolute paths, NUL bytes, and Windows-ambiguous trailing spaces or dots before filesystem changes.
+- Create, rename, and remove are serialized per entity type, stable owner id, and normalized parent directory by [[internal/entity/operation_lock.go#lockEntityOperation]]. Recorded operations refresh the row after acquiring that lock, so a stale in-memory instance acts on the current directory name.
 - Create and rename roll back newly created or moved directories when the database write fails. Rename refuses to overwrite a different existing target with `ErrPathConflict`.
-- Remove first stages the directory under a temporary sibling name, restores it if the database delete fails, and permanently deletes the staged directory only after the record is gone.
+- Rename commits through [[internal/database/user_entity.go#UpdateUserEntityNameIfCurrent]] or [[internal/database/lst_entity.go#UpdateLstEntityNameIfCurrent]]. These name-only compare-and-swap updates reject stale writes with `ErrConcurrentUpdate` and never overwrite concurrent latest-release-time or media-count changes; API callers receive HTTP 409 for either concurrency or target-path conflicts.
+- Remove first stages the directory under a temporary sibling name, restores it if the database delete fails, and permanently deletes the staged directory only after the record is gone. User/list entity DELETE API handlers use this lifecycle and therefore delete the corresponding storage directory, not only its database row.
+- User entity API metadata changes use [[internal/database/user_entity.go#UpdateUserEntityMetadata]] to update only requested statistics in one SQL statement, then perform any requested directory rename last. Missing rows return 404; target/name races return 409.
 - Database update helpers treat zero affected rows as an error so a missing record cannot make a filesystem change appear committed.
 
 `UserEntity` additionally owns latest-release-time and media-count state. Profile directory synchronization and API entity-name edits route through the same entity lifecycle rather than issuing independent filesystem and database mutations.

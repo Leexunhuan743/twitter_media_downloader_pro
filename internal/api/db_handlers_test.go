@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
@@ -665,6 +666,28 @@ func TestHandleDBUserEntityDelete_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
 
+func TestHandleDBUserEntityDeleteRemovesStorageDirectory(t *testing.T) {
+	server, db := createTestServer(t)
+	defer db.Close()
+	require.NoError(t, database.CreateUser(db, &database.User{Id: 1, ScreenName: "delete_user", Name: "Delete User", IsAccessible: true}))
+	parentDir := t.TempDir()
+	record := &database.UserEntity{UserId: 1, Name: "delete-user", ParentDir: parentDir}
+	require.NoError(t, database.CreateUserEntity(db, record))
+	require.NoError(t, os.Mkdir(filepath.Join(parentDir, record.Name), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(parentDir, record.Name, "data.txt"), []byte("data"), 0600))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/db/user-entities/1", nil)
+	req.SetPathValue("id", strconv.Itoa(int(record.Id.Int32)))
+	rr := httptest.NewRecorder()
+	server.handleDBUserEntityDelete(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.NoDirExists(t, filepath.Join(parentDir, record.Name))
+	stored, err := database.GetUserEntity(db, int(record.Id.Int32))
+	require.NoError(t, err)
+	assert.Nil(t, stored)
+}
+
 func TestHandleDBListEntities_Empty(t *testing.T) {
 	server, db := createTestServer(t)
 	defer db.Close()
@@ -762,6 +785,28 @@ func TestHandleDBListEntityDelete_NotFound(t *testing.T) {
 	server.handleDBListEntityDelete(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+func TestHandleDBListEntityDeleteRemovesStorageDirectory(t *testing.T) {
+	server, db := createTestServer(t)
+	defer db.Close()
+	require.NoError(t, database.CreateLst(db, &database.Lst{Id: 1, Name: "Delete List", OwnerUserId: 10}))
+	parentDir := t.TempDir()
+	record := &database.LstEntity{LstId: 1, Name: "delete-list", ParentDir: parentDir}
+	require.NoError(t, database.CreateLstEntity(db, record))
+	require.NoError(t, os.Mkdir(filepath.Join(parentDir, record.Name), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(parentDir, record.Name, "data.txt"), []byte("data"), 0600))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/db/list-entities/1", nil)
+	req.SetPathValue("id", strconv.Itoa(int(record.Id.Int32)))
+	rr := httptest.NewRecorder()
+	server.handleDBListEntityDelete(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.NoDirExists(t, filepath.Join(parentDir, record.Name))
+	stored, err := database.GetLstEntity(db, int(record.Id.Int32))
+	require.NoError(t, err)
+	assert.Nil(t, stored)
 }
 
 func TestHandleDBUserLinks_Empty(t *testing.T) {
@@ -1234,6 +1279,32 @@ func TestHandleDBUserEntityUpdate_ValidatesBeforeRename(t *testing.T) {
 	updated, err := database.GetUserEntity(db, int(record.Id.Int32))
 	require.NoError(t, err)
 	assert.Equal(t, "Original Name", updated.Name)
+}
+
+func TestHandleDBUserEntityUpdateDoesNotRenameBeforeMetadataWrite(t *testing.T) {
+	server, db := createTestServer(t)
+	defer db.Close()
+	require.NoError(t, database.CreateUser(db, &database.User{Id: 1, ScreenName: "entity_test", Name: "Entity Test", IsAccessible: true}))
+	parentDir := t.TempDir()
+	record := &database.UserEntity{UserId: 1, Name: "Original Name", ParentDir: parentDir}
+	require.NoError(t, database.CreateUserEntity(db, record))
+	require.NoError(t, os.Mkdir(filepath.Join(parentDir, record.Name), 0755))
+	_, triggerErr := db.Exec(`CREATE TRIGGER reject_media_count BEFORE UPDATE OF media_count ON user_entities BEGIN SELECT RAISE(FAIL, 'media update rejected'); END;`)
+	require.NoError(t, triggerErr)
+
+	body := bytes.NewBufferString(`{"name":"New Entity Name","media_count":10}`)
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/db/user-entities/1", body)
+	req.SetPathValue("id", strconv.Itoa(int(record.Id.Int32)))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	server.handleDBUserEntityUpdate(rr, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+	assert.DirExists(t, filepath.Join(parentDir, "Original Name"))
+	assert.NoDirExists(t, filepath.Join(parentDir, "New Entity Name"))
+	stored, err := database.GetUserEntity(db, int(record.Id.Int32))
+	require.NoError(t, err)
+	assert.Equal(t, "Original Name", stored.Name)
 }
 
 func TestHandleDBListEntityUpdate_PartialFields(t *testing.T) {

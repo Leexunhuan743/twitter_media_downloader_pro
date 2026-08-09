@@ -10,7 +10,7 @@ The logging stack fans one application log stream out to local files, console ca
 
 `main.go` defers `[[internal/consolelog/hub.go#StopCapture]]` after logger initialization and before rotated-writer cleanup, covering CLI completion, startup failure, and server shutdown. Capture shutdown restores only outputs still owned by that session, closes its pipes, and waits for its workers before the log writers are closed.
 
-Terminal-only ANSI color may be used for compact human scan points such as tweet title fields. File and Web UI sink boundaries use `[[internal/logging/sanitize.go#SanitizeLogText]]` to strip CSI/OSC escapes and unsafe controls while redacting recognized credentials. Web log filters and both UI themes use the current `INFO[...]` TextFormatter lines.
+Terminal-only ANSI color may be used for compact human scan points such as tweet title fields. File and Web UI sink boundaries use `[[internal/logging/sanitize.go#SanitizeLogText]]` to consume UTF-8 as complete runes, strip CSI/OSC/C1 escapes, then redact recognized credentials and unsafe controls. Web log filters and all UI themes use the current `INFO[...]` TextFormatter lines.
 
 Web1 renders the same TextFormatter lines as the CLI contract, adding display-only highlighting for timestamps, domain prefixes, and key=value fields. The raw log text remains the copy/export source.
 
@@ -20,7 +20,7 @@ The console Hub is a bounded, concurrency-safe bridge from process stdout and st
 
 `[[internal/consolelog/hub.go#Hub]]` has a usable zero value, retains lines from oldest to newest, sanitizes them at the public boundary, and caps each stored line at 16 KiB with a `[truncated]` suffix. Pipe capture applies the same bound to unterminated input and resumes normal collection at the next newline.
 
-Subscriber send and close operations share one mutex-owned channel lifecycle. Queue overflow closes and removes only the slow subscriber. `Hub.Close` is terminal: it preserves the snapshot, ignores later additions, closes current and future subscriptions, and stops capture only when that Hub owns the session.
+Subscriber send and close operations share one mutex-owned channel lifecycle. Queue overflow closes and removes only the slow subscriber without logging back through the captured logrus stream. `Hub.Close` is terminal: it preserves the snapshot, ignores later additions, closes current and future subscriptions, and stops capture only when that Hub owns the session.
 
 `[[internal/consolelog/hub.go#StartCapture]]` is idempotent for the active owner and returns `ErrCaptureAlreadyActive` when another Hub owns process capture. Each capture session owns its worker wait group, so shutdown waits for exactly the workers attached to the restored pipes.
 
@@ -34,19 +34,19 @@ Every user-visible log line starts with a domain prefix such as `[cli]`, `[api]`
 
 The Resty client log mirrors the main log's full-detail policy while redacting credentials before they reach disk.
 
-`[[internal/cli/executor.go#SetClientLogger]]` enables Resty debug (`SetDebug(true)`) and sets the dedicated logger to debug level, so `client.log` records every request and response (method, URL, status, duration, headers, body) regardless of the `-dbg` flag. `OnRequestLog`/`OnResponseLog` sanitize headers and bodies before composition; `[[internal/logging/sanitizing_logger.go#SanitizingLogger]]` then cleans the fully formatted block so request-target credentials are covered too. Body output is capped at 256 KB before Resty's JSON formatting, keeping an expanded block below the 2 MB lumberjack write limit. The media download client (`internal/downloader`) is not wired to `client.log`; its logs live in the main log.
+`[[internal/cli/executor.go#SetClientLogger]]` enables Resty debug (`SetDebug(true)`) and sets the dedicated logger to debug level, so `client.log` records every request and response (method, URL, status, duration, headers, body) regardless of the `-dbg` flag. `OnRequestLog`/`OnResponseLog` sanitize headers and bodies before composition; `[[internal/logging/sanitizing_logger.go#SanitizingLogger]]` then cleans the fully formatted block so request-target credentials are covered too. Body output is capped at 256 KB; Resty checks responses before JSON indentation and requests after request-body formatting, keeping the final block below the 2 MB lumberjack write limit. The media download client (`internal/downloader`) is not wired to `client.log`; its logs live in the main log.
 
 ## Sensitive Data
 
 Secrets must never be written to logs in full.
 
-Use `[[internal/logging/sanitize.go#MaskSecret]]`, `[[internal/logging/sanitize.go#RedactSensitiveText]]`, `[[internal/logging/sanitize.go#SanitizeHeaders]]`, or `[[internal/logging/sanitize.go#SanitizeURL]]` before logging tokens, cookies, passwords, API/client secrets, JWTs, Authorization values, URL user information, or sensitive query/fragment values. Fingerprints are stable and idempotent, allowing correlation without retaining plaintext.
+Use `[[internal/logging/sanitize.go#MaskSecret]]`, `[[internal/logging/sanitize.go#RedactSensitiveText]]`, `[[internal/logging/sanitize.go#SanitizeHeaders]]`, or `[[internal/logging/sanitize.go#SanitizeURL]]` before logging tokens, cookies, passwords, API/client secrets, JWTs, Authorization values, URL user information, or sensitive query/fragment values. Fingerprints are stable and idempotent, allowing correlation without retaining plaintext. URL sanitation is fail-closed: an invalid URL is replaced by one fingerprint, while an unparseable query is replaced by a `malformed_query` fingerprint instead of preserving partially parsed or raw input.
 
 ## HTTP Access Logs
 
 HTTP request logs record the request outcome without leaking credentials from query strings.
 
-`loggingMiddleware` logs `METHOD /path status=... dur=... ip=...` using a sanitized request target without a `target=` label. It uses `[[internal/logging/sanitize.go#RequestTarget]]` so SSE URLs such as `/api/v1/logs/stream?token=...` remain useful without exposing the token.
+`loggingMiddleware` logs `METHOD /path status=... dur=... ip=...` using a sanitized request target without a `target=` label. It uses `[[internal/logging/sanitize.go#RequestTarget]]` so SSE URLs such as `/api/v1/logs/stream?token=...` remain useful without exposing the token. Malformed query syntax deliberately sacrifices individual parameters and retains only the path plus a stable fingerprint.
 
 Successful `GET`, `HEAD`, and `OPTIONS` access logs are debug-only to keep Web UI polling, static files, health checks, and SSE connections out of normal output. Mutating requests stay info; any status >=400 is warning.
 
@@ -116,4 +116,4 @@ They keep logrus/TextFormatter and existing Web UI parsing intact. Startup, API,
 
 Logging tests lock sink safety, formatter/rotation compatibility, and failure behavior without external services.
 
-Regression coverage includes JSON and header-style credentials, URL user information/query/fragment values, non-canonical HTTP header casing, CSI/OSC controls, public hub sanitization, zero-value and terminal Hub behavior, concurrent subscriber closure, capture ownership, bounded unterminated lines, nil hook inputs, short writes, Resty request/response bodies, and the 256 KB client-log body cap. See [[development#Development#Testing & CI]].
+Regression coverage includes JSON and header-style credentials, URL user information/query/fragment values, malformed query and invalid URL fail-closed behavior, non-canonical HTTP header casing, CSI/OSC controls, public hub sanitization, zero-value and terminal Hub behavior, concurrent subscriber closure, capture ownership, bounded unterminated lines, nil hook inputs, short writes, Resty request/response bodies, and the 256 KB client-log body cap. See [[development#Development#Testing & CI]].

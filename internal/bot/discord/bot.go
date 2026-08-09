@@ -25,8 +25,9 @@ type Bot struct {
 	channelTasks map[string]map[string]struct{}
 	mu           sync.Mutex
 
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	stopCh   chan struct{}
+	wg       sync.WaitGroup
+	stopOnce sync.Once
 }
 
 // NewBot 创建 Discord bot 实例
@@ -72,13 +73,15 @@ func (b *Bot) Start() error {
 
 // Stop 停止 bot，关闭 Gateway 连接。
 func (b *Bot) Stop() {
-	close(b.stopCh)
-	b.wg.Wait()
-	if b.session != nil {
-		if err := b.session.Close(); err != nil {
-			log.Warnf("[bot-discord] Stop failed error=%q", err.Error())
+	b.stopOnce.Do(func() {
+		close(b.stopCh)
+		b.wg.Wait()
+		if b.session != nil {
+			if err := b.session.Close(); err != nil {
+				log.Warnf("[bot-discord] Stop failed error=%q", err.Error())
+			}
 		}
-	}
+	})
 }
 
 // Name 返回 bot 名称

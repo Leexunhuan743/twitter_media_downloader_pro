@@ -30,6 +30,7 @@ type Bot struct {
 	stopCh     chan struct{}
 	wg         sync.WaitGroup
 	cancel     context.CancelFunc
+	stopOnce   sync.Once
 }
 
 // NewBot 创建微信 bot 实例
@@ -121,11 +122,13 @@ func (b *Bot) runWithReconnect(ctx context.Context) {
 
 // Stop 停止 bot
 func (b *Bot) Stop() {
-	if b.cancel != nil {
-		b.cancel()
-	}
-	close(b.stopCh)
-	b.wg.Wait()
+	b.stopOnce.Do(func() {
+		if b.cancel != nil {
+			b.cancel()
+		}
+		close(b.stopCh)
+		b.wg.Wait()
+	})
 }
 
 // Name 返回 bot 名称

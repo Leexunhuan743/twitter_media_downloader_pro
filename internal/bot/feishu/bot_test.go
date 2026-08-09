@@ -81,3 +81,11 @@ func TestBot_CallbackHandlerBeforeStartReturnsUnavailable(t *testing.T) {
 
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }
+func TestBotStopIsIdempotent(t *testing.T) {
+	bot := &Bot{stopCh: make(chan struct{})}
+
+	assert.NotPanics(t, func() {
+		bot.Stop()
+		bot.Stop()
+	})
+}

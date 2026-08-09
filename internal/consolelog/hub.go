@@ -191,7 +191,6 @@ func (h *Hub) Add(line string) {
 
 	if len(overflowed) > 0 {
 		h.removeSubscribers(overflowed)
-		log.Warnf("[consolelog] Slow subscribers closed count=%d reason=queue_overflow", len(overflowed))
 	}
 }
 

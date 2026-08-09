@@ -23,6 +23,9 @@ func ValidateName(name string) error {
 	if name == "" || name == "." || name == ".." {
 		return fmt.Errorf("%w: %q", ErrInvalidName, name)
 	}
+	if strings.TrimRight(name, " .") != name {
+		return fmt.Errorf("%w: name cannot end with a space or dot: %q", ErrInvalidName, name)
+	}
 	if strings.ContainsRune(name, 0) || strings.ContainsAny(name, `/\`) || filepath.IsAbs(name) || filepath.Base(name) != name {
 		return fmt.Errorf("%w: name must be a single path component: %q", ErrInvalidName, name)
 	}
