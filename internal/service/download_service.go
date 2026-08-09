@@ -19,6 +19,7 @@ import (
 	"github.com/unkmonster/tmd/internal/downloading"
 	"github.com/unkmonster/tmd/internal/downloading/profile"
 	"github.com/unkmonster/tmd/internal/logging"
+	"github.com/unkmonster/tmd/internal/naming"
 	"github.com/unkmonster/tmd/internal/path"
 	"github.com/unkmonster/tmd/internal/twitter"
 	"github.com/unkmonster/tmd/internal/utils"
@@ -1018,7 +1019,7 @@ func (s *downloadServiceImpl) downloadProfile(ctx context.Context, taskID string
 	for i, user := range users {
 		requests[i] = profile.DownloadRequest{
 			ScreenName:  user.ScreenName,
-			UserTitle:   user.Title(),
+			UserTitle:   naming.NewUserNaming(user.Name, user.ScreenName, s.maxFileNameLen()).SanitizedTitle(),
 			Name:        user.Name,
 			UserID:      user.Id,
 			AvatarURL:   user.AvatarURL,

@@ -1,6 +1,6 @@
 # Utility Contracts
 
-Shared utilities define small, stable contracts for priority scheduling, filesystem naming, HTTP/media handling, and platform console integration.
+Shared utilities define small, stable contracts for priority scheduling, filesystem and domain naming, HTTP/media handling, and platform console integration.
 
 ## Priority Heap
 
@@ -20,6 +20,14 @@ Filename sanitization produces a Windows-compatible component within an explicit
 
 [[internal/utils/fs.go#WinFileNameWithMaxLen]] removes URLs, unsupported characters, and control characters; converts line feeds to spaces; removes carriage returns and trailing dots/spaces; and prefixes reserved device names. Empty output remains valid so naming layers can apply their domain fallback.
 
+## Domain Naming
+
+Domain naming composes sanitized filename parts with stable identities, deterministic fallbacks, and explicit UTF-8 byte budgets.
+
+[[internal/naming/user_naming.go#NewUserNaming]] preserves a non-empty screen name in a closed parenthesized suffix and spends the remaining budget on the display name. Profile defaults use the same policy through [[internal/downloading/profile/downloader.go#resolveUserTitle]], while an explicit `UserTitle` remains authoritative after generic sanitization.
+
+[[internal/naming/list_naming.go#NewListNamingFromBase]] preserves an existing numeric list-ID suffix and falls back to `list(ID)` or `list` for empty, fully removed, nil, and typed-nil inputs. [[internal/naming/tweet_naming.go#TweetNaming#FileName]] normalizes untrusted extensions into the reserved extension budget so they cannot add path components; tweet log creators are single-line and use `unknown` when empty.
+
 ## HTTP And Media URLs
 
 HTTP and Twitter media helpers fail predictably and only rewrite URLs whose parsed hosts belong to the intended CDN.
@@ -36,4 +44,4 @@ On Windows, [[internal/utils/win32.go#GetConsoleTitle]] uses cached UTF-16 Win32
 
 Utility boundary tests use synthetic paths and URLs and run under the repository-wide validation commands.
 
-Regression coverage includes empty responses and paths, dotfiles, path reservation normalization, Windows device names, safe empty-heap access, deceptive CDN hosts, and existing compatibility behavior. See [[development#Development#Testing & CI]].
+Regression coverage includes empty responses and paths, dotfiles, path reservation normalization, Windows device names, domain identity preservation, extension path isolation, deterministic naming fallbacks, safe empty-heap access, deceptive CDN hosts, and existing compatibility behavior. See [[development#Development#Testing & CI]].
