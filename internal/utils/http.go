@@ -10,7 +10,13 @@ import (
 
 var avatarSuffixRe = regexp.MustCompile(`_(normal|bigger|mini)(\.[^/?#]+)([?#].*)?$`)
 
+// ErrNilHTTPResponse indicates that no HTTP response was available to inspect.
+var ErrNilHTTPResponse = errors.New("HTTP response is nil")
+
 func CheckRespStatus(resp *resty.Response) error {
+	if resp == nil {
+		return ErrNilHTTPResponse
+	}
 	if resp.StatusCode() >= 400 {
 		return &HttpStatusError{Code: resp.StatusCode(), Msg: resp.String()}
 	}

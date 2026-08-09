@@ -4,42 +4,50 @@
 package utils
 
 import (
+	"errors"
 	"syscall"
 	"unicode/utf16"
 	"unsafe"
 )
 
-func SetConsoleTitle(title string) error {
-	// 获取 Windows API 的 SetConsoleTitleW 函数
-	kernel32 := syscall.NewLazyDLL("kernel32.dll")
-	setConsoleTitle := kernel32.NewProc("SetConsoleTitleW")
+var (
+	kernel32           = syscall.NewLazyDLL("kernel32.dll")
+	setConsoleTitleW   = kernel32.NewProc("SetConsoleTitleW")
+	getConsoleTitleW   = kernel32.NewProc("GetConsoleTitleW")
+	errSetConsoleTitle = errors.New("SetConsoleTitleW failed without a system error")
+)
 
-	// 调用 SetConsoleTitleW 函数
+func SetConsoleTitle(title string) error {
 	titlePtr, err := syscall.UTF16PtrFromString(title)
 	if err != nil {
 		return err
 	}
 
-	ret, _, err := setConsoleTitle.Call(uintptr(unsafe.Pointer(titlePtr)))
+	ret, _, callErr := setConsoleTitleW.Call(uintptr(unsafe.Pointer(titlePtr)))
 	if ret == 0 {
-		return err
+		if err := normalizeWindowsCallError(callErr); err != nil {
+			return err
+		}
+		return errSetConsoleTitle
 	}
 	return nil
 }
 
 func GetConsoleTitle() (string, error) {
-	kernel32 := syscall.NewLazyDLL("kernel32.dll")
-	getConsoleTitle := kernel32.NewProc("GetConsoleTitleW")
+	const maxConsoleTitleLength = 32768
+	buf := make([]uint16, maxConsoleTitleLength)
 
-	// 创建一个用于存储标题的缓冲区
-	buf := make([]uint16, 512) // 512 是缓冲区大小
-
-	// 调用 GetConsoleTitleW 函数
-	ret, _, err := getConsoleTitle.Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+	ret, _, callErr := getConsoleTitleW.Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
 	if ret == 0 {
-		return "", err
+		return "", normalizeWindowsCallError(callErr)
 	}
 
-	// 将 UTF-16 编码转换为字符串
 	return string(utf16.Decode(buf[:ret])), nil
+}
+
+func normalizeWindowsCallError(err error) error {
+	if err == nil || errors.Is(err, syscall.Errno(0)) {
+		return nil
+	}
+	return err
 }

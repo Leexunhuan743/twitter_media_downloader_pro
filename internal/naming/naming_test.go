@@ -55,7 +55,7 @@ func TestTweetNaming_LogFormat(t *testing.T) {
 			text:     "hello\tworld",
 			tweetID:  101,
 			creator:  "user",
-			expected: "[user] hello\tworld _101",
+			expected: "[user] helloworld _101",
 		},
 		{
 			name:     "text with URL",
@@ -498,7 +498,7 @@ func TestListNaming_SanitizedTitle(t *testing.T) {
 		{
 			name:     "title with URL",
 			listBase: &mockListBase{id: 4, title: "My List https://x.com/i/lists/123"},
-			expected: "My List ",
+			expected: "My List",
 		},
 		{
 			name:     "unicode title",

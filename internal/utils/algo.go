@@ -7,10 +7,13 @@ import (
 type Heap[T any] struct {
 	data []T
 	less func(T, T) bool
-	mtx  sync.Mutex
+	mtx  sync.RWMutex
 }
 
 func NewHeap[T any](less func(T, T) bool) *Heap[T] {
+	if less == nil {
+		panic("heap comparator is nil")
+	}
 	return &Heap[T]{less: less, data: []T{}}
 }
 
@@ -23,43 +26,65 @@ func (hp *Heap[T]) Push(val T) {
 }
 
 func (hp *Heap[T]) Pop() T {
+	top, ok := hp.TryPop()
+	if !ok {
+		panic("heap is empty")
+	}
+	return top
+}
+
+// TryPop removes the top value and reports whether the heap was non-empty.
+func (hp *Heap[T]) TryPop() (T, bool) {
 	hp.mtx.Lock()
 	defer hp.mtx.Unlock()
 
 	n := len(hp.data)
 	if n == 0 {
-		panic("heap is empty")
+		var zero T
+		return zero, false
 	}
 
 	top := hp.data[0]
 	hp.swap(0, n-1)
+	var zero T
+	hp.data[n-1] = zero
 	hp.data = hp.data[:n-1]
 	if len(hp.data) > 0 {
 		hp.siftDown(0)
 	}
-	return top
+	return top, true
 }
 
 func (hp *Heap[T]) Peek() T {
-	hp.mtx.Lock()
-	defer hp.mtx.Unlock()
-
-	if len(hp.data) == 0 {
+	top, ok := hp.TryPeek()
+	if !ok {
 		panic("heap is empty")
 	}
-	return hp.data[0]
+	return top
+}
+
+// TryPeek returns the top value without removing it and reports whether it exists.
+func (hp *Heap[T]) TryPeek() (T, bool) {
+	hp.mtx.RLock()
+	defer hp.mtx.RUnlock()
+
+	if len(hp.data) == 0 {
+		var zero T
+		return zero, false
+	}
+	return hp.data[0], true
 }
 
 func (hp *Heap[T]) Size() int {
-	hp.mtx.Lock()
-	defer hp.mtx.Unlock()
+	hp.mtx.RLock()
+	defer hp.mtx.RUnlock()
 
 	return len(hp.data)
 }
 
 func (hp *Heap[T]) Empty() bool {
-	hp.mtx.Lock()
-	defer hp.mtx.Unlock()
+	hp.mtx.RLock()
+	defer hp.mtx.RUnlock()
 
 	return len(hp.data) == 0
 }
@@ -81,9 +106,9 @@ func (hp *Heap[T]) swap(i int, j int) {
 }
 
 func (hp *Heap[T]) siftUp(i int) {
-	for {
+	for i > 0 {
 		p := hp.parent(i)
-		if p < 0 || !hp.less(hp.data[i], hp.data[p]) {
+		if !hp.less(hp.data[i], hp.data[p]) {
 			break
 		}
 
