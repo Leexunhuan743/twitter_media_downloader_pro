@@ -8,10 +8,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/unkmonster/tmd/internal/database"
 )
@@ -1172,12 +1175,14 @@ func TestHandleDBUserEntityUpdate_PartialFields(t *testing.T) {
 	database.CreateUser(db, user)
 
 	// 创建实体
+	parentDir := t.TempDir()
 	entity := &database.UserEntity{
 		UserId:    1,
 		Name:      "Original Name",
-		ParentDir: "/data",
+		ParentDir: parentDir,
 	}
 	database.CreateUserEntity(db, entity)
+	assert.NoError(t, os.Mkdir(filepath.Join(parentDir, entity.Name), 0755))
 
 	// 只更新 name
 	updateData := map[string]string{
@@ -1193,6 +1198,42 @@ func TestHandleDBUserEntityUpdate_PartialFields(t *testing.T) {
 	server.handleDBUserEntityUpdate(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.NoDirExists(t, filepath.Join(parentDir, "Original Name"))
+	assert.DirExists(t, filepath.Join(parentDir, "New Entity Name"))
+	updated, err := database.GetUserEntity(db, int(entity.Id.Int32))
+	assert.NoError(t, err)
+	assert.Equal(t, "New Entity Name", updated.Name)
+}
+
+func TestHandleDBUserEntityUpdate_ValidatesBeforeRename(t *testing.T) {
+	server, db := createTestServer(t)
+	defer db.Close()
+
+	require.NoError(t, database.CreateUser(db, &database.User{
+		Id:           1,
+		ScreenName:   "entity_test",
+		Name:         "Entity Test",
+		IsAccessible: true,
+	}))
+	parentDir := t.TempDir()
+	record := &database.UserEntity{UserId: 1, Name: "Original Name", ParentDir: parentDir}
+	require.NoError(t, database.CreateUserEntity(db, record))
+	require.NoError(t, os.Mkdir(filepath.Join(parentDir, record.Name), 0755))
+
+	body := bytes.NewBufferString(`{"name":"New Entity Name","latest_release_time":"invalid"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/db/user-entities/1", body)
+	req.SetPathValue("id", "1")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	server.handleDBUserEntityUpdate(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assert.DirExists(t, filepath.Join(parentDir, "Original Name"))
+	assert.NoDirExists(t, filepath.Join(parentDir, "New Entity Name"))
+	updated, err := database.GetUserEntity(db, int(record.Id.Int32))
+	require.NoError(t, err)
+	assert.Equal(t, "Original Name", updated.Name)
 }
 
 func TestHandleDBListEntityUpdate_PartialFields(t *testing.T) {
@@ -1208,12 +1249,14 @@ func TestHandleDBListEntityUpdate_PartialFields(t *testing.T) {
 	database.CreateLst(db, lst)
 
 	// 创建列表实体
+	parentDir := t.TempDir()
 	entity := &database.LstEntity{
 		LstId:     1,
 		Name:      "Original Name",
-		ParentDir: "/data",
+		ParentDir: parentDir,
 	}
 	database.CreateLstEntity(db, entity)
+	assert.NoError(t, os.Mkdir(filepath.Join(parentDir, entity.Name), 0755))
 
 	// 只更新 name
 	updateData := map[string]string{
@@ -1229,6 +1272,11 @@ func TestHandleDBListEntityUpdate_PartialFields(t *testing.T) {
 	server.handleDBListEntityUpdate(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.NoDirExists(t, filepath.Join(parentDir, "Original Name"))
+	assert.DirExists(t, filepath.Join(parentDir, "New List Entity Name"))
+	updated, err := database.GetLstEntity(db, int(entity.Id.Int32))
+	assert.NoError(t, err)
+	assert.Equal(t, "New List Entity Name", updated.Name)
 }
 
 func TestHandleDBUserEntityUpdate_InvalidID(t *testing.T) {

@@ -231,7 +231,7 @@ func TestUpdateUserEntity(t *testing.T) {
 			Name: "ghost",
 		}
 		err := database.UpdateUserEntity(db, nonexistent)
-		assert.NoError(t, err)
+		assert.EqualError(t, err, "no user entity found with id 99999")
 	})
 }
 
