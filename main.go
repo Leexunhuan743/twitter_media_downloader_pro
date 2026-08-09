@@ -121,6 +121,7 @@ func run(args []string) (runErr error) {
 	defer logWriter.Close()
 	consoleLogHub := consolelog.DefaultHub()
 	initLogger(bootstrap.dbg, logWriter, consoleLogHub)
+	defer consolelog.StopCapture()
 
 	defer func() {
 		if bootstrap.dbg {

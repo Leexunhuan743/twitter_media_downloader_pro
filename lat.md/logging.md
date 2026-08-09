@@ -8,11 +8,21 @@ The logging stack fans one application log stream out to local files, console ca
 
 `main.go` initializes logrus with a text formatter, starts `consolelog.Hub` capture, and installs `[[internal/logging/lumberjack_hook.go#LumberjackHook]]` for rotated file writes. Both rotated files (`tmd2.log` and `client.log`) are created through the shared `[[internal/logging/rotation.go#NewRotatingWriter]]` factory (2 MB / 2 backups / 14 days / gzip), and the formatter base configuration is shared via `[[internal/logging/rotation.go#NewTextFormatter]]` with per-sink overrides (`ForceColors` for the terminal-facing main logger, `DisableQuote` for Resty's multiline blocks). REST and SSE log consumers read from the in-memory hub; `client.log` is a separate Resty client log written by `[[internal/cli/executor.go#SetClientLogger]]`.
 
-`[[internal/consolelog/hub.go#StopCapture]]` restores logrus output before closing capture pipes, so start-server shutdown logs do not write to a closed stderr pipe. `main.go` owns final rotated-log writer cleanup after shutdown completes.
+`main.go` defers `[[internal/consolelog/hub.go#StopCapture]]` after logger initialization and before rotated-writer cleanup, covering CLI completion, startup failure, and server shutdown. Capture shutdown restores only outputs still owned by that session, closes its pipes, and waits for its workers before the log writers are closed.
 
 Terminal-only ANSI color may be used for compact human scan points such as tweet title fields. File and Web UI sink boundaries use `[[internal/logging/sanitize.go#SanitizeLogText]]` to strip CSI/OSC escapes and unsafe controls while redacting recognized credentials. Web log filters and both UI themes use the current `INFO[...]` TextFormatter lines.
 
 Web1 renders the same TextFormatter lines as the CLI contract, adding display-only highlighting for timestamps, domain prefixes, and key=value fields. The raw log text remains the copy/export source.
+
+## Console Hub
+
+The console Hub is a bounded, concurrency-safe bridge from process stdout and stderr to retained snapshots and live subscribers.
+
+`[[internal/consolelog/hub.go#Hub]]` has a usable zero value, retains lines from oldest to newest, sanitizes them at the public boundary, and caps each stored line at 16 KiB with a `[truncated]` suffix. Pipe capture applies the same bound to unterminated input and resumes normal collection at the next newline.
+
+Subscriber send and close operations share one mutex-owned channel lifecycle. Queue overflow closes and removes only the slow subscriber. `Hub.Close` is terminal: it preserves the snapshot, ignores later additions, closes current and future subscriptions, and stops capture only when that Hub owns the session.
+
+`[[internal/consolelog/hub.go#StartCapture]]` is idempotent for the active owner and returns `ErrCaptureAlreadyActive` when another Hub owns process capture. Each capture session owns its worker wait group, so shutdown waits for exactly the workers attached to the restored pipes.
 
 ## Public Log Contract
 
@@ -106,4 +116,4 @@ They keep logrus/TextFormatter and existing Web UI parsing intact. Startup, API,
 
 Logging tests lock sink safety, formatter/rotation compatibility, and failure behavior without external services.
 
-Regression coverage includes JSON and header-style credentials, URL user information/query/fragment values, non-canonical HTTP header casing, CSI/OSC controls, public hub sanitization, nil hook inputs, short writes, Resty request/response bodies, and the 256 KB client-log body cap. See [[development#Development#Testing & CI]].
+Regression coverage includes JSON and header-style credentials, URL user information/query/fragment values, non-canonical HTTP header casing, CSI/OSC controls, public hub sanitization, zero-value and terminal Hub behavior, concurrent subscriber closure, capture ownership, bounded unterminated lines, nil hook inputs, short writes, Resty request/response bodies, and the 256 KB client-log body cap. See [[development#Development#Testing & CI]].
