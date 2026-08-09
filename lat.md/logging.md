@@ -8,11 +8,21 @@ The logging stack fans one application log stream out to local files, console ca
 
 `main.go` initializes logrus with a text formatter, starts `consolelog.Hub` capture, and installs `[[internal/logging/lumberjack_hook.go#LumberjackHook]]` for rotated file writes. Both rotated files (`tmd2.log` and `client.log`) are created through the shared `[[internal/logging/rotation.go#NewRotatingWriter]]` factory (2 MB / 2 backups / 14 days / gzip), and the formatter base configuration is shared via `[[internal/logging/rotation.go#NewTextFormatter]]` with per-sink overrides (`ForceColors` for the terminal-facing main logger, `DisableQuote` for Resty's multiline blocks). REST and SSE log consumers read from the in-memory hub; `client.log` is a separate Resty client log written by `[[internal/cli/executor.go#SetClientLogger]]`.
 
-`[[internal/consolelog/hub.go#StopCapture]]` restores logrus output before closing capture pipes, so start-server shutdown logs do not write to a closed stderr pipe. `main.go` owns final rotated-log writer cleanup after shutdown completes.
+`main.go` defers `[[internal/consolelog/hub.go#StopCapture]]` after logger initialization and before rotated-writer cleanup, covering CLI completion, startup failure, and server shutdown. Capture shutdown restores only outputs still owned by that session, closes its pipes, and waits for its workers before the log writers are closed.
 
-Terminal-only ANSI color may be used for compact human scan points such as tweet title fields. File and Web UI log paths strip ANSI through `[[internal/logging/sanitize.go#StripANSI]]` or console capture. Web log filters and both UI themes use the current `INFO[...]` TextFormatter lines.
+Terminal-only ANSI color may be used for compact human scan points such as tweet title fields. File and Web UI sink boundaries use `[[internal/logging/sanitize.go#SanitizeLogText]]` to strip CSI/OSC escapes and unsafe controls while redacting recognized credentials. Web log filters and both UI themes use the current `INFO[...]` TextFormatter lines.
 
 Web1 renders the same TextFormatter lines as the CLI contract, adding display-only highlighting for timestamps, domain prefixes, and key=value fields. The raw log text remains the copy/export source.
+
+## Console Hub
+
+The console Hub is a bounded, concurrency-safe bridge from process stdout and stderr to retained snapshots and live subscribers.
+
+`[[internal/consolelog/hub.go#Hub]]` has a usable zero value, retains lines from oldest to newest, sanitizes them at the public boundary, and caps each stored line at 16 KiB with a `[truncated]` suffix. Pipe capture applies the same bound to unterminated input and resumes normal collection at the next newline.
+
+Subscriber send and close operations share one mutex-owned channel lifecycle. Queue overflow closes and removes only the slow subscriber. `Hub.Close` is terminal: it preserves the snapshot, ignores later additions, closes current and future subscriptions, and stops capture only when that Hub owns the session.
+
+`[[internal/consolelog/hub.go#StartCapture]]` is idempotent for the active owner and returns `ErrCaptureAlreadyActive` when another Hub owns process capture. Each capture session owns its worker wait group, so shutdown waits for exactly the workers attached to the restored pipes.
 
 ## Public Log Contract
 
@@ -24,13 +34,13 @@ Every user-visible log line starts with a domain prefix such as `[cli]`, `[api]`
 
 The Resty client log mirrors the main log's full-detail policy while redacting credentials before they reach disk.
 
-`[[internal/cli/executor.go#SetClientLogger]]` enables Resty debug (`SetDebug(true)`) and sets the dedicated logger to debug level, so `client.log` records every request and response (method, URL, status, duration, headers, body) regardless of the `-dbg` flag. Sensitive headers are replaced with stable fingerprints through `[[internal/logging/sanitize.go#SanitizeHeaders]]` (Authorization, Cookie, Set-Cookie, X-Csrf-Token, Proxy-Authorization) via `OnRequestLog`/`OnResponseLog` callbacks that run before Resty's default debug text is composed. Body output is capped at 1 MB per request/response (`SetDebugBodyLimit`) so oversized GraphQL responses cannot flood the rotated log. The media download client (`internal/downloader`) is not wired to `client.log`; its logs live in the main log.
+`[[internal/cli/executor.go#SetClientLogger]]` enables Resty debug (`SetDebug(true)`) and sets the dedicated logger to debug level, so `client.log` records every request and response (method, URL, status, duration, headers, body) regardless of the `-dbg` flag. `OnRequestLog`/`OnResponseLog` sanitize headers and bodies before composition; `[[internal/logging/sanitizing_logger.go#SanitizingLogger]]` then cleans the fully formatted block so request-target credentials are covered too. Body output is capped at 256 KB before Resty's JSON formatting, keeping an expanded block below the 2 MB lumberjack write limit. The media download client (`internal/downloader`) is not wired to `client.log`; its logs live in the main log.
 
 ## Sensitive Data
 
 Secrets must never be written to logs in full.
 
-Use `[[internal/logging/sanitize.go#MaskSecret]]`, `[[internal/logging/sanitize.go#RedactSensitiveText]]`, or `[[internal/logging/sanitize.go#SanitizeURL]]` before logging tokens, cookie values, API keys, JWTs, Authorization headers, or URLs that can contain `?token=`.
+Use `[[internal/logging/sanitize.go#MaskSecret]]`, `[[internal/logging/sanitize.go#RedactSensitiveText]]`, `[[internal/logging/sanitize.go#SanitizeHeaders]]`, or `[[internal/logging/sanitize.go#SanitizeURL]]` before logging tokens, cookies, passwords, API/client secrets, JWTs, Authorization values, URL user information, or sensitive query/fragment values. Fingerprints are stable and idempotent, allowing correlation without retaining plaintext.
 
 ## HTTP Access Logs
 
@@ -101,3 +111,9 @@ Bot alert loops treat current `ERRO[...]`/`FATA[...]` TextFormatter lines as ale
 The logging cleanup phases standardized prefix drift, lifecycle coverage, and sensitive-data handling across the project.
 
 They keep logrus/TextFormatter and existing Web UI parsing intact. Startup, API, queue, task, download, Twitter, scheduler, bot, CLI, profile, dumper, and file-writer logs now share domain prefixes and field-style event text.
+
+## Verification
+
+Logging tests lock sink safety, formatter/rotation compatibility, and failure behavior without external services.
+
+Regression coverage includes JSON and header-style credentials, URL user information/query/fragment values, non-canonical HTTP header casing, CSI/OSC controls, public hub sanitization, zero-value and terminal Hub behavior, concurrent subscriber closure, capture ownership, bounded unterminated lines, nil hook inputs, short writes, Resty request/response bodies, and the 256 KB client-log body cap. See [[development#Development#Testing & CI]].

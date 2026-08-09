@@ -19,7 +19,9 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/database"
 	"github.com/unkmonster/tmd/internal/downloader"
+	"github.com/unkmonster/tmd/internal/entity"
 	"github.com/unkmonster/tmd/internal/logging"
+	"github.com/unkmonster/tmd/internal/naming"
 	"github.com/unkmonster/tmd/internal/twitter"
 	"github.com/unkmonster/tmd/internal/utils"
 )
@@ -187,11 +189,7 @@ func (pd *ProfileDownloader) Download(ctx context.Context, req DownloadRequest) 
 	result.Profile = profile
 	log.Debugf("[profile] Profile ready screen_name=%s name=%q uid=%d", req.ScreenName, profile.Name, profile.ID)
 
-	userTitle := req.UserTitle
-	if userTitle == "" {
-		userTitle = fmt.Sprintf("%s(%s)", profile.Name, req.ScreenName)
-	}
-	userTitle = utils.WinFileNameWithMaxLen(userTitle, pd.config.MaxFileNameLen)
+	userTitle := resolveUserTitle(req, pd.config.MaxFileNameLen)
 
 	var userDir string
 	var err error
@@ -244,68 +242,54 @@ func (pd *ProfileDownloader) Download(ctx context.Context, req DownloadRequest) 
 	return result, nil
 }
 
+func resolveUserTitle(req DownloadRequest, maxLen int) string {
+	if req.UserTitle != "" {
+		return utils.WinFileNameWithMaxLen(req.UserTitle, maxLen)
+	}
+	return naming.NewUserNaming(req.Name, req.ScreenName, maxLen).SanitizedTitle()
+}
+
 func (pd *ProfileDownloader) syncUserDirectory(profile *ProfileInfo, userTitle, screenName string) (string, error) {
 	if err := database.SyncUser(pd.db, profile.ID, profile.Name, screenName, profile.Protected, 0, true); err != nil {
 		log.Errorf("[profile] User sync failed screen_name=%s uid=%d error=%q", screenName, profile.ID, err.Error())
 		return "", err
 	}
 
-	entity, err := database.LocateUserEntity(pd.db, profile.ID, pd.storage.usersBasePath)
+	pathEntity, err := entity.NewUserEntity(pd.db, profile.ID, pd.storage.usersBasePath)
 	if err != nil {
 		log.Errorf("[profile] User entity locate failed screen_name=%s uid=%d parent_dir=%q error=%q", screenName, profile.ID, logging.Path(pd.storage.usersBasePath), err.Error())
 		return "", err
 	}
 
 	expectedTitle := userTitle
-
-	if entity == nil {
-		entity = &database.UserEntity{
-			UserId:    profile.ID,
-			ParentDir: pd.storage.usersBasePath,
-			Name:      expectedTitle,
-		}
-		userDir := filepath.Join(pd.storage.usersBasePath, expectedTitle)
-		if err := os.MkdirAll(userDir, 0755); err != nil {
-			log.Errorf("[profile] User directory create failed screen_name=%s path=%q error=%q", screenName, logging.Path(userDir), err.Error())
+	wasRecorded := pathEntity.Recorded()
+	oldName := ""
+	oldUserDir := ""
+	if wasRecorded {
+		oldName, err = pathEntity.Name()
+		if err != nil {
 			return "", err
 		}
-		if err := database.CreateUserEntity(pd.db, entity); err != nil {
-			log.Errorf("[profile] User entity create failed screen_name=%s uid=%d error=%q", screenName, profile.ID, err.Error())
+		oldUserDir, err = pathEntity.Path()
+		if err != nil {
 			return "", err
 		}
-		log.Infof("[profile] User directory created screen_name=%s path=%q", screenName, logging.Path(userDir))
-		return ensureProfileDirs(userDir)
 	}
-	oldUserDir, err := entity.Path()
+
+	if err := entity.Sync(pathEntity, expectedTitle); err != nil {
+		log.Errorf("[profile] User entity sync failed screen_name=%s uid=%d error=%q", screenName, profile.ID, err.Error())
+		return "", err
+	}
+	userDir, err := pathEntity.Path()
 	if err != nil {
-		log.Errorf("[profile] User entity path resolve failed screen_name=%s uid=%d error=%q", screenName, profile.ID, err.Error())
 		return "", err
 	}
-	if entity.Name == expectedTitle {
-		if err := os.MkdirAll(oldUserDir, 0755); err != nil && !os.IsExist(err) {
-			return "", err
-		}
-		return ensureProfileDirs(oldUserDir)
+	if !wasRecorded {
+		log.Infof("[profile] User directory created screen_name=%s path=%q", screenName, logging.Path(userDir))
+	} else if oldName != expectedTitle {
+		log.Infof("[profile] User directory renamed screen_name=%s old_path=%q new_path=%q", screenName, logging.Path(oldUserDir), logging.Path(userDir))
 	}
-
-	newUserDir := filepath.Join(pd.storage.usersBasePath, expectedTitle)
-	if err := os.Rename(oldUserDir, newUserDir); err != nil {
-		if os.IsNotExist(err) {
-			if mkdirErr := os.MkdirAll(newUserDir, 0755); mkdirErr != nil {
-				return "", mkdirErr
-			}
-		} else {
-			return "", err
-		}
-	}
-
-	entity.Name = expectedTitle
-	if err := database.UpdateUserEntity(pd.db, entity); err != nil {
-		log.Errorf("[profile] User entity update failed screen_name=%s uid=%d error=%q", screenName, profile.ID, err.Error())
-		return "", err
-	}
-	log.Infof("[profile] User directory renamed screen_name=%s old_path=%q new_path=%q", screenName, logging.Path(oldUserDir), logging.Path(newUserDir))
-	return ensureProfileDirs(newUserDir)
+	return ensureProfileDirs(userDir)
 }
 
 func (pd *ProfileDownloader) DownloadMultiple(ctx context.Context, requests []DownloadRequest) []*DownloadResult {

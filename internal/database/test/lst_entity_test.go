@@ -221,7 +221,7 @@ func TestUpdateLstEntity(t *testing.T) {
 			Name: "ghost",
 		}
 		err := database.UpdateLstEntity(db, nonexistent)
-		assert.NoError(t, err)
+		assert.EqualError(t, err, "no list entity found with id 99999")
 	})
 }
 

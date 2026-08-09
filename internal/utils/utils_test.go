@@ -237,6 +237,24 @@ func TestUniquePath_WithFiles(t *testing.T) {
 	assert.Equal(t, "testfile(2).txt", filepath.Base(path3))
 }
 
+func TestUniquePath_RejectsEmptyPath(t *testing.T) {
+	_, err := UniquePath("")
+	assert.ErrorIs(t, err, ErrEmptyPath)
+
+	_, err = NewUniquePathResolver().UniquePath("")
+	assert.ErrorIs(t, err, ErrEmptyPath)
+}
+
+func TestUniquePath_PreservesDotfileName(t *testing.T) {
+	tempDir := t.TempDir()
+	basePath := filepath.Join(tempDir, ".env")
+	require.NoError(t, os.WriteFile(basePath, []byte("test"), 0o600))
+
+	uniquePath, err := UniquePath(basePath)
+	require.NoError(t, err)
+	assert.Equal(t, ".env(1)", filepath.Base(uniquePath))
+}
+
 func TestUniquePathResolver_ReservesPathsBeforeWrite(t *testing.T) {
 	tempDir, err := os.MkdirTemp("", "unique_path_resolver_test")
 	require.NoError(t, err)
@@ -256,6 +274,53 @@ func TestUniquePathResolver_ReservesPathsBeforeWrite(t *testing.T) {
 	path3, err := resolver.UniquePath(basePath)
 	require.NoError(t, err)
 	assert.Equal(t, "tweet(2).jpg", filepath.Base(path3))
+}
+
+func TestUniquePathResolver_ZeroValue(t *testing.T) {
+	var resolver UniquePathResolver
+	basePath := filepath.Join(t.TempDir(), "tweet.jpg")
+
+	path1, err := resolver.UniquePath(basePath)
+	require.NoError(t, err)
+	assert.Equal(t, "tweet.jpg", filepath.Base(path1))
+
+	path2, err := resolver.UniquePath(basePath)
+	require.NoError(t, err)
+	assert.Equal(t, "tweet(1).jpg", filepath.Base(path2))
+}
+
+func TestUniquePathResolver_NormalizesAbsolutePaths(t *testing.T) {
+	resolver := NewUniquePathResolver()
+	absolutePath := filepath.Join(t.TempDir(), "tweet.jpg")
+	workingDir, err := os.Getwd()
+	require.NoError(t, err)
+	relativePath, err := filepath.Rel(workingDir, absolutePath)
+	require.NoError(t, err)
+
+	path1, err := resolver.UniquePath(absolutePath)
+	require.NoError(t, err)
+	assert.Equal(t, "tweet.jpg", filepath.Base(path1))
+
+	path2, err := resolver.UniquePath(relativePath)
+	require.NoError(t, err)
+	assert.Equal(t, "tweet(1).jpg", filepath.Base(path2))
+}
+
+func TestUniquePathResolver_UsesPlatformPathSemantics(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows paths are case-insensitive")
+	}
+
+	resolver := NewUniquePathResolver()
+	tempDir := t.TempDir()
+
+	path1, err := resolver.UniquePath(filepath.Join(tempDir, "Tweet.jpg"))
+	require.NoError(t, err)
+	assert.Equal(t, "Tweet.jpg", filepath.Base(path1))
+
+	path2, err := resolver.UniquePath(filepath.Join(tempDir, "tweet.jpg"))
+	require.NoError(t, err)
+	assert.Equal(t, "tweet(1).jpg", filepath.Base(path2))
 }
 
 // ==================== WinFileNameWithMaxLen 测试 ====================
@@ -324,6 +389,42 @@ func TestWinFileNameWithMaxLen(t *testing.T) {
 		{
 			name:     "Windows非法字符",
 			input:    `file|name<>:*?"\/`,
+			maxLen:   20,
+			expected: "filename",
+		},
+		{
+			name:     "Windows保留设备名",
+			input:    "CON.txt",
+			maxLen:   20,
+			expected: "_CON.txt",
+		},
+		{
+			name:     "Windows保留端口名忽略大小写",
+			input:    "lpt9.log",
+			maxLen:   20,
+			expected: "_lpt9.log",
+		},
+		{
+			name:     "截断后形成Windows保留名",
+			input:    "CONSOLE",
+			maxLen:   3,
+			expected: "_CO",
+		},
+		{
+			name:     "非保留端口名",
+			input:    "COM0.txt",
+			maxLen:   20,
+			expected: "COM0.txt",
+		},
+		{
+			name:     "尾随点和空格",
+			input:    "filename. ",
+			maxLen:   20,
+			expected: "filename",
+		},
+		{
+			name:     "控制字符",
+			input:    "file\x00\x01\t\x7fname",
 			maxLen:   20,
 			expected: "filename",
 		},
@@ -492,6 +593,36 @@ func TestHeap(t *testing.T) {
 
 		assert.Panics(t, func() { heap.Peek() })
 		assert.Panics(t, func() { heap.Pop() })
+
+		value, ok := heap.TryPeek()
+		assert.False(t, ok)
+		assert.Zero(t, value)
+
+		value, ok = heap.TryPop()
+		assert.False(t, ok)
+		assert.Zero(t, value)
+	})
+
+	t.Run("安全访问", func(t *testing.T) {
+		heap := NewHeap(func(a, b int) bool { return a < b })
+		heap.Push(2)
+		heap.Push(1)
+
+		value, ok := heap.TryPeek()
+		require.True(t, ok)
+		assert.Equal(t, 1, value)
+		assert.Equal(t, 2, heap.Size())
+
+		value, ok = heap.TryPop()
+		require.True(t, ok)
+		assert.Equal(t, 1, value)
+		assert.Equal(t, 1, heap.Size())
+	})
+
+	t.Run("拒绝空比较器", func(t *testing.T) {
+		assert.PanicsWithValue(t, "heap comparator is nil", func() {
+			NewHeap[int](nil)
+		})
 	})
 
 	t.Run("并发安全", func(t *testing.T) {
@@ -715,6 +846,14 @@ func TestCheckRespStatus(t *testing.T) {
 	}
 }
 
+func TestCheckRespStatus_NilResponse(t *testing.T) {
+	var got error
+	assert.NotPanics(t, func() {
+		got = CheckRespStatus(nil)
+	})
+	assert.ErrorIs(t, got, ErrNilHTTPResponse)
+}
+
 func TestIsStatusCode(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -850,9 +989,24 @@ func TestEnsurePhotoHighQuality(t *testing.T) {
 			expected: "https://pbs.twimg.com/media/image?format=jpg&name=4096x4096",
 		},
 		{
+			name:     "twimg主机匹配忽略大小写和尾点",
+			input:    "https://PBS.TWIMG.COM./media/image.jpg",
+			expected: "https://PBS.TWIMG.COM./media/image.jpg?name=4096x4096",
+		},
+		{
 			name:     "非twimg不修改",
 			input:    "https://example.com/media/image.jpg",
 			expected: "https://example.com/media/image.jpg",
+		},
+		{
+			name:     "主机名仅包含twimg不修改",
+			input:    "https://notwimg.com/media/image.jpg",
+			expected: "https://notwimg.com/media/image.jpg",
+		},
+		{
+			name:     "twimg伪后缀主机不修改",
+			input:    "https://pbs.twimg.com.example.com/media/image.jpg",
+			expected: "https://pbs.twimg.com.example.com/media/image.jpg",
 		},
 		{
 			name:     "video.twimg.com不修改",
@@ -921,6 +1075,12 @@ func TestExtractIDs(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestExtractIDs_RejectsNilExtractor(t *testing.T) {
+	assert.PanicsWithValue(t, "user ID extractor is nil", func() {
+		ExtractIDs([]testUser{{ID: 1}}, nil)
+	})
 }
 
 func TestExtractIDs_WithDifferentTypes(t *testing.T) {

@@ -38,6 +38,9 @@ type Server struct {
 	logWriter         io.Closer
 	logHub            *consolelog.Hub
 	httpServer        *http.Server
+	lifecycleMu       sync.Mutex
+	started           bool
+	shuttingDown      bool
 	shutdownOnce      sync.Once
 	shutdownDone      chan struct{}
 	schedulesMu       sync.Mutex
@@ -293,18 +296,31 @@ func (s *Server) Start(port int) error {
 	handler := s.buildHandler()
 
 	addr := fmt.Sprintf(":%d", port)
+	httpServer := &http.Server{
+		Addr:        addr,
+		Handler:     handler,
+		ReadTimeout: 30 * time.Second,
+		IdleTimeout: 60 * time.Second,
+	}
+
+	s.lifecycleMu.Lock()
+	if s.shuttingDown {
+		s.lifecycleMu.Unlock()
+		return http.ErrServerClosed
+	}
+	if s.started {
+		s.lifecycleMu.Unlock()
+		return fmt.Errorf("server already started")
+	}
+	// Keep component startup atomic with respect to shutdown so nothing starts after cleanup.
+	s.started = true
+	s.httpServer = httpServer
+
 	log.Infof("[server] API server starting addr=%s", addr)
 	blue := color.FgLightBlue.Render
 	log.Infof("[server] Visit url=%s", blue("http://localhost"+addr+"/"))
 	if lanIP := getPrimaryIP(); lanIP != "" {
 		log.Infof("[server] Visit url=%s", blue("http://"+lanIP+addr+"/"))
-	}
-
-	s.httpServer = &http.Server{
-		Addr:        addr,
-		Handler:     handler,
-		ReadTimeout: 30 * time.Second,
-		IdleTimeout: 60 * time.Second,
 	}
 
 	if sched := s.getScheduler(); sched != nil {
@@ -318,8 +334,9 @@ func (s *Server) Start(port int) error {
 		}
 		log.Infof("[bot] Started provider=%s", b.Name())
 	}
+	s.lifecycleMu.Unlock()
 
-	return s.httpServer.ListenAndServe()
+	return httpServer.ListenAndServe()
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -376,6 +393,11 @@ func (s *Server) WaitForShutdown() {
 
 func (s *Server) GracefulShutdown(reason string) {
 	s.shutdownOnce.Do(func() {
+		s.lifecycleMu.Lock()
+		s.shuttingDown = true
+		httpServer := s.httpServer
+		s.lifecycleMu.Unlock()
+
 		if s.eventBus != nil {
 			s.eventBus.PublishServerShutdown("服务器正在关闭: " + reason)
 			time.Sleep(100 * time.Millisecond)
@@ -414,11 +436,11 @@ func (s *Server) GracefulShutdown(reason string) {
 			s.authRateLimit.Stop()
 		}
 
-		if s.httpServer != nil {
+		if httpServer != nil {
 			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer shutdownCancel()
 
-			if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
+			if err := httpServer.Shutdown(shutdownCtx); err != nil {
 				log.Warnf("[server] HTTP shutdown failed error=%q", err.Error())
 			} else {
 				log.Info("[server] HTTP server stopped")

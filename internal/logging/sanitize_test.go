@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -23,20 +24,37 @@ func TestStripANSI(t *testing.T) {
 	assert.Equal(t, `title="hello"`, got)
 }
 
+func TestStripANSI_RemovesExtendedControlSequences(t *testing.T) {
+	got := StripANSI("\x1b]8;;https://example.invalid\alink\x1b]8;;\a \x1b[?25lvisible\x1b[?25h")
+
+	assert.Equal(t, "link visible", got)
+}
+
 func TestPathForLog(t *testing.T) {
-	assert.Equal(t, "C:/Users/leeexx/AppData/Roaming/.tmd2/bot_config.yaml", Path(`C:\Users\leeexx\AppData\Roaming\.tmd2\bot_config.yaml`))
+	assert.Equal(t, "C:/Users/example/AppData/Roaming/.tmd2/bot_config.yaml", Path(`C:\Users\example\AppData\Roaming\.tmd2\bot_config.yaml`))
 	assert.Equal(t, "/home/user/.tmd2/bot_config.yaml", Path("/home/user/.tmd2/bot_config.yaml"))
 	assert.Equal(t, "F:/twitter dl/.data/foo.db", Path(`F:\twitter dl\.data\foo.db`))
 }
 
 func TestSanitizeURLRedactsSensitiveQueryParams(t *testing.T) {
-	got := SanitizeURL("/api/v1/logs/stream?token=secret-token&q=download&api_key=abc123")
+	got := SanitizeURL("/api/v1/logs/stream?token=secret-token&q=download&api_key=abc123&client_secret=client-secret")
 
 	assert.Contains(t, got, "q=download")
 	assert.NotContains(t, got, "secret-token")
 	assert.NotContains(t, got, "abc123")
+	assert.NotContains(t, got, "client-secret")
 	assert.Contains(t, got, "token=%5Bredacted")
 	assert.Contains(t, got, "api_key=%5Bredacted")
+}
+
+func TestSanitizeURLRedactsUserInfoAndFragment(t *testing.T) {
+	got := SanitizeURL("https://alice:password-secret@example.invalid/callback#access_token=fragment-secret&state=keep")
+
+	assert.NotContains(t, got, "alice")
+	assert.NotContains(t, got, "password-secret")
+	assert.NotContains(t, got, "fragment-secret")
+	assert.Contains(t, got, "state=keep")
+	assert.Contains(t, got, "redacted")
 }
 
 func TestRequestTargetRedactsEventSourceToken(t *testing.T) {
@@ -59,6 +77,44 @@ func TestRedactSensitiveText(t *testing.T) {
 	assert.Contains(t, got, "Authorization=")
 }
 
+func TestRedactSensitiveTextHandlesHeadersAndJSON(t *testing.T) {
+	got := RedactSensitiveText(`Bearer bare-secret Authorization: Basic basic-secret {"access_token":"json-secret","password":"password-secret","ok":"keep"} x-api-key=key-secret`)
+
+	for _, secret := range []string{"bare-secret", "basic-secret", "json-secret", "password-secret", "key-secret"} {
+		assert.NotContains(t, got, secret)
+	}
+	assert.Contains(t, got, `"ok":"keep"`)
+}
+
+func TestRedactSensitiveTextUsesSecretFingerprintAndIsIdempotent(t *testing.T) {
+	first := RedactSensitiveText("Bearer first-secret")
+	second := RedactSensitiveText("Bearer second-secret")
+	quoted := RedactSensitiveText(`{"Authorization":"Bearer quoted-secret"}`)
+
+	assert.NotEqual(t, first, second)
+	assert.Equal(t, first, RedactSensitiveText(first))
+	assert.NotContains(t, quoted, "quoted-secret")
+	assert.Equal(t, quoted, RedactSensitiveText(quoted))
+	assert.Contains(t, quoted, `"}`)
+}
+
+func TestRedactSensitiveTextDoesNotMatchFieldSuffixes(t *testing.T) {
+	input := `not_token=public token_count=3 authentication=enabled`
+
+	assert.Equal(t, input, RedactSensitiveText(input))
+}
+
+func TestSanitizeLogText(t *testing.T) {
+	got := SanitizeLogText("\x1b]8;;https://example.invalid\asecret\x1b]8;;\a token=plain-secret\r\x00\x07")
+
+	assert.NotContains(t, got, "\x1b")
+	assert.NotContains(t, got, "plain-secret")
+	assert.NotContains(t, got, "\r")
+	assert.NotContains(t, got, "\x00")
+	assert.NotContains(t, got, "\x07")
+	assert.Contains(t, got, "secret")
+}
+
 func TestSanitizeHeadersRedactsCredentials(t *testing.T) {
 	h := http.Header{}
 	h.Set("Authorization", "Bearer secret-bearer")
@@ -78,4 +134,19 @@ func TestSanitizeHeadersRedactsCredentials(t *testing.T) {
 	assert.Equal(t, "keep-me", got.Get("X-Request-Id"))
 	// 原始 header 不被修改（返回副本）
 	assert.Equal(t, "Bearer secret-bearer", h.Get("Authorization"))
+}
+
+func TestSanitizeHeadersHandlesNonCanonicalSensitiveNames(t *testing.T) {
+	h := http.Header{
+		"authorization": {"Bearer lower-secret"},
+		"x-api-key":     {"api-secret"},
+	}
+
+	got := SanitizeHeaders(h)
+	gotText := fmt.Sprint(got)
+
+	assert.NotContains(t, gotText, "lower-secret")
+	assert.NotContains(t, gotText, "api-secret")
+	assert.Equal(t, "Bearer lower-secret", h["authorization"][0])
+	assert.Equal(t, "api-secret", h["x-api-key"][0])
 }

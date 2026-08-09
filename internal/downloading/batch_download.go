@@ -465,11 +465,11 @@ func popNextBatchEntity(
 	limit int,
 	markUserDone func(string),
 ) (*entity.UserEntity, int, bool) {
-	if userEntityHeap.Empty() {
+	next, ok := userEntityHeap.TryPeek()
+	if !ok {
 		return nil, 0, false
 	}
 
-	next := userEntityHeap.Peek()
 	depth := depthByEntity[next]
 	if depth > limit {
 		entityName, nameErr := next.Name()
@@ -477,7 +477,7 @@ func popNextBatchEntity(
 			entityName = fmt.Sprintf("(uid:%d)", next.UserId())
 		}
 		log.Warnf("[batch] User depth exceeds limit entity=%q depth=%d", entityName, depth)
-		userEntityHeap.Pop()
+		_, _ = userEntityHeap.TryPop()
 		markUserDone(entityName)
 		return nil, 0, true
 	}
@@ -486,5 +486,6 @@ func popNextBatchEntity(
 		return nil, 0, false
 	}
 
-	return userEntityHeap.Pop(), depth, true
+	next, ok = userEntityHeap.TryPop()
+	return next, depth, ok
 }

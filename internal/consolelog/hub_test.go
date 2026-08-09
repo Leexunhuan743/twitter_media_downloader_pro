@@ -4,8 +4,11 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -21,6 +24,22 @@ func TestHubKeepsLineLimit(t *testing.T) {
 	hub.Add("line4")
 
 	assert.Equal(t, []string{"line2", "line3", "line4"}, hub.Snapshot())
+}
+
+func TestHubZeroValueIsUsable(t *testing.T) {
+	var hub Hub
+	ch, unsubscribe := hub.Subscribe()
+	defer unsubscribe()
+
+	hub.Add("line")
+
+	assert.Equal(t, []string{"line"}, hub.Snapshot())
+	select {
+	case got := <-ch:
+		assert.Equal(t, "line", got)
+	case <-time.After(time.Second):
+		t.Fatal("zero-value Hub subscriber did not receive line")
+	}
 }
 
 func TestHubSubscribeReceivesNewLines(t *testing.T) {
@@ -56,6 +75,27 @@ func TestHubSubscribeUnsubscribeClosesChannel(t *testing.T) {
 	}, 200*time.Millisecond, 10*time.Millisecond, "expected unsubscribed log channel to be closed")
 }
 
+func TestHubCloseIsTerminalAndRetainsSnapshot(t *testing.T) {
+	hub := NewHub(10)
+	hub.Add("before close")
+	active, _ := hub.Subscribe()
+
+	hub.Close()
+	hub.Add("after close")
+	afterClose, _ := hub.Subscribe()
+
+	assert.Equal(t, []string{"before close"}, hub.Snapshot())
+	assert.ErrorIs(t, StartCapture(hub), ErrHubClosed)
+	for name, ch := range map[string]<-chan string{"active": active, "after close": afterClose} {
+		select {
+		case _, ok := <-ch:
+			assert.False(t, ok, "%s subscriber should be closed", name)
+		case <-time.After(time.Second):
+			t.Fatalf("%s subscriber remained open after Hub.Close", name)
+		}
+	}
+}
+
 func TestHubNormalizesLines(t *testing.T) {
 	hub := NewHub(10)
 
@@ -63,6 +103,17 @@ func TestHubNormalizesLines(t *testing.T) {
 	hub.Add("")
 
 	assert.Equal(t, []string{"ERRO[2026] failed"}, hub.Snapshot())
+}
+
+func TestHubSanitizesPublicLogLines(t *testing.T) {
+	hub := NewHub(10)
+	hub.Add("\x1b]8;;https://example.invalid\afailure\x1b]8;;\a token=plain-secret")
+
+	lines := hub.Snapshot()
+	require.Len(t, lines, 1)
+	assert.NotContains(t, lines[0], "\x1b")
+	assert.NotContains(t, lines[0], "plain-secret")
+	assert.Contains(t, lines[0], "[redacted:")
 }
 
 func TestHubUsesFixedRingBuffer(t *testing.T) {
@@ -91,6 +142,43 @@ func TestHubRemovesSlowSubscriberOnOverflow(t *testing.T) {
 		defer hub.mu.Unlock()
 		return len(hub.subscribers) == 0
 	}, 200*time.Millisecond, 10*time.Millisecond, "Slow log subscriber should be removed after queue overflow")
+}
+
+func TestLogSubscriberConcurrentOverflowAndCloseCompletes(t *testing.T) {
+	const iterations = 500
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	workers.Add(iterations * 2)
+
+	for range iterations {
+		subscriber := newLogSubscriber()
+		for range subscriberBuffer {
+			require.Equal(t, logSendQueued, subscriber.send("queued"))
+		}
+
+		go func() {
+			defer workers.Done()
+			<-start
+			subscriber.send("overflow")
+		}()
+		go func() {
+			defer workers.Done()
+			<-start
+			subscriber.close()
+		}()
+	}
+
+	close(start)
+	allDone := make(chan struct{})
+	go func() {
+		workers.Wait()
+		close(allDone)
+	}()
+	select {
+	case <-allDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("subscriber overflow and close deadlocked")
+	}
 }
 
 type chunkedReader struct {
@@ -124,7 +212,6 @@ func TestCapturePipe_ReassemblesLinesAcrossChunks(t *testing.T) {
 		},
 	}
 
-	hub.captureWg.Add(1) // capturePipe 的 defer Done 需要先有 Add
 	capturePipe(reader, output, hub)
 
 	_, err = output.Seek(0, 0)
@@ -135,6 +222,35 @@ func TestCapturePipe_ReassemblesLinesAcrossChunks(t *testing.T) {
 
 	assert.Equal(t, "line1\r\nline2\nline3", string(data))
 	assert.Equal(t, []string{"line1", "line2", "line3"}, hub.Snapshot())
+}
+
+func TestCapturePipeBoundsLongLinesAndRecoversAtNewline(t *testing.T) {
+	const maxLineBytes = 16 << 10
+	hub := NewHub(10)
+	reader := strings.NewReader(strings.Repeat("a", maxLineBytes+1024) + "\nnext\n")
+	output, err := os.CreateTemp("", "capture-pipe-long-line")
+	require.NoError(t, err)
+	defer os.Remove(output.Name())
+	defer output.Close()
+
+	capturePipe(reader, output, hub)
+
+	lines := hub.Snapshot()
+	require.Len(t, lines, 2)
+	assert.LessOrEqual(t, len(lines[0]), maxLineBytes)
+	assert.True(t, strings.HasSuffix(lines[0], " [truncated]"))
+	assert.Equal(t, "next", lines[1])
+}
+
+func TestHubBoundsStoredLinesAtUTF8Boundary(t *testing.T) {
+	hub := NewHub(10)
+	hub.Add(strings.Repeat("界", maxStoredLineBytes))
+
+	lines := hub.Snapshot()
+	require.Len(t, lines, 1)
+	assert.LessOrEqual(t, len(lines[0]), maxStoredLineBytes)
+	assert.True(t, utf8.ValidString(lines[0]))
+	assert.True(t, strings.HasSuffix(lines[0], truncatedLineSuffix))
 }
 
 func TestStartCaptureRetriesAfterFailure(t *testing.T) {
@@ -197,6 +313,70 @@ func TestStartCaptureIsIdempotentAfterSuccess(t *testing.T) {
 	require.NoError(t, StartCapture(hub))
 	require.NoError(t, StartCapture(hub))
 	assert.Equal(t, 1, calls)
+}
+
+func TestStartCaptureRejectsDifferentHub(t *testing.T) {
+	StopCapture()
+	captureMu.Lock()
+	startCaptureFn = startCaptureSession
+	captureMu.Unlock()
+	t.Cleanup(func() {
+		StopCapture()
+		captureMu.Lock()
+		startCaptureFn = startCaptureSession
+		captureMu.Unlock()
+	})
+
+	calls := 0
+	startCaptureFn = func(h *Hub) (*captureSession, error) {
+		calls++
+		return &captureSession{
+			hub:            h,
+			originalStdout: os.Stdout,
+			originalStderr: os.Stderr,
+		}, nil
+	}
+
+	require.NoError(t, StartCapture(NewHub(10)))
+	err := StartCapture(NewHub(10))
+	assert.ErrorIs(t, err, ErrCaptureAlreadyActive)
+	assert.Equal(t, 1, calls)
+}
+
+func TestHubCloseStopsOnlyOwnedCapture(t *testing.T) {
+	StopCapture()
+	captureMu.Lock()
+	startCaptureFn = startCaptureSession
+	captureMu.Unlock()
+	t.Cleanup(func() {
+		StopCapture()
+		captureMu.Lock()
+		startCaptureFn = startCaptureSession
+		captureMu.Unlock()
+	})
+
+	owner := NewHub(10)
+	other := NewHub(10)
+	startCaptureFn = func(h *Hub) (*captureSession, error) {
+		return &captureSession{
+			hub:            h,
+			originalStdout: os.Stdout,
+			originalStderr: os.Stderr,
+		}, nil
+	}
+	require.NoError(t, StartCapture(owner))
+
+	other.Close()
+	captureMu.Lock()
+	activeAfterOtherClose := activeCapture
+	captureMu.Unlock()
+	assert.NotNil(t, activeAfterOtherClose)
+
+	owner.Close()
+	captureMu.Lock()
+	activeAfterOwnerClose := activeCapture
+	captureMu.Unlock()
+	assert.Nil(t, activeAfterOwnerClose)
 }
 
 func TestStopCaptureRestoresStandardLogOutput(t *testing.T) {

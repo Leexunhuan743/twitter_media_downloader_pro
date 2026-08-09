@@ -55,7 +55,7 @@ func TestTweetNaming_LogFormat(t *testing.T) {
 			text:     "hello\tworld",
 			tweetID:  101,
 			creator:  "user",
-			expected: "[user] hello\tworld _101",
+			expected: "[user] helloworld _101",
 		},
 		{
 			name:     "text with URL",
@@ -104,7 +104,14 @@ func TestTweetNaming_LogFormat(t *testing.T) {
 			text:     "test",
 			tweetID:  606,
 			creator:  "",
-			expected: "[] test _606",
+			expected: "[unknown] test _606",
+		},
+		{
+			name:     "creator is normalized to one line",
+			text:     "test",
+			tweetID:  607,
+			creator:  "User\r\n\tName",
+			expected: "[User Name] test _607",
 		},
 		{
 			name:     "creator with special chars",
@@ -180,7 +187,7 @@ func TestTweetNaming_FileName(t *testing.T) {
 			text:     "file",
 			tweetID:  111,
 			ext:      ".",
-			expected: "file_111.",
+			expected: "file_111",
 		},
 		{
 			name:     "long extension",
@@ -202,6 +209,27 @@ func TestTweetNaming_FileName(t *testing.T) {
 			tweetID:  444,
 			ext:      ".ext",
 			expected: "file.name.test_444.ext",
+		},
+		{
+			name:     "extension without leading dot",
+			text:     "file",
+			tweetID:  555,
+			ext:      "jpg",
+			expected: "file_555.jpg",
+		},
+		{
+			name:     "extension cannot create a subpath",
+			text:     "file",
+			tweetID:  666,
+			ext:      "../jpg",
+			expected: "file_666.jpg",
+		},
+		{
+			name:     "extension respects reserved budget",
+			text:     "file",
+			tweetID:  777,
+			ext:      ".abcdefghijk",
+			expected: "file_777.abcdefg",
 		},
 	}
 
@@ -381,13 +409,13 @@ func TestUserNaming_SanitizedTitle(t *testing.T) {
 			name:       "empty screenName",
 			userName:   "User",
 			screenName: "",
-			expected:   "User()",
+			expected:   "User",
 		},
 		{
 			name:       "both empty",
 			userName:   "",
 			screenName: "",
-			expected:   "()",
+			expected:   "user",
 		},
 		{
 			name:       "with special chars",
@@ -399,13 +427,13 @@ func TestUserNaming_SanitizedTitle(t *testing.T) {
 			name:       "with newlines",
 			userName:   "User\nName",
 			screenName: "screen\r\n",
-			expected:   "User Name(screen )",
+			expected:   "User Name(screen)",
 		},
 		{
 			name:       "with URL",
 			userName:   "User https://x.com/name",
 			screenName: "screen",
-			expected:   "User (screen)",
+			expected:   "User(screen)",
 		},
 		{
 			name:       "unicode names",
@@ -417,7 +445,7 @@ func TestUserNaming_SanitizedTitle(t *testing.T) {
 			name:       "very long names",
 			userName:   strings.Repeat("a", 100),
 			screenName: strings.Repeat("b", 100),
-			expected:   strings.Repeat("a", 100) + "(" + strings.Repeat("b", 57),
+			expected:   strings.Repeat("a", 56) + "(" + strings.Repeat("b", 100) + ")",
 		},
 		{
 			name:       "with path separators",
@@ -457,6 +485,24 @@ func TestUserNaming_Truncation(t *testing.T) {
 	}
 }
 
+func TestUserNaming_PreservesScreenNameIdentity(t *testing.T) {
+	const maxLen = 30
+	longName := strings.Repeat("same display name", 10)
+
+	first := NewUserNaming(longName, "account_one", maxLen).SanitizedTitle()
+	second := NewUserNaming(longName, "account_two", maxLen).SanitizedTitle()
+
+	if first == second {
+		t.Fatalf("distinct screen names produced the same directory name %q", first)
+	}
+	if !strings.HasSuffix(first, "(account_one)") {
+		t.Errorf("first title = %q, should preserve screen name", first)
+	}
+	if !strings.HasSuffix(second, "(account_two)") {
+		t.Errorf("second title = %q, should preserve screen name", second)
+	}
+}
+
 // ============================================================================
 // ListNaming 测试
 // ============================================================================
@@ -483,7 +529,7 @@ func TestListNaming_SanitizedTitle(t *testing.T) {
 		{
 			name:     "empty title",
 			listBase: &mockListBase{id: 1, title: ""},
-			expected: "",
+			expected: "list(1)",
 		},
 		{
 			name:     "title with special chars",
@@ -498,7 +544,7 @@ func TestListNaming_SanitizedTitle(t *testing.T) {
 		{
 			name:     "title with URL",
 			listBase: &mockListBase{id: 4, title: "My List https://x.com/i/lists/123"},
-			expected: "My List ",
+			expected: "My List",
 		},
 		{
 			name:     "unicode title",
@@ -524,6 +570,11 @@ func TestListNaming_SanitizedTitle(t *testing.T) {
 			name:     "title with question mark",
 			listBase: &mockListBase{id: 9, title: "What? Why?"},
 			expected: "What Why",
+		},
+		{
+			name:     "title removed by sanitization",
+			listBase: &mockListBase{id: 11, title: "https://example.com/list"},
+			expected: "list(11)",
 		},
 		{
 			name:     "very long title",
@@ -564,6 +615,28 @@ func TestListNaming_Truncation(t *testing.T) {
 	}
 	if got != strings.Repeat("x", maxLen) {
 		t.Errorf("SanitizedTitle() = %q, want %q", got, strings.Repeat("x", maxLen))
+	}
+}
+
+func TestListNaming_PreservesExistingIDSuffix(t *testing.T) {
+	const maxLen = 30
+	list := &mockListBase{id: 42, title: strings.Repeat("a", 100) + "(42)"}
+
+	got := NewListNamingFromBase(list, maxLen).SanitizedTitle()
+	want := strings.Repeat("a", maxLen-len("(42)")) + "(42)"
+	if got != want {
+		t.Errorf("SanitizedTitle() = %q, want %q", got, want)
+	}
+}
+
+func TestListNaming_NilInputUsesFallback(t *testing.T) {
+	var typedNil *mockListBase
+
+	if got := NewListNamingFromBase(nil, 20).SanitizedTitle(); got != "list" {
+		t.Errorf("nil list title = %q, want %q", got, "list")
+	}
+	if got := NewListNamingFromBase(typedNil, 20).SanitizedTitle(); got != "list" {
+		t.Errorf("typed nil list title = %q, want %q", got, "list")
 	}
 }
 

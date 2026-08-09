@@ -1,6 +1,7 @@
 package entity
 
 import (
+	"fmt"
 	"os"
 )
 
@@ -9,22 +10,37 @@ import (
 // 如果实体名称与预期不符，则重命名
 // 如果名称相同，则确保目录存在
 func Sync(e Entity, expectedName string) error {
+	if e == nil {
+		return fmt.Errorf("entity is nil")
+	}
+	if err := ValidateName(expectedName); err != nil {
+		return err
+	}
 	if !e.Recorded() {
-		return e.Create(expectedName)
+		if err := e.Create(expectedName); err != nil {
+			return fmt.Errorf("create entity %q: %w", expectedName, err)
+		}
+		return nil
 	}
 
 	name, err := e.Name()
 	if err != nil {
-		return err
+		return fmt.Errorf("get entity name: %w", err)
 	}
 	if name != expectedName {
-		return e.Rename(expectedName)
+		if err := e.Rename(expectedName); err != nil {
+			return fmt.Errorf("rename entity from %q to %q: %w", name, expectedName, err)
+		}
+		return nil
 	}
 
 	p, err := e.Path()
 	if err != nil {
-		return err
+		return fmt.Errorf("get entity path: %w", err)
 	}
 
-	return os.MkdirAll(p, 0755)
+	if err := os.MkdirAll(p, 0755); err != nil {
+		return fmt.Errorf("ensure entity directory %q: %w", p, err)
+	}
+	return nil
 }

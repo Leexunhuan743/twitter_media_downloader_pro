@@ -3,7 +3,7 @@ module github.com/unkmonster/tmd
 go 1.25.0
 
 require (
-	github.com/SpellingDragon/wechat-robot-go v1.4.1
+	github.com/SpellingDragon/wechat-robot-go v1.5.0
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/chyroc/lark v0.0.113
 	github.com/go-resty/resty/v2 v2.17.2
@@ -19,7 +19,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tidwall/gjson v1.19.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.54.0
+	modernc.org/sqlite v1.55.0
 )
 
 require (

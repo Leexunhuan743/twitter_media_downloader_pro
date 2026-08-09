@@ -2,12 +2,14 @@ package utils
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,65 +17,94 @@ import (
 )
 
 var (
-	reUrl           = regexp.MustCompile(`(https?|ftp|file)://[-A-Za-z0-9+&@#/%?=~_|!:,.;]+[-A-Za-z0-9+&@#/%=~_|]`)
+	reURL           = regexp.MustCompile(`(https?|ftp|file)://[-A-Za-z0-9+&@#/%?=~_|!:,.;]+[-A-Za-z0-9+&@#/%=~_|]`)
 	reWinNonSupport = regexp.MustCompile(`[/\\:*?"<>\|]`)
 )
 
+// ErrEmptyPath indicates that a path operation received an empty path.
+var ErrEmptyPath = errors.New("path is empty")
+
 func PathExists(path string) (bool, error) {
 	_, err := os.Lstat(path)
-
 	if err == nil {
-
 		return true, nil
-
 	}
-
 	if os.IsNotExist(err) {
-
 		return false, nil
-
 	}
 	return false, err
 }
 
-// reserve 8 bytes for suffix
-// NTFS 单个文件名硬限制为 255 字符（与长路径设置无关）
+// DefaultMaxFileNameLen reserves space for extensions and collision suffixes.
 const DefaultMaxFileNameLen = 158
 
-// WinFileNameWithMaxLen 将无后缀的文件名更新为有效的 Windows 文件名
-// maxLen 指定最大文件名长度
+// WinFileNameWithMaxLen 将名称转换为有效的 Windows 文件名。
+// maxLen 指定 UTF-8 字节长度上限。
 func WinFileNameWithMaxLen(name string, maxLen int) string {
-	name = reUrl.ReplaceAllString(name, "")
-	name = reWinNonSupport.ReplaceAllString(name, "")
 	if maxLen <= 0 {
 		return ""
 	}
+	name = reURL.ReplaceAllString(name, "")
+	name = reWinNonSupport.ReplaceAllString(name, "")
 
 	var buffer bytes.Buffer
-
 	for _, ch := range name {
 		switch ch {
 		case '\r':
 			continue
 		case '\n':
-			if buffer.Len()+1 > maxLen {
-				return buffer.String()
-			}
-			buffer.WriteRune(' ')
+			ch = ' '
 		default:
-			if buffer.Len()+utf8.RuneLen(ch) > maxLen {
-				return buffer.String()
+			if ('\x00' <= ch && ch < '\x20') || ch == '\x7f' {
+				continue
 			}
-			buffer.WriteRune(ch)
 		}
+
+		if buffer.Len()+utf8.RuneLen(ch) > maxLen {
+			break
+		}
+		buffer.WriteRune(ch)
 	}
 
-	return buffer.String()
+	result := strings.TrimRight(buffer.String(), " .")
+	if isWindowsReservedFileName(result) {
+		result = "_" + result
+	}
+	result = truncateUTF8(result, maxLen)
+	return strings.TrimRight(result, " .")
+}
+
+func truncateUTF8(value string, maxLen int) string {
+	if len(value) <= maxLen {
+		return value
+	}
+	end := maxLen
+	for end > 0 && !utf8.RuneStart(value[end]) {
+		end--
+	}
+	return value[:end]
+}
+
+func isWindowsReservedFileName(name string) bool {
+	stem, _, _ := strings.Cut(name, ".")
+	stem = strings.ToUpper(strings.TrimRight(stem, " "))
+	switch stem {
+	case "CON", "PRN", "AUX", "NUL", "CLOCK$", "CONIN$", "CONOUT$",
+		"COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³":
+		return true
+	}
+	if len(stem) == 4 && (strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT")) {
+		return stem[3] >= '1' && stem[3] <= '9'
+	}
+	return false
 }
 
 const maxUniquePathRetries = 10000
 
 func UniquePath(path string) (string, error) {
+	if path == "" {
+		return "", ErrEmptyPath
+	}
 	for i := 0; i < maxUniquePathRetries; i++ {
 		exist, err := PathExists(path)
 		if err != nil {
@@ -100,15 +131,22 @@ func NewUniquePathResolver() *UniquePathResolver {
 }
 
 func (r *UniquePathResolver) UniquePath(path string) (string, error) {
+	if path == "" {
+		return "", ErrEmptyPath
+	}
 	if r == nil {
 		return UniquePath(path)
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.reserved == nil {
+		r.reserved = make(map[string]struct{})
+	}
 
 	for i := 0; i < maxUniquePathRetries; i++ {
-		if _, exists := r.reserved[path]; exists {
+		key := uniquePathReservationKey(path)
+		if _, exists := r.reserved[key]; exists {
 			path = nextUniquePathCandidate(path)
 			continue
 		}
@@ -118,7 +156,7 @@ func (r *UniquePathResolver) UniquePath(path string) (string, error) {
 			return "", err
 		}
 		if !exist {
-			r.reserved[path] = struct{}{}
+			r.reserved[key] = struct{}{}
 			return path, nil
 		}
 
@@ -127,10 +165,24 @@ func (r *UniquePathResolver) UniquePath(path string) (string, error) {
 	return "", fmt.Errorf("failed to find unique path after %d attempts (last candidate: %q)", maxUniquePathRetries, path)
 }
 
+func uniquePathReservationKey(path string) string {
+	key, err := filepath.Abs(path)
+	if err != nil {
+		key = filepath.Clean(path)
+	}
+	if runtime.GOOS == "windows" {
+		key = strings.ToLower(key)
+	}
+	return key
+}
+
 func nextUniquePathCandidate(path string) string {
 	dir := filepath.Dir(path)
 	base := filepath.Base(path)
-	ext := filepath.Ext(path)
+	ext := filepath.Ext(base)
+	if ext == base {
+		ext = ""
+	}
 	stem, _ := strings.CutSuffix(base, ext)
 	stemlen := len(stem)
 
@@ -138,7 +190,7 @@ func nextUniquePathCandidate(path string) string {
 	if stemlen > 0 && stem[stemlen-1] == ')' {
 		if left := strings.LastIndex(stem, "("); left != -1 {
 			index, err := strconv.Atoi(stem[left+1 : stemlen-1])
-			if err == nil {
+			if err == nil && index < int(^uint(0)>>1) {
 				index++
 				stem = fmt.Sprintf("%s(%d)", stem[:left], index)
 				return filepath.Join(dir, stem+ext)

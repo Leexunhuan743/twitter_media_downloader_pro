@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,6 +145,35 @@ func TestProfileDownloader_Download_InvalidRequest(t *testing.T) {
 	if err == nil {
 		t.Error("Download() with empty Name should return error")
 	}
+}
+
+func TestResolveUserTitle(t *testing.T) {
+	t.Run("default preserves stable screen name", func(t *testing.T) {
+		req := DownloadRequest{
+			Name:       strings.Repeat("long display name", 10),
+			ScreenName: "stable_account",
+		}
+
+		got := resolveUserTitle(req, 30)
+		if !strings.HasSuffix(got, "(stable_account)") {
+			t.Fatalf("resolveUserTitle() = %q, should preserve screen name", got)
+		}
+		if len(got) > 30 {
+			t.Fatalf("resolveUserTitle() length = %d, want at most 30", len(got))
+		}
+	})
+
+	t.Run("explicit title remains authoritative", func(t *testing.T) {
+		req := DownloadRequest{
+			Name:       "Ignored",
+			ScreenName: "ignored",
+			UserTitle:  "Custom/Directory",
+		}
+
+		if got := resolveUserTitle(req, 30); got != "CustomDirectory" {
+			t.Fatalf("resolveUserTitle() = %q, want %q", got, "CustomDirectory")
+		}
+	})
 }
 
 func TestProfileDownloader_Download(t *testing.T) {

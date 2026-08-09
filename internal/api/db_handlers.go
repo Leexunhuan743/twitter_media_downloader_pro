@@ -2,6 +2,7 @@ package api
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/database"
+	entitypkg "github.com/unkmonster/tmd/internal/entity"
 	"github.com/unkmonster/tmd/internal/utils"
 )
 
@@ -444,34 +446,57 @@ func (s *Server) handleDBUserEntityUpdate(w http.ResponseWriter, r *http.Request
 			s.writeErrorDetail(w, http.StatusBadRequest, "Invalid name", err.Error())
 			return
 		}
-		entity.Name = *req.Name
+		if err := entitypkg.ValidateName(*req.Name); err != nil {
+			logDBInvalidInput("name", *req.Name, err)
+			s.writeErrorDetail(w, http.StatusBadRequest, "Invalid name", err.Error())
+			return
+		}
+	}
+
+	var parsedReleaseTime *time.Time
+	if req.LatestReleaseTime != nil && *req.LatestReleaseTime != "" {
+		value, err := time.Parse(time.RFC3339, *req.LatestReleaseTime)
+		if err != nil {
+			logDBInvalidInput("latest_release_time", *req.LatestReleaseTime, err)
+			s.writeError(w, http.StatusBadRequest, "Invalid latest_release_time format, use RFC 3339 (e.g. 2024-12-18T15:30:00Z)")
+			return
+		}
+		parsedReleaseTime = &value
+	}
+
+	managedEntity := entitypkg.NewUserEntityFromRecord(s.db, entity)
+	if req.Name != nil && entity.Name != *req.Name {
+		if err := managedEntity.Rename(*req.Name); err != nil {
+			if errors.Is(err, entitypkg.ErrPathConflict) {
+				s.writeErrorDetail(w, http.StatusConflict, "Entity directory already exists", err.Error())
+			} else {
+				s.dbWriteError(w, err, "RenameUserEntity")
+			}
+			return
+		}
 	}
 	if req.MediaCount != nil {
 		entity.MediaCount = sql.NullInt32{Int32: *req.MediaCount, Valid: true}
 	}
 	if req.LatestReleaseTime != nil {
 		if *req.LatestReleaseTime == "" {
-			if err := database.ClearUserEntityLatestReleaseTime(s.db, int(id)); err != nil {
+			if err := managedEntity.ClearLatestReleaseTime(); err != nil {
 				s.dbWriteError(w, err, "ClearUserEntityLatestReleaseTime")
 				return
 			}
 		} else {
-			t, err := time.Parse(time.RFC3339, *req.LatestReleaseTime)
-			if err != nil {
-				logDBInvalidInput("latest_release_time", *req.LatestReleaseTime, err)
-				s.writeError(w, http.StatusBadRequest, "Invalid latest_release_time format, use RFC 3339 (e.g. 2024-12-18T15:30:00Z)")
-				return
-			}
-			if err := database.SetUserEntityLatestReleaseTime(s.db, int(id), t); err != nil {
+			if err := managedEntity.SetLatestReleaseTime(*parsedReleaseTime); err != nil {
 				s.dbWriteError(w, err, "SetUserEntityLatestReleaseTime")
 				return
 			}
 		}
 	}
 
-	if err := database.UpdateUserEntityFields(s.db, int(id), entity.Name, entity.MediaCount); err != nil {
-		s.dbWriteError(w, err, "UpdateUserEntityFields")
-		return
+	if req.MediaCount != nil {
+		if err := database.UpdateUserEntityFields(s.db, int(id), entity.Name, entity.MediaCount); err != nil {
+			s.dbWriteError(w, err, "UpdateUserEntityFields")
+			return
+		}
 	}
 
 	s.writeResourceJSON(w, dbEntityToItem(entity))
@@ -621,12 +646,22 @@ func (s *Server) handleDBListEntityUpdate(w http.ResponseWriter, r *http.Request
 			s.writeErrorDetail(w, http.StatusBadRequest, "Invalid name", err.Error())
 			return
 		}
-		entity.Name = *req.Name
-	}
-
-	if err := database.UpdateLstEntity(s.db, entity); err != nil {
-		s.dbWriteError(w, err, "UpdateLstEntity")
-		return
+		if err := entitypkg.ValidateName(*req.Name); err != nil {
+			logDBInvalidInput("name", *req.Name, err)
+			s.writeErrorDetail(w, http.StatusBadRequest, "Invalid name", err.Error())
+			return
+		}
+		if entity.Name != *req.Name {
+			managedEntity := entitypkg.NewListEntityFromRecord(s.db, entity)
+			if err := managedEntity.Rename(*req.Name); err != nil {
+				if errors.Is(err, entitypkg.ErrPathConflict) {
+					s.writeErrorDetail(w, http.StatusConflict, "List entity directory already exists", err.Error())
+				} else {
+					s.dbWriteError(w, err, "RenameListEntity")
+				}
+				return
+			}
+		}
 	}
 
 	lstName := s.getListName(uint64(entity.LstId))

@@ -57,9 +57,12 @@ func UpdateUserEntity(db *sqlx.DB, entity *UserEntity) error {
 	if err != nil {
 		return fmt.Errorf("failed to update user entity %d: %w", entity.Id.Int32, err)
 	}
-	_, err = result.RowsAffected()
+	rows, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
+		return fmt.Errorf("failed to get rows affected for user entity %d: %w", entity.Id.Int32, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("no user entity found with id %d", entity.Id.Int32)
 	}
 	return nil
 }

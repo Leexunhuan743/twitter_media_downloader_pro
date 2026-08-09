@@ -114,6 +114,8 @@ GET      /api/v1/db/user-previous-names
 GET      /api/v1/db/stats
 ```
 
+Entity-name updates validate the complete request before mutation, rename the matching storage directory through the shared [[database#Database#Entity Storage Lifecycle]], and return `409 Conflict` when a different target directory already exists. `parent_dir` remains immutable through the API.
+
 ## Web UI
 
 Three independent frontend themes in `internal/api/web/`:
@@ -252,6 +254,8 @@ Three independent rebuild functions (`rebuildConfigPanel` / `rebuildCookiesPanel
 
 Handles SIGINT/SIGTERM: drains DownloadQueue (15s max), waits for active tasks, closes DB, then exits.
 
-`[[signal.go#notifyOnShutdownSignal]]` stops notification immediately after the first signal, restoring default handling so a second signal can force termination during a slow drain. Its returned stop function also makes normal Server exit release signal resources idempotently.
+[[signal.go#notifyOnShutdownSignal]] claims only the first signal, restores default handling so a second signal can force termination during a slow drain, and waits for an in-flight shutdown callback before releasing caller-owned resources.
 
 Server construction returns dependency errors to `[[main.go#runServer]]`. Once construction succeeds, `runServer` invokes idempotent graceful shutdown on normal listener closure and startup failure, so partially started schedulers, bots, background cleanup loops, and database resources are released before the process exits.
+
+[[internal/api/server.go#Server#Start]] is a one-shot lifecycle boundary serialized with shutdown: a start after shutdown returns `http.ErrServerClosed`, a duplicate start returns an error, and scheduler/bot startup cannot race cleanup. `runServer` completes bot initialization before registering shutdown signals.

@@ -269,8 +269,8 @@ func Execute(ctx context.Context, args []string, deps *Dependencies) error {
 // SetClientLogger 设置客户端日志
 // client.log 采用与主日志（tmd2.log）一致的全量策略：开启 resty debug 后
 // 每个 HTTP 请求/响应（方法、URL、状态码、耗时、headers、body）都会记录。
-// 敏感头（Authorization/Cookie/X-Csrf-Token 等）经 logging.SanitizeHeaders 脱敏；
-// 单个请求/响应 body 超过 1MB 的部分截断，避免超大响应打爆日志。
+// 敏感 Header、URL、请求/响应 Body 经 logging 的统一策略脱敏；单个 Body
+// 超过 256KB 的部分截断，避免格式化膨胀后超过轮转文件的单次写入上限。
 func SetClientLogger(client *resty.Client, out io.Writer) {
 	logger := log.New()
 	logger.SetLevel(log.DebugLevel)
@@ -278,7 +278,7 @@ func SetClientLogger(client *resty.Client, out io.Writer) {
 	formatter := logging.NewTextFormatter()
 	formatter.DisableQuote = true // resty 多行请求/响应块不做 %q 转义
 	logger.SetFormatter(formatter)
-	client.SetLogger(logger)
+	client.SetLogger(logging.NewSanitizingLogger(logger))
 	client.SetDebug(true)
 	// 256KB：resty 的截断检查在 JSON indent 美化之前——原始 1MB 的响应
 	// 经 indent 美化后可达 3-6MB，超过 lumberjack 2MB 的单次写入上限导致日志丢弃。
@@ -286,10 +286,12 @@ func SetClientLogger(client *resty.Client, out io.Writer) {
 	client.SetDebugBodyLimit(256 << 10)
 	client.OnRequestLog(func(rl *resty.RequestLog) error {
 		rl.Header = logging.SanitizeHeaders(rl.Header)
+		rl.Body = logging.SanitizeLogText(rl.Body)
 		return nil
 	})
 	client.OnResponseLog(func(rl *resty.ResponseLog) error {
 		rl.Header = logging.SanitizeHeaders(rl.Header)
+		rl.Body = logging.SanitizeLogText(rl.Body)
 		return nil
 	})
 }

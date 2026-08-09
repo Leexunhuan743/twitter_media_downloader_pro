@@ -14,6 +14,9 @@ func ExtractIDs[T any](users []T, extract UserIDExtractor[T]) []uint64 {
 	if len(users) == 0 {
 		return nil
 	}
+	if extract == nil {
+		panic("user ID extractor is nil")
+	}
 	uids := make([]uint64, len(users))
 	for i, u := range users {
 		uids[i] = extract(u)
@@ -46,12 +49,11 @@ func IsValidScreenName(screenName string) bool {
 // EnsurePhotoHighQuality 将 twimg.com 的 photo URL 升级为高清版本。
 // 保留其他查询参数；已有 orig/4096x4096 时保持不变，否则设置 name=4096x4096。
 func EnsurePhotoHighQuality(rawURL string) string {
-	if !strings.Contains(rawURL, "twimg.com") || isTwitterVideoMediaURL(rawURL) {
-		return rawURL
-	}
-
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
+		return rawURL
+	}
+	if !isTwitterMediaHost(parsed.Hostname()) || isTwitterVideoMediaURL(parsed) {
 		return rawURL
 	}
 

@@ -1,9 +1,15 @@
 package logging
 
 import (
+	"errors"
 	"io"
 
 	"github.com/sirupsen/logrus"
+)
+
+var (
+	errNilHookWriter = errors.New("logging: nil hook writer")
+	errNilLogEntry   = errors.New("logging: nil log entry")
 )
 
 // LumberjackHook 是一个 logrus Hook，将日志写入 lumberjack 轮转文件。
@@ -25,11 +31,23 @@ func (h *LumberjackHook) Levels() []logrus.Level {
 
 // Fire 将日志条目序列化为文本后写入文件。
 func (h *LumberjackHook) Fire(entry *logrus.Entry) error {
+	if h == nil || h.writer == nil {
+		return errNilHookWriter
+	}
+	if entry == nil {
+		return errNilLogEntry
+	}
 	line, err := entry.String()
 	if err != nil {
 		return err
 	}
-	line = StripANSI(line)
-	_, err = h.writer.Write([]byte(line))
-	return err
+	line = SanitizeLogText(line)
+	written, err := io.WriteString(h.writer, line)
+	if err != nil {
+		return err
+	}
+	if written != len(line) {
+		return io.ErrShortWrite
+	}
+	return nil
 }

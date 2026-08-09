@@ -23,14 +23,19 @@ users ──1:N── user_previous_names (rename history)
 lsts ──1:N── lst_entities (same list, different parent dirs)
 lst_entities ──1:N── user_links (list member symlinks)
 users ──1:N── user_links (user symlinked into lists, FK: user_links.user_id → users.id)
+```
 
-## UserEntity
+## Entity Storage Lifecycle
 
-Domain model wrapping `database.UserEntity`. Provides:
-- **Path**: `{parent_dir}/{name}` on filesystem
-- **Lifecycle**: Create/Rename/Remove — filesystem + DB transactionally
-- **Time tracking**: `LatestReleaseTime / SetLatestReleaseTime / ClearLatestReleaseTime`
-- **Media stats**: `MediaCount / MediaCountValid`
+User and list entity models keep database records and their filesystem directories consistent across lifecycle operations.
+
+- [[internal/entity/user.go#NewUserEntity]] and [[internal/entity/list.go#NewListEntity]] require a database, normalize the parent to an absolute path, and return either a recorded entity or an unrecorded value ready for creation.
+- Names must be non-empty single path components; [[internal/entity/storage.go#ValidateName]] rejects path traversal, separators, absolute paths, and NUL bytes before filesystem changes.
+- Create and rename roll back newly created or moved directories when the database write fails. Rename refuses to overwrite a different existing target with `ErrPathConflict`.
+- Remove first stages the directory under a temporary sibling name, restores it if the database delete fails, and permanently deletes the staged directory only after the record is gone.
+- Database update helpers treat zero affected rows as an error so a missing record cannot make a filesystem change appear committed.
+
+`UserEntity` additionally owns latest-release-time and media-count state. Profile directory synchronization and API entity-name edits route through the same entity lifecycle rather than issuing independent filesystem and database mutations.
 
 ## Migrations
 
@@ -39,11 +44,13 @@ Domain model wrapping `database.UserEntity`. Provides:
 `sqlite_migration.go:migrateExistingDatabase()` handles full backup-and-rebuild for legacy databases created by older SQLite drivers, then copies all data into the new schema. This can be removed after all users have migrated.
 
 `parent_dir_migration.go:MigrateParentDirsInSQLiteFile()` handles historical path migration for directory renames.
+
 ## TweetDumper (Failure Recorder)
 
 Persists failed tweet IDs to JSON files so they can be retried in future runs.
 
 Groups failures by entity ID (regular) or source path (JSON import). Dumper is loaded at start and dumped after each download round. Protected by `sync.Mutex` at the service layer.
+
 ## User Sync
 
 `database/user_sync.go:SyncUser()` detects screen_name/name changes and records old names in `user_previous_names`. The filesystem directory rename is handled by `entity/sync.go` → `UserEntity.Rename()`.

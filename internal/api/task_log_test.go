@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -16,9 +17,7 @@ func captureTaskLog(t *testing.T, fn func()) string {
 	var buf bytes.Buffer
 	originalOutput := log.StandardLogger().Out
 	log.SetOutput(&buf)
-	t.Cleanup(func() {
-		log.SetOutput(originalOutput)
-	})
+	defer log.SetOutput(originalOutput)
 	fn()
 	return buf.String()
 }
@@ -65,6 +64,7 @@ func TestDownloadQueueEnqueueLog(t *testing.T) {
 		server.downloadQueue.Enqueue(task, func(ctx context.Context, taskID string, reporter service.ProgressReporter) error {
 			return nil
 		})
+		server.downloadQueue.CloseAndWait(time.Second)
 	})
 
 	assert.Contains(t, output, "[download-queue] Enqueued")

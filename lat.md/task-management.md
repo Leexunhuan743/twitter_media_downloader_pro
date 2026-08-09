@@ -37,6 +37,8 @@ In-memory task store with RWMutex protection. Responsible for lifecycle, cancell
 - Each task holds its own `context.Context` + `CancelFunc`
 - Task IDs are `task_<uuid>` format, monotonically increasing by creation time
 - State changes → snapshot rebuild → EventBus broadcast
+- `GetTask` returns a deep snapshot and `GetAllTasks` returns cached read-only snapshots; mutable lifecycle fields are changed only while holding the manager lock.
+- Request handlers capture response fields before enqueueing because the queue may transition a task to `running` immediately on another goroutine.
 
 ## DownloadQueue
 
