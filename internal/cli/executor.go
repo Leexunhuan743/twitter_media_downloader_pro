@@ -280,9 +280,9 @@ func SetClientLogger(client *resty.Client, out io.Writer) {
 	logger.SetFormatter(formatter)
 	client.SetLogger(logging.NewSanitizingLogger(logger))
 	client.SetDebug(true)
-	// 256KB：resty 的截断检查在 JSON indent 美化之前——原始 1MB 的响应
-	// 经 indent 美化后可达 3-6MB，超过 lumberjack 2MB 的单次写入上限导致日志丢弃。
-	// 256KB 原始响应 indent 后约 700KB，留足安全余量。
+	// Resty applies the response limit before JSON indentation and the request
+	// limit after request-body formatting. 256KB keeps either block comfortably
+	// below lumberjack's 2MB single-write ceiling.
 	client.SetDebugBodyLimit(256 << 10)
 	client.OnRequestLog(func(rl *resty.RequestLog) error {
 		rl.Header = logging.SanitizeHeaders(rl.Header)

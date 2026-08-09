@@ -30,6 +30,27 @@ func TestStripANSI_RemovesExtendedControlSequences(t *testing.T) {
 	assert.Equal(t, "link visible", got)
 }
 
+func TestStripANSIPreservesUTF8Text(t *testing.T) {
+	for _, input := range []string{
+		"下载 鸟视频 完成",
+		"downloaded Новая запись ok",
+		"[task] Progress stage=downloading 用户名=测试用户",
+		"emoji 🐦 remains visible",
+		"日本語のログ",
+	} {
+		t.Run(input, func(t *testing.T) {
+			assert.Equal(t, input, StripANSI(input))
+		})
+	}
+}
+
+func TestStripANSIRemovesC1AndStringTerminatedSequences(t *testing.T) {
+	assert.Equal(t, "visible", StripANSI("\x9b31mvisible"))
+	assert.Equal(t, "visible", StripANSI("\x9dhidden\x9cvisible"))
+	assert.Equal(t, "visible", StripANSI("\x1bPhidden\x1b\\visible"))
+	assert.Equal(t, "before", StripANSI("before\x1b]unterminated"))
+}
+
 func TestPathForLog(t *testing.T) {
 	assert.Equal(t, "C:/Users/example/AppData/Roaming/.tmd2/bot_config.yaml", Path(`C:\Users\example\AppData\Roaming\.tmd2\bot_config.yaml`))
 	assert.Equal(t, "/home/user/.tmd2/bot_config.yaml", Path("/home/user/.tmd2/bot_config.yaml"))
@@ -45,6 +66,21 @@ func TestSanitizeURLRedactsSensitiveQueryParams(t *testing.T) {
 	assert.NotContains(t, got, "client-secret")
 	assert.Contains(t, got, "token=%5Bredacted")
 	assert.Contains(t, got, "api_key=%5Bredacted")
+}
+
+func TestSanitizeURLFailsClosedForMalformedQuery(t *testing.T) {
+	got := SanitizeURL("/api/v1/logs/stream?token=secret-token;level=debug")
+
+	assert.Contains(t, got, "/api/v1/logs/stream")
+	assert.Contains(t, got, "malformed_query=%5Bredacted")
+	assert.NotContains(t, got, "secret-token")
+}
+
+func TestSanitizeURLFailsClosedForInvalidURL(t *testing.T) {
+	got := SanitizeURL("http://%zz.example.invalid/?value=raw-secret")
+
+	assert.Contains(t, got, "invalid-url=%5Bredacted")
+	assert.NotContains(t, got, "raw-secret")
 }
 
 func TestSanitizeURLRedactsUserInfoAndFragment(t *testing.T) {
@@ -65,6 +101,15 @@ func TestRequestTargetRedactsEventSourceToken(t *testing.T) {
 	assert.Contains(t, got, "level=info")
 	assert.NotContains(t, got, "jwt-secret")
 	assert.Contains(t, got, "token=%5Bredacted")
+}
+
+func TestRequestTargetFailsClosedForMalformedQuery(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/v1/sse/tasks?token=jwt-secret;level=info", nil)
+
+	got := RequestTarget(req)
+
+	assert.Contains(t, got, "malformed_query=%5Bredacted")
+	assert.NotContains(t, got, "jwt-secret")
 }
 
 func TestRedactSensitiveText(t *testing.T) {
@@ -113,6 +158,13 @@ func TestSanitizeLogText(t *testing.T) {
 	assert.NotContains(t, got, "\x00")
 	assert.NotContains(t, got, "\x07")
 	assert.Contains(t, got, "secret")
+}
+
+func TestSanitizeLogTextStripsANSIBeforeRedaction(t *testing.T) {
+	got := SanitizeLogText("\x1b[36mauth_token\x1b[0m=plain-secret")
+
+	assert.NotContains(t, got, "plain-secret")
+	assert.Contains(t, got, "auth_token=[redacted:")
 }
 
 func TestSanitizeHeadersRedactsCredentials(t *testing.T) {

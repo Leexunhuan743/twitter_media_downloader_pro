@@ -3,6 +3,7 @@ package entity
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -40,11 +41,22 @@ func (ue *UserEntity) Create(name string) error {
 	if err := ue.requireRecord(); err != nil {
 		return err
 	}
+	if ue.db == nil {
+		return fmt.Errorf("create %s: database is nil", ue.description())
+	}
+	unlock := lockEntityOperation("user", strconv.FormatUint(ue.record.UserId, 10), ue.record.ParentDir)
+	defer unlock()
 	if ue.created {
 		return fmt.Errorf("%s already exists", ue.description())
 	}
-	if ue.db == nil {
-		return fmt.Errorf("create %s: database is nil", ue.description())
+	current, err := database.LocateUserEntity(ue.db, ue.record.UserId, ue.record.ParentDir)
+	if err != nil {
+		return fmt.Errorf("check existing %s: %w", ue.description(), err)
+	}
+	if current != nil {
+		*ue.record = *current
+		ue.created = true
+		return fmt.Errorf("%s already exists", ue.description())
 	}
 	path, err := entityPath(ue.record.ParentDir, name)
 	if err != nil {
@@ -68,11 +80,19 @@ func (ue *UserEntity) Create(name string) error {
 }
 
 func (ue *UserEntity) Remove() error {
-	if err := ue.requireRecorded(); err != nil {
+	if err := ue.requireRecord(); err != nil {
 		return err
 	}
 	if ue.db == nil {
 		return fmt.Errorf("remove %s: database is nil", ue.description())
+	}
+	unlock := lockEntityOperation("user", strconv.FormatUint(ue.record.UserId, 10), ue.record.ParentDir)
+	defer unlock()
+	if err := ue.requireRecorded(); err != nil {
+		return err
+	}
+	if err := ue.refreshRecord(); err != nil {
+		return err
 	}
 	path, err := ue.Path()
 	if err != nil {
@@ -93,11 +113,22 @@ func (ue *UserEntity) Remove() error {
 }
 
 func (ue *UserEntity) Rename(name string) error {
-	if err := ue.requireRecorded(); err != nil {
+	if err := ue.requireRecord(); err != nil {
 		return err
 	}
 	if ue.db == nil {
 		return fmt.Errorf("rename %s: database is nil", ue.description())
+	}
+	if err := ValidateName(name); err != nil {
+		return err
+	}
+	unlock := lockEntityOperation("user", strconv.FormatUint(ue.record.UserId, 10), ue.record.ParentDir)
+	defer unlock()
+	if err := ue.requireRecorded(); err != nil {
+		return err
+	}
+	if err := ue.refreshRecord(); err != nil {
+		return err
 	}
 	if ue.record.Name == name {
 		path, err := ue.Path()
@@ -113,11 +144,21 @@ func (ue *UserEntity) Rename(name string) error {
 	if err != nil {
 		return err
 	}
-	ue.record.Name = name
-	if err := database.UpdateUserEntity(ue.db, ue.record); err != nil {
-		ue.record.Name = oldName
+	updated, err := database.UpdateUserEntityNameIfCurrent(ue.db, int(ue.record.Id.Int32), oldName, name)
+	if err != nil {
 		return change.rollback(fmt.Errorf("update %s database record: %w", ue.description(), err))
 	}
+	if !updated {
+		current, refreshErr := database.GetUserEntity(ue.db, int(ue.record.Id.Int32))
+		if refreshErr != nil {
+			return change.rollback(fmt.Errorf("verify %s after stale rename: %w", ue.description(), refreshErr))
+		}
+		if current == nil {
+			return change.rollback(fmt.Errorf("%w: %s no longer exists", ErrNotFound, ue.description()))
+		}
+		return change.rollback(fmt.Errorf("%w: %s no longer has name %q", ErrConcurrentUpdate, ue.description(), oldName))
+	}
+	ue.record.Name = name
 	return nil
 }
 
@@ -242,6 +283,24 @@ func (ue *UserEntity) requireRecorded() error {
 	if !ue.created {
 		return fmt.Errorf("%s was not created", ue.description())
 	}
+	return nil
+}
+
+func (ue *UserEntity) refreshRecord() error {
+	if !ue.record.Id.Valid || ue.record.Id.Int32 <= 0 {
+		return fmt.Errorf("%s has an invalid database id", ue.description())
+	}
+	current, err := database.GetUserEntity(ue.db, int(ue.record.Id.Int32))
+	if err != nil {
+		return fmt.Errorf("refresh %s: %w", ue.description(), err)
+	}
+	if current == nil {
+		return fmt.Errorf("%w: %s no longer exists", ErrNotFound, ue.description())
+	}
+	if current.UserId != ue.record.UserId || operationParentDirKey(current.ParentDir) != operationParentDirKey(ue.record.ParentDir) {
+		return fmt.Errorf("%w: stable identity changed for %s", ErrConcurrentUpdate, ue.description())
+	}
+	*ue.record = *current
 	return nil
 }
 

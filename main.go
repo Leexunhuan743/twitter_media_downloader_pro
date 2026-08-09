@@ -400,6 +400,7 @@ func runServer(conf *config.Config, appRootPath string, port int, loginOpts twit
 	}
 	if err == http.ErrServerClosed {
 		server.GracefulShutdown("server-closed")
+		server.WaitForShutdown()
 	}
 	return nil
 }

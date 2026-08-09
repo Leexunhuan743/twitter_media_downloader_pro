@@ -114,7 +114,7 @@ GET      /api/v1/db/user-previous-names
 GET      /api/v1/db/stats
 ```
 
-Entity-name updates validate the complete request before mutation, rename the matching storage directory through the shared [[database#Database#Entity Storage Lifecycle]], and return `409 Conflict` when a different target directory already exists. `parent_dir` remains immutable through the API.
+Entity mutations validate the complete request before mutation. User metadata fields update atomically before an optional name change; name changes move the matching storage directory through the shared [[database#Database#Entity Storage Lifecycle]]. Target/name races return `409 Conflict`, rows deleted during the operation return `404 Not Found`, and `parent_dir` remains immutable. Deleting a user/list entity also deletes its directory through staged removal with rollback on database failure.
 
 ## Web UI
 
@@ -252,10 +252,10 @@ Three independent rebuild functions (`rebuildConfigPanel` / `rebuildCookiesPanel
 
 ## Graceful Shutdown
 
-Handles SIGINT/SIGTERM: drains DownloadQueue (15s max), waits for active tasks, closes DB, then exits.
+Handles SIGINT/SIGTERM: coordinates any in-progress component startup, drains DownloadQueue (15s max), waits for active tasks, closes DB, then exits.
 
 [[signal.go#notifyOnShutdownSignal]] claims only the first signal, restores default handling so a second signal can force termination during a slow drain, and waits for an in-flight shutdown callback before releasing caller-owned resources.
 
-Server construction returns dependency errors to `[[main.go#runServer]]`. Once construction succeeds, `runServer` invokes idempotent graceful shutdown on normal listener closure and startup failure, so partially started schedulers, bots, background cleanup loops, and database resources are released before the process exits.
+Server construction returns dependency errors to `[[main.go#runServer]]`. Once construction succeeds, `runServer` invokes idempotent graceful shutdown and explicitly waits for `shutdownDone` on listener closure, so partially started schedulers, bots, background cleanup loops, and database resources are released before the process exits. Queue/task completion is synchronized by `CloseAndWait`; shutdown does not rely on a fixed sleep to approximate task exit. Shutdown atomically closes mutation admission, returns 503 for new POST, PUT, PATCH, and DELETE requests, and drains already admitted mutations before stopping resources; scheduler or configuration writes therefore cannot restart resources during teardown, while reads may finish normally.
 
-[[internal/api/server.go#Server#Start]] is a one-shot lifecycle boundary serialized with shutdown: a start after shutdown returns `http.ErrServerClosed`, a duplicate start returns an error, and scheduler/bot startup cannot race cleanup. `runServer` completes bot initialization before registering shutdown signals.
+[[internal/api/server.go#Server#Start]] is a one-shot lifecycle boundary coordinated with shutdown: a start after shutdown returns `http.ErrServerClosed`, a duplicate start returns an error, and cleanup waits for the admitted startup phase before stopping only bots whose `Start` was attempted. The lifecycle mutex protects state transitions but is never held while scheduler or bot code runs. Telegram bounds its synchronous `GetMe` initialization to 15 seconds, then removes the global client timeout so 60-second update polling remains valid. `runServer` completes bot initialization before registering shutdown signals.

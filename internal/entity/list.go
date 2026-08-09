@@ -3,6 +3,7 @@ package entity
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/unkmonster/tmd/internal/database"
@@ -39,11 +40,22 @@ func (le *ListEntity) Create(name string) error {
 	if err := le.requireRecord(); err != nil {
 		return err
 	}
+	if le.db == nil {
+		return fmt.Errorf("create %s: database is nil", le.description())
+	}
+	unlock := lockEntityOperation("list", strconv.FormatInt(le.record.LstId, 10), le.record.ParentDir)
+	defer unlock()
 	if le.created {
 		return fmt.Errorf("%s already exists", le.description())
 	}
-	if le.db == nil {
-		return fmt.Errorf("create %s: database is nil", le.description())
+	current, err := database.LocateLstEntity(le.db, le.record.LstId, le.record.ParentDir)
+	if err != nil {
+		return fmt.Errorf("check existing %s: %w", le.description(), err)
+	}
+	if current != nil {
+		*le.record = *current
+		le.created = true
+		return fmt.Errorf("%s already exists", le.description())
 	}
 	path, err := entityPath(le.record.ParentDir, name)
 	if err != nil {
@@ -67,11 +79,19 @@ func (le *ListEntity) Create(name string) error {
 }
 
 func (le *ListEntity) Remove() error {
-	if err := le.requireRecorded(); err != nil {
+	if err := le.requireRecord(); err != nil {
 		return err
 	}
 	if le.db == nil {
 		return fmt.Errorf("remove %s: database is nil", le.description())
+	}
+	unlock := lockEntityOperation("list", strconv.FormatInt(le.record.LstId, 10), le.record.ParentDir)
+	defer unlock()
+	if err := le.requireRecorded(); err != nil {
+		return err
+	}
+	if err := le.refreshRecord(); err != nil {
+		return err
 	}
 	path, err := le.Path()
 	if err != nil {
@@ -92,11 +112,22 @@ func (le *ListEntity) Remove() error {
 }
 
 func (le *ListEntity) Rename(name string) error {
-	if err := le.requireRecorded(); err != nil {
+	if err := le.requireRecord(); err != nil {
 		return err
 	}
 	if le.db == nil {
 		return fmt.Errorf("rename %s: database is nil", le.description())
+	}
+	if err := ValidateName(name); err != nil {
+		return err
+	}
+	unlock := lockEntityOperation("list", strconv.FormatInt(le.record.LstId, 10), le.record.ParentDir)
+	defer unlock()
+	if err := le.requireRecorded(); err != nil {
+		return err
+	}
+	if err := le.refreshRecord(); err != nil {
+		return err
 	}
 	if le.record.Name == name {
 		path, err := le.Path()
@@ -112,11 +143,21 @@ func (le *ListEntity) Rename(name string) error {
 	if err != nil {
 		return err
 	}
-	le.record.Name = name
-	if err := database.UpdateLstEntity(le.db, le.record); err != nil {
-		le.record.Name = oldName
+	updated, err := database.UpdateLstEntityNameIfCurrent(le.db, int(le.record.Id.Int32), oldName, name)
+	if err != nil {
 		return change.rollback(fmt.Errorf("update %s database record: %w", le.description(), err))
 	}
+	if !updated {
+		current, refreshErr := database.GetLstEntity(le.db, int(le.record.Id.Int32))
+		if refreshErr != nil {
+			return change.rollback(fmt.Errorf("verify %s after stale rename: %w", le.description(), refreshErr))
+		}
+		if current == nil {
+			return change.rollback(fmt.Errorf("%w: %s no longer exists", ErrNotFound, le.description()))
+		}
+		return change.rollback(fmt.Errorf("%w: %s no longer has name %q", ErrConcurrentUpdate, le.description(), oldName))
+	}
+	le.record.Name = name
 	return nil
 }
 
@@ -177,6 +218,24 @@ func (le *ListEntity) requireRecorded() error {
 	if !le.created {
 		return fmt.Errorf("%s was not created", le.description())
 	}
+	return nil
+}
+
+func (le *ListEntity) refreshRecord() error {
+	if !le.record.Id.Valid || le.record.Id.Int32 <= 0 {
+		return fmt.Errorf("%s has an invalid database id", le.description())
+	}
+	current, err := database.GetLstEntity(le.db, int(le.record.Id.Int32))
+	if err != nil {
+		return fmt.Errorf("refresh %s: %w", le.description(), err)
+	}
+	if current == nil {
+		return fmt.Errorf("%w: %s no longer exists", ErrNotFound, le.description())
+	}
+	if current.LstId != le.record.LstId || operationParentDirKey(current.ParentDir) != operationParentDirKey(le.record.ParentDir) {
+		return fmt.Errorf("%w: stable identity changed for %s", ErrConcurrentUpdate, le.description())
+	}
+	*le.record = *current
 	return nil
 }
 

@@ -464,37 +464,31 @@ func (s *Server) handleDBUserEntityUpdate(w http.ResponseWriter, r *http.Request
 		parsedReleaseTime = &value
 	}
 
-	managedEntity := entitypkg.NewUserEntityFromRecord(s.db, entity)
-	if req.Name != nil && entity.Name != *req.Name {
-		if err := managedEntity.Rename(*req.Name); err != nil {
-			if errors.Is(err, entitypkg.ErrPathConflict) {
-				s.writeErrorDetail(w, http.StatusConflict, "Entity directory already exists", err.Error())
-			} else {
-				s.dbWriteError(w, err, "RenameUserEntity")
-			}
-			return
+	var latestReleaseTime *sql.NullTime
+	if req.LatestReleaseTime != nil {
+		latestReleaseTime = &sql.NullTime{}
+		if *req.LatestReleaseTime != "" {
+			latestReleaseTime.Time = *parsedReleaseTime
+			latestReleaseTime.Valid = true
 		}
 	}
-	if req.MediaCount != nil {
-		entity.MediaCount = sql.NullInt32{Int32: *req.MediaCount, Valid: true}
-	}
-	if req.LatestReleaseTime != nil {
-		if *req.LatestReleaseTime == "" {
-			if err := managedEntity.ClearLatestReleaseTime(); err != nil {
-				s.dbWriteError(w, err, "ClearUserEntityLatestReleaseTime")
-				return
-			}
-		} else {
-			if err := managedEntity.SetLatestReleaseTime(*parsedReleaseTime); err != nil {
-				s.dbWriteError(w, err, "SetUserEntityLatestReleaseTime")
-				return
-			}
+	if req.MediaCount != nil || latestReleaseTime != nil {
+		if err := database.UpdateUserEntityMetadata(s.db, int(id), req.MediaCount, latestReleaseTime); err != nil {
+			s.writeEntityMutationError(w, err, "Entity", "Entity directory already exists", "UpdateUserEntityMetadata")
+			return
+		}
+		if req.MediaCount != nil {
+			entity.MediaCount = sql.NullInt32{Int32: *req.MediaCount, Valid: true}
+		}
+		if latestReleaseTime != nil {
+			entity.LatestReleaseTime = *latestReleaseTime
 		}
 	}
 
-	if req.MediaCount != nil {
-		if err := database.UpdateUserEntityFields(s.db, int(id), entity.Name, entity.MediaCount); err != nil {
-			s.dbWriteError(w, err, "UpdateUserEntityFields")
+	managedEntity := entitypkg.NewUserEntityFromRecord(s.db, entity)
+	if req.Name != nil {
+		if err := managedEntity.Rename(*req.Name); err != nil {
+			s.writeEntityMutationError(w, err, "Entity", "Entity directory already exists", "RenameUserEntity")
 			return
 		}
 	}
@@ -513,12 +507,26 @@ func (s *Server) handleDBUserEntityDelete(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := database.DelUserEntity(s.db, uint32(id)); err != nil {
-		s.dbWriteError(w, err, "DelUserEntity")
+	managedEntity := entitypkg.NewUserEntityFromRecord(s.db, entity)
+	if err := managedEntity.Remove(); err != nil {
+		s.writeEntityMutationError(w, err, "Entity", "Entity directory already exists", "RemoveUserEntity")
 		return
 	}
 
 	s.writeResourceDeleted(w, "Entity")
+}
+
+func (s *Server) writeEntityMutationError(w http.ResponseWriter, err error, resource, pathConflictMessage, operation string) {
+	switch {
+	case errors.Is(err, entitypkg.ErrNotFound), errors.Is(err, database.ErrEntityNotFound):
+		s.writeError(w, http.StatusNotFound, resource+" not found")
+	case errors.Is(err, entitypkg.ErrPathConflict):
+		s.writeErrorDetail(w, http.StatusConflict, pathConflictMessage, err.Error())
+	case errors.Is(err, entitypkg.ErrConcurrentUpdate):
+		s.writeErrorDetail(w, http.StatusConflict, resource+" changed concurrently", err.Error())
+	default:
+		s.dbWriteError(w, err, operation)
+	}
 }
 
 // batchLoadNames 批量加载指定表的 id→name 映射，返回 map[int64]string。
@@ -651,16 +659,10 @@ func (s *Server) handleDBListEntityUpdate(w http.ResponseWriter, r *http.Request
 			s.writeErrorDetail(w, http.StatusBadRequest, "Invalid name", err.Error())
 			return
 		}
-		if entity.Name != *req.Name {
-			managedEntity := entitypkg.NewListEntityFromRecord(s.db, entity)
-			if err := managedEntity.Rename(*req.Name); err != nil {
-				if errors.Is(err, entitypkg.ErrPathConflict) {
-					s.writeErrorDetail(w, http.StatusConflict, "List entity directory already exists", err.Error())
-				} else {
-					s.dbWriteError(w, err, "RenameListEntity")
-				}
-				return
-			}
+		managedEntity := entitypkg.NewListEntityFromRecord(s.db, entity)
+		if err := managedEntity.Rename(*req.Name); err != nil {
+			s.writeEntityMutationError(w, err, "List entity", "List entity directory already exists", "RenameListEntity")
+			return
 		}
 	}
 
@@ -680,8 +682,9 @@ func (s *Server) handleDBListEntityDelete(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := database.DelLstEntity(s.db, int(id)); err != nil {
-		s.dbWriteError(w, err, "DelLstEntity")
+	managedEntity := entitypkg.NewListEntityFromRecord(s.db, entity)
+	if err := managedEntity.Remove(); err != nil {
+		s.writeEntityMutationError(w, err, "List entity", "List entity directory already exists", "RemoveListEntity")
 		return
 	}
 

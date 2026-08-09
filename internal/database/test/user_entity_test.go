@@ -110,7 +110,7 @@ func TestDelUserEntity(t *testing.T) {
 
 	t.Run("delete_nonexistent_entity", func(t *testing.T) {
 		err := database.DelUserEntity(db, 99999)
-		assert.NoError(t, err)
+		assert.ErrorIs(t, err, database.ErrEntityNotFound)
 	})
 }
 
@@ -233,6 +233,50 @@ func TestUpdateUserEntity(t *testing.T) {
 		err := database.UpdateUserEntity(db, nonexistent)
 		assert.EqualError(t, err, "no user entity found with id 99999")
 	})
+}
+
+func TestUpdateUserEntityNameIfCurrent(t *testing.T) {
+	db := setupUserEntityTestDB(t)
+	defer db.Close()
+	entity := &database.UserEntity{UserId: 1, Name: "original", ParentDir: t.TempDir()}
+	require.NoError(t, database.CreateUserEntity(db, entity))
+
+	updated, err := database.UpdateUserEntityNameIfCurrent(db, int(entity.Id.Int32), "original", "current")
+	require.NoError(t, err)
+	assert.True(t, updated)
+
+	updated, err = database.UpdateUserEntityNameIfCurrent(db, int(entity.Id.Int32), "original", "stale")
+	require.NoError(t, err)
+	assert.False(t, updated)
+	retrieved, err := database.GetUserEntity(db, int(entity.Id.Int32))
+	require.NoError(t, err)
+	assert.Equal(t, "current", retrieved.Name)
+}
+
+func TestUpdateUserEntityMetadata(t *testing.T) {
+	db := setupUserEntityTestDB(t)
+	defer db.Close()
+	entity := &database.UserEntity{UserId: 1, Name: "original", ParentDir: t.TempDir()}
+	require.NoError(t, database.CreateUserEntity(db, entity))
+	mediaCount := int32(42)
+	releaseTime := sql.NullTime{Time: time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC), Valid: true}
+
+	require.NoError(t, database.UpdateUserEntityMetadata(db, int(entity.Id.Int32), &mediaCount, &releaseTime))
+	retrieved, err := database.GetUserEntity(db, int(entity.Id.Int32))
+	require.NoError(t, err)
+	assert.Equal(t, "original", retrieved.Name)
+	assert.Equal(t, mediaCount, retrieved.MediaCount.Int32)
+	assert.True(t, retrieved.LatestReleaseTime.Time.Equal(releaseTime.Time))
+
+	cleared := sql.NullTime{}
+	require.NoError(t, database.UpdateUserEntityMetadata(db, int(entity.Id.Int32), nil, &cleared))
+	retrieved, err = database.GetUserEntity(db, int(entity.Id.Int32))
+	require.NoError(t, err)
+	assert.Equal(t, mediaCount, retrieved.MediaCount.Int32)
+	assert.False(t, retrieved.LatestReleaseTime.Valid)
+
+	err = database.UpdateUserEntityMetadata(db, 99999, &mediaCount, nil)
+	assert.ErrorIs(t, err, database.ErrEntityNotFound)
 }
 
 func TestUpdateUserEntityMediCount(t *testing.T) {

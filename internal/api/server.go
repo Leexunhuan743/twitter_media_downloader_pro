@@ -41,6 +41,9 @@ type Server struct {
 	lifecycleMu       sync.Mutex
 	started           bool
 	shuttingDown      bool
+	startupDone       chan struct{}
+	startedBots       []bot.Bot
+	activeMutations   sync.WaitGroup
 	shutdownOnce      sync.Once
 	shutdownDone      chan struct{}
 	schedulesMu       sync.Mutex
@@ -61,7 +64,7 @@ func NewServerWithConsoleLogHub(client *resty.Client, additionalClients []*resty
 		logHub = consolelog.DefaultHub()
 	}
 	if config == nil {
-		return nil, fmt.Errorf("download service create failed: config is nil")
+		return nil, fmt.Errorf("server config is nil")
 	}
 
 	eventBus := NewEventBus()
@@ -257,6 +260,7 @@ func (s *Server) buildHandler() http.Handler {
 	}
 
 	var handler http.Handler = mux
+	handler = s.shutdownMutationMiddleware(handler)
 
 	// authMiddleware 在 CORS 内层：OPTIONS 预检请求由 CORS 直接处理，不经过 auth。
 	// 当 api_key 为空时 authMiddleware 直接放行，不改变现有行为。
@@ -280,6 +284,24 @@ func (s *Server) buildHandler() http.Handler {
 	handler = loggingMiddleware(handler)
 	handler = securityHeadersMiddleware(handler)
 	return handler
+}
+
+func (s *Server) shutdownMutationMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+			s.lifecycleMu.Lock()
+			if s.shuttingDown {
+				s.lifecycleMu.Unlock()
+				s.writeError(w, http.StatusServiceUnavailable, "Server is shutting down")
+				return
+			}
+			s.activeMutations.Add(1)
+			s.lifecycleMu.Unlock()
+			defer s.activeMutations.Done()
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // getPrimaryIP 通过 UDP 连接获取主网卡 IP（不发送数据包、无网络开销）
@@ -312,9 +334,21 @@ func (s *Server) Start(port int) error {
 		s.lifecycleMu.Unlock()
 		return fmt.Errorf("server already started")
 	}
-	// Keep component startup atomic with respect to shutdown so nothing starts after cleanup.
 	s.started = true
 	s.httpServer = httpServer
+	startupDone := make(chan struct{})
+	s.startupDone = startupDone
+	s.startedBots = nil
+	s.lifecycleMu.Unlock()
+
+	startupFinished := false
+	finishStartup := func() {
+		if !startupFinished {
+			close(startupDone)
+			startupFinished = true
+		}
+	}
+	defer finishStartup()
 
 	log.Infof("[server] API server starting addr=%s", addr)
 	blue := color.FgLightBlue.Render
@@ -324,19 +358,47 @@ func (s *Server) Start(port int) error {
 	}
 
 	if sched := s.getScheduler(); sched != nil {
+		if s.isShuttingDown() {
+			return http.ErrServerClosed
+		}
 		sched.Start()
+		if s.isShuttingDown() {
+			return http.ErrServerClosed
+		}
 	}
 
 	for _, b := range s.bots {
+		if !s.beginBotStart(b) {
+			return http.ErrServerClosed
+		}
 		if err := b.Start(); err != nil {
 			log.Errorf("[bot] Start failed provider=%s error=%q", b.Name(), err.Error())
-			continue
+		} else {
+			log.Infof("[bot] Started provider=%s", b.Name())
 		}
-		log.Infof("[bot] Started provider=%s", b.Name())
+		if s.isShuttingDown() {
+			return http.ErrServerClosed
+		}
 	}
-	s.lifecycleMu.Unlock()
 
+	finishStartup()
 	return httpServer.ListenAndServe()
+}
+
+func (s *Server) isShuttingDown() bool {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	return s.shuttingDown
+}
+
+func (s *Server) beginBotStart(b bot.Bot) bool {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.shuttingDown {
+		return false
+	}
+	s.startedBots = append(s.startedBots, b)
+	return true
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -396,7 +458,12 @@ func (s *Server) GracefulShutdown(reason string) {
 		s.lifecycleMu.Lock()
 		s.shuttingDown = true
 		httpServer := s.httpServer
+		startupDone := s.startupDone
 		s.lifecycleMu.Unlock()
+		s.activeMutations.Wait()
+		if startupDone != nil {
+			<-startupDone
+		}
 
 		if s.eventBus != nil {
 			s.eventBus.PublishServerShutdown("服务器正在关闭: " + reason)
@@ -409,7 +476,6 @@ func (s *Server) GracefulShutdown(reason string) {
 			s.taskManager.CancelAllTasks()
 			s.taskManager.Close()
 			log.Info("[server] Running tasks cancelled")
-			time.Sleep(1 * time.Second)
 		}
 		if s.downloadQueue != nil {
 			s.downloadQueue.CloseAndWait(15 * time.Second)
@@ -419,7 +485,10 @@ func (s *Server) GracefulShutdown(reason string) {
 			sched.Stop()
 		}
 
-		for _, b := range s.bots {
+		s.lifecycleMu.Lock()
+		startedBots := append([]bot.Bot(nil), s.startedBots...)
+		s.lifecycleMu.Unlock()
+		for _, b := range startedBots {
 			b.Stop()
 			log.Infof("[bot] Stopped provider=%s", b.Name())
 		}

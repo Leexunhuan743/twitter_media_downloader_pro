@@ -120,7 +120,7 @@ func TestDelLstEntity(t *testing.T) {
 
 	t.Run("delete_nonexistent_entity", func(t *testing.T) {
 		err := database.DelLstEntity(db, 99999)
-		assert.NoError(t, err)
+		assert.ErrorIs(t, err, database.ErrEntityNotFound)
 	})
 }
 
@@ -223,6 +223,24 @@ func TestUpdateLstEntity(t *testing.T) {
 		err := database.UpdateLstEntity(db, nonexistent)
 		assert.EqualError(t, err, "no list entity found with id 99999")
 	})
+}
+
+func TestUpdateLstEntityNameIfCurrent(t *testing.T) {
+	db := setupLstEntityTestDB(t)
+	defer db.Close()
+	entity := &database.LstEntity{LstId: 1, Name: "original", ParentDir: t.TempDir()}
+	require.NoError(t, database.CreateLstEntity(db, entity))
+
+	updated, err := database.UpdateLstEntityNameIfCurrent(db, int(entity.Id.Int32), "original", "current")
+	require.NoError(t, err)
+	assert.True(t, updated)
+
+	updated, err = database.UpdateLstEntityNameIfCurrent(db, int(entity.Id.Int32), "original", "stale")
+	require.NoError(t, err)
+	assert.False(t, updated)
+	retrieved, err := database.GetLstEntity(db, int(entity.Id.Int32))
+	require.NoError(t, err)
+	assert.Equal(t, "current", retrieved.Name)
 }
 
 func TestLstEntity_PathMethod(t *testing.T) {

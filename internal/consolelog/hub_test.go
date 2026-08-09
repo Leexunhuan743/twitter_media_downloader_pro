@@ -1,6 +1,7 @@
 package consolelog
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -244,13 +245,30 @@ func TestCapturePipeBoundsLongLinesAndRecoversAtNewline(t *testing.T) {
 
 func TestHubBoundsStoredLinesAtUTF8Boundary(t *testing.T) {
 	hub := NewHub(10)
-	hub.Add(strings.Repeat("界", maxStoredLineBytes))
+	hub.Add("x" + strings.Repeat("界", maxStoredLineBytes))
 
 	lines := hub.Snapshot()
 	require.Len(t, lines, 1)
 	assert.LessOrEqual(t, len(lines[0]), maxStoredLineBytes)
 	assert.True(t, utf8.ValidString(lines[0]))
 	assert.True(t, strings.HasSuffix(lines[0], truncatedLineSuffix))
+}
+
+func TestHubOverflowDoesNotReenterLogrus(t *testing.T) {
+	logger := log.StandardLogger()
+	originalOutput := logger.Out
+	var output bytes.Buffer
+	logger.SetOutput(&output)
+	defer logger.SetOutput(originalOutput)
+
+	hub := NewHub(10)
+	_, unsubscribe := hub.Subscribe()
+	defer unsubscribe()
+	for i := 0; i <= subscriberBuffer; i++ {
+		hub.Add("line")
+	}
+
+	assert.Empty(t, output.String())
 }
 
 func TestStartCaptureRetriesAfterFailure(t *testing.T) {

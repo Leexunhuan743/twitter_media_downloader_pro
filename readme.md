@@ -1525,7 +1525,7 @@ start-server.bat -port 8080
 | 保留天数  | **14 天** | 自动清理 14 天前的日志  |
 | 压缩    | ✅ 开启     | 历史日志自动 gzip 压缩（lumberjack `Compress: true`） |
 
-> **client.log 脱敏说明**：全量请求/响应日志中的敏感头（`Authorization`、`Cookie`、`X-Csrf-Token`、`Set-Cookie` 等）不会明文落盘，值被替换为稳定指纹（如 `[redacted:xxxx]`）；单个请求/响应 body 超过 **256 KB** 的部分截断不写入（resty 的截断检查发生在 JSON 美化之前：256 KB 原始响应经 indent 美化后约 700 KB，为 lumberjack 2 MB 单次写入上限留出余量）。查询参数保持原样——Twitter GraphQL URL 不携带凭据参数。
+> **client.log 脱敏说明**：全量请求/响应日志中的敏感头（`Authorization`、`Cookie`、`X-Csrf-Token`、`Set-Cookie` 等）、URL userinfo、敏感查询参数和已知凭据字段不会明文落盘，值被替换为稳定指纹（如 `[redacted:xxxx]`）。单个请求/响应 body 以 **256 KB** 为调试输出上限；Resty 在响应 JSON 美化前检查响应体，在请求体格式化后检查请求体，最终日志块仍为 lumberjack 的 2 MB 单次写入上限保留余量。
 
 ### 日志级别
 

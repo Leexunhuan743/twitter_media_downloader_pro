@@ -15,6 +15,7 @@ func TestShutdownSignals(t *testing.T) {
 
 func TestShutdownSignalSubscriptionHandlesFirstSignal(t *testing.T) {
 	subscription := newShutdownSignalSubscription()
+	defer subscription.stop()
 	handled := make(chan os.Signal, 1)
 	go subscription.listen(func(sig os.Signal) {
 		handled <- sig
@@ -27,7 +28,6 @@ func TestShutdownSignalSubscriptionHandlesFirstSignal(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("shutdown signal was not handled")
 	}
-	subscription.stop()
 }
 
 func TestShutdownSignalSubscriptionStopPreventsCallback(t *testing.T) {

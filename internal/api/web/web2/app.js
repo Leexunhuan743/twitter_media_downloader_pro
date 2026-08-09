@@ -404,10 +404,13 @@ const ENDPOINTS = {
   dbStats:             () => API.get('/api/v1/db/stats'),
   // 行级：user-entities / list-entities / user-links 详情与删除
   dbUserEntity:        (id) => API.get('/api/v1/db/user-entities/' + encodeURIComponent(id)),
+  dbUserEntityUpdate:  (id,b) => API.patch('/api/v1/db/user-entities/' + encodeURIComponent(id), b),
   dbUserEntityDelete:  (id) => API.del('/api/v1/db/user-entities/' + encodeURIComponent(id)),
   dbListEntity:        (id) => API.get('/api/v1/db/list-entities/' + encodeURIComponent(id)),
+  dbListEntityUpdate:  (id,b) => API.patch('/api/v1/db/list-entities/' + encodeURIComponent(id), b),
   dbListEntityDelete:  (id) => API.del('/api/v1/db/list-entities/' + encodeURIComponent(id)),
   dbUserLink:          (id) => API.get('/api/v1/db/user-links/' + encodeURIComponent(id)),
+  dbUserLinkUpdate:    (id,b) => API.patch('/api/v1/db/user-links/' + encodeURIComponent(id), b),
   dbUserLinkDelete:    (id) => API.del('/api/v1/db/user-links/' + encodeURIComponent(id)),
 
   // Config

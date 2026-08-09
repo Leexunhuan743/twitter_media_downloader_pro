@@ -2,7 +2,9 @@ package telegram
 
 import (
 	"fmt"
+	"net/http"
 	"sync"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	log "github.com/sirupsen/logrus"
@@ -11,6 +13,8 @@ import (
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/consolelog"
 )
+
+const startupTimeout = 15 * time.Second
 
 // Bot 是 Telegram bot 实现
 type Bot struct {
@@ -26,8 +30,9 @@ type Bot struct {
 	chatTasks map[int64]map[string]struct{}
 	mu        sync.Mutex
 
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	stopCh   chan struct{}
+	wg       sync.WaitGroup
+	stopOnce sync.Once
 }
 
 // NewBot 创建 Telegram bot 实例
@@ -45,10 +50,14 @@ func NewBot(cfg *config.TelegramBotConfig, tm *api.TaskManager, eb *api.EventBus
 
 // Start 启动 bot。非阻塞，启动三个后台 goroutine 处理消息、事件和日志。
 func (b *Bot) Start() error {
-	botAPI, err := tgbotapi.NewBotAPI(b.config.Token)
+	client := &http.Client{Timeout: startupTimeout}
+	botAPI, err := tgbotapi.NewBotAPIWithClient(b.config.Token, tgbotapi.APIEndpoint, client)
 	if err != nil {
 		return fmt.Errorf("telegram: failed to create bot: %w", err)
 	}
+	// NewBotAPI performs GetMe synchronously. Keep that startup request bounded,
+	// then remove the global timeout because update polling waits up to 60 seconds.
+	client.Timeout = 0
 	b.api = botAPI
 	log.Infof("[bot-telegram] Started account=%s", b.api.Self.UserName)
 
@@ -70,11 +79,13 @@ func (b *Bot) Start() error {
 
 // Stop 停止 bot，等待所有 goroutine 退出。
 func (b *Bot) Stop() {
-	close(b.stopCh)
-	b.wg.Wait()
-	if b.api != nil {
-		b.api.StopReceivingUpdates()
-	}
+	b.stopOnce.Do(func() {
+		close(b.stopCh)
+		b.wg.Wait()
+		if b.api != nil {
+			b.api.StopReceivingUpdates()
+		}
+	})
 }
 
 // Name 返回 bot 名称

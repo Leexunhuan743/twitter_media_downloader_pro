@@ -23,9 +23,16 @@ func CreateLstEntity(db *sqlx.DB, entity *LstEntity) error {
 
 func DelLstEntity(db *sqlx.DB, id int) error {
 	stmt := `DELETE FROM lst_entities WHERE id=?`
-	_, err := db.Exec(stmt, id)
+	result, err := db.Exec(stmt, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete list entity %d: %w", id, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected for list entity %d delete: %w", id, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: list entity %d", ErrEntityNotFound, id)
 	}
 	return nil
 }
@@ -73,4 +80,18 @@ func UpdateLstEntity(db *sqlx.DB, entity *LstEntity) error {
 		return fmt.Errorf("no list entity found with id %d", entity.Id.Int32)
 	}
 	return nil
+}
+
+// UpdateLstEntityNameIfCurrent updates the name only when the caller's view is
+// still current. A false result reports a stale write.
+func UpdateLstEntityNameIfCurrent(db *sqlx.DB, id int, currentName, newName string) (bool, error) {
+	result, err := db.Exec(`UPDATE lst_entities SET name=? WHERE id=? AND name=?`, newName, id, currentName)
+	if err != nil {
+		return false, fmt.Errorf("failed to rename list entity %d: %w", id, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to get rows affected for list entity %d rename: %w", id, err)
+	}
+	return rows == 1, nil
 }

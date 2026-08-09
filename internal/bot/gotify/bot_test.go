@@ -64,3 +64,11 @@ func TestBot_NotifyTaskChangesDoesNotRepeatTerminalTask(t *testing.T) {
 
 	assert.Equal(t, 1, requests)
 }
+func TestBotStopIsIdempotent(t *testing.T) {
+	bot := &Bot{stopCh: make(chan struct{})}
+
+	assert.NotPanics(t, func() {
+		bot.Stop()
+		bot.Stop()
+	})
+}

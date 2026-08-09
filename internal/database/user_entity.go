@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -25,9 +26,16 @@ func CreateUserEntity(db *sqlx.DB, entity *UserEntity) error {
 
 func DelUserEntity(db *sqlx.DB, id uint32) error {
 	stmt := `DELETE FROM user_entities WHERE id=?`
-	_, err := db.Exec(stmt, id)
+	result, err := db.Exec(stmt, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete user entity %d: %w", id, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected for user entity %d delete: %w", id, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: user entity %d", ErrEntityNotFound, id)
 	}
 	return nil
 }
@@ -63,6 +71,51 @@ func UpdateUserEntity(db *sqlx.DB, entity *UserEntity) error {
 	}
 	if rows == 0 {
 		return fmt.Errorf("no user entity found with id %d", entity.Id.Int32)
+	}
+	return nil
+}
+
+// UpdateUserEntityNameIfCurrent updates only the directory-backed name when
+// the caller's view is still current. A false result reports a stale write.
+func UpdateUserEntityNameIfCurrent(db *sqlx.DB, id int, currentName, newName string) (bool, error) {
+	result, err := db.Exec(`UPDATE user_entities SET name=? WHERE id=? AND name=?`, newName, id, currentName)
+	if err != nil {
+		return false, fmt.Errorf("failed to rename user entity %d: %w", id, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to get rows affected for user entity %d rename: %w", id, err)
+	}
+	return rows == 1, nil
+}
+
+// UpdateUserEntityMetadata atomically updates only the optional statistics
+// supplied by the caller. A nil pointer leaves that column unchanged.
+func UpdateUserEntityMetadata(db *sqlx.DB, id int, mediaCount *int32, latestReleaseTime *sql.NullTime) error {
+	setClauses := make([]string, 0, 2)
+	args := make([]interface{}, 0, 3)
+	if mediaCount != nil {
+		setClauses = append(setClauses, "media_count=?")
+		args = append(args, *mediaCount)
+	}
+	if latestReleaseTime != nil {
+		setClauses = append(setClauses, "latest_release_time=?")
+		args = append(args, *latestReleaseTime)
+	}
+	if len(setClauses) == 0 {
+		return nil
+	}
+	args = append(args, id)
+	result, err := db.Exec(`UPDATE user_entities SET `+strings.Join(setClauses, ", ")+` WHERE id=?`, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update user entity %d metadata: %w", id, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected for user entity %d metadata update: %w", id, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: user entity %d", ErrEntityNotFound, id)
 	}
 	return nil
 }
