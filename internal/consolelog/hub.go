@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"io"
 	"os"
-	"regexp"
 	"strings"
 	"sync"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/unkmonster/tmd/internal/logging"
 )
 
 const DefaultLimit = 5000
@@ -20,7 +20,6 @@ var (
 	captureMu      sync.Mutex
 	activeCapture  *captureSession
 	startCaptureFn = startCaptureSession
-	ansiRegex      = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 )
 
 // captureSession owns the redirected stdout/stderr pipes for the lifetime of
@@ -118,7 +117,7 @@ func NewHub(limit int) *Hub {
 }
 
 func (h *Hub) Add(line string) {
-	line = strings.TrimSpace(stripANSI(line))
+	line = strings.TrimSpace(logging.SanitizeLogText(line))
 	if line == "" {
 		return
 	}
@@ -350,8 +349,4 @@ func capturePipe(reader io.Reader, output *os.File, h *Hub) {
 			return
 		}
 	}
-}
-
-func stripANSI(s string) string {
-	return ansiRegex.ReplaceAllString(s, "")
 }

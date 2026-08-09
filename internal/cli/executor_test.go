@@ -573,6 +573,31 @@ func TestSetClientLogger_FullLogging(t *testing.T) {
 	assert.Contains(t, out, "[redacted:")
 }
 
+func TestSetClientLogger_RedactsURLAndBodies(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"response-secret","ok":true}`))
+	}))
+	defer server.Close()
+
+	client := resty.New()
+	var buf bytes.Buffer
+	SetClientLogger(client, &buf)
+
+	resp, err := client.R().
+		SetHeader("Content-Type", "application/json").
+		SetBody(`{"password":"request-secret"}`).
+		Post(server.URL + "/session?token=query-secret")
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode())
+
+	out := buf.String()
+	for _, secret := range []string{"query-secret", "request-secret", "response-secret"} {
+		assert.NotContains(t, out, secret)
+	}
+	assert.Contains(t, out, "[redacted:")
+}
+
 // TestSetClientLogger_LargeResponseStaysUnderLumberjackLimit 回归测试：
 // resty 的截断检查在 JSON indent 美化之前，原始 <1MB 的响应经 indent 膨胀后
 // 单次 debug 块可达 2-6MB，超过 lumberjack 2MB 单次写入上限导致日志丢弃

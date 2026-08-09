@@ -65,6 +65,17 @@ func TestHubNormalizesLines(t *testing.T) {
 	assert.Equal(t, []string{"ERRO[2026] failed"}, hub.Snapshot())
 }
 
+func TestHubSanitizesPublicLogLines(t *testing.T) {
+	hub := NewHub(10)
+	hub.Add("\x1b]8;;https://example.invalid\afailure\x1b]8;;\a token=plain-secret")
+
+	lines := hub.Snapshot()
+	require.Len(t, lines, 1)
+	assert.NotContains(t, lines[0], "\x1b")
+	assert.NotContains(t, lines[0], "plain-secret")
+	assert.Contains(t, lines[0], "[redacted:")
+}
+
 func TestHubUsesFixedRingBuffer(t *testing.T) {
 	hub := NewHub(3)
 
