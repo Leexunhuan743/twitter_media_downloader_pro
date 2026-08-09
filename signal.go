@@ -8,24 +8,30 @@ import (
 
 type shutdownSignalSubscription struct {
 	signals  chan os.Signal
+	done     chan struct{}
 	stopOnce sync.Once
 }
 
 func notifyOnShutdownSignal(handler func(os.Signal)) func() {
-	subscription := &shutdownSignalSubscription{
-		signals: make(chan os.Signal, 1),
-	}
+	subscription := newShutdownSignalSubscription()
 	signal.Notify(subscription.signals, shutdownSignals()...)
 	go subscription.listen(handler)
 
-	return func() {
-		subscription.stop()
+	return subscription.stop
+}
+
+func newShutdownSignalSubscription() *shutdownSignalSubscription {
+	return &shutdownSignalSubscription{
+		signals: make(chan os.Signal, 1),
+		done:    make(chan struct{}),
 	}
 }
 
 func (s *shutdownSignalSubscription) listen(handler func(os.Signal)) {
+	defer close(s.done)
+
 	sig, ok := <-s.signals
-	if !ok || !s.stop() {
+	if !ok || !s.unsubscribe() {
 		return
 	}
 	if handler != nil {
@@ -33,13 +39,19 @@ func (s *shutdownSignalSubscription) listen(handler func(os.Signal)) {
 	}
 }
 
-// stop returns true only to the caller that wins the subscription lifecycle.
-func (s *shutdownSignalSubscription) stop() bool {
-	stopped := false
+func (s *shutdownSignalSubscription) stop() {
+	s.unsubscribe()
+	// Do not let callers release resources while the shutdown callback is still using them.
+	<-s.done
+}
+
+// unsubscribe returns true only to the caller that claims signal handling.
+func (s *shutdownSignalSubscription) unsubscribe() bool {
+	unsubscribed := false
 	s.stopOnce.Do(func() {
 		signal.Stop(s.signals)
 		close(s.signals)
-		stopped = true
+		unsubscribed = true
 	})
-	return stopped
+	return unsubscribed
 }

@@ -2169,6 +2169,16 @@ func TestServer_GracefulShutdownCompletes(t *testing.T) {
 	server.WaitForShutdown()
 }
 
+func TestServer_StartAfterShutdownReturnsServerClosed(t *testing.T) {
+	server, _ := setupTestServer(t)
+	server.GracefulShutdown("before-start")
+
+	err := server.Start(0)
+
+	assert.ErrorIs(t, err, http.ErrServerClosed)
+	assert.Nil(t, server.httpServer)
+}
+
 func TestServer_GracefulShutdownWaitsForDetachedTaskExit(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer db.Close()

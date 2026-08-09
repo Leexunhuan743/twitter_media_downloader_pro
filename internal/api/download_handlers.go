@@ -940,11 +940,13 @@ func (s *Server) handleRetryTask(w http.ResponseWriter, r *http.Request) {
 	newTask, result := s.taskManager.RetryTask(taskID)
 	switch result {
 	case RetryTaskResultSuccess:
+		newTaskID := newTask.ID
+		status := newTask.Status
 		s.enqueueTask(newTask, runFunc)
 		s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 			"message":     "Task retried",
-			"task_id":     newTask.ID,
-			"status":      newTask.Status,
+			"task_id":     newTaskID,
+			"status":      status,
 			"original_id": taskID,
 		}))
 	case RetryTaskResultNotFound:
@@ -1097,6 +1099,7 @@ func (s *Server) handleRetryAllFailed(w http.ResponseWriter, r *http.Request) {
 	// 作为任务创建并入队，与批量下载模式一致
 	task := s.taskManager.CreateTask(TaskTypeRetryAllFailed, nil)
 	taskID := task.ID
+	status := task.Status
 
 	s.enqueueTask(task, func(ctx context.Context, taskID string, reporter service.ProgressReporter) error {
 		return s.downloadService.RetryAllFailed(ctx, taskID, reporter)
@@ -1105,7 +1108,7 @@ func (s *Server) handleRetryAllFailed(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"message": "Retry all failed tweets task queued",
 		"task_id": taskID,
-		"status":  task.Status,
+		"status":  status,
 	}))
 }
 

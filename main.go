@@ -371,12 +371,6 @@ func runServer(conf *config.Config, appRootPath string, port int, loginOpts twit
 	}
 	defer server.GracefulShutdown("server-exit")
 
-	stopSignals := notifyOnShutdownSignal(func(sig os.Signal) {
-		log.Warnf("[server] Signal caught signal=%s", sig)
-		server.GracefulShutdown("signal:" + sig.String())
-	})
-	defer stopSignals()
-
 	// Bot 初始化
 	botConfPath := filepath.Join(appRootPath, "bot_config.yaml")
 	botConf, err := config.LoadBotConfig(botConfPath)
@@ -392,6 +386,12 @@ func runServer(conf *config.Config, appRootPath string, port int, loginOpts twit
 		}
 	}
 	server.InitBot(initBot(botConf, server))
+
+	stopSignals := notifyOnShutdownSignal(func(sig os.Signal) {
+		log.Warnf("[server] Signal caught signal=%s", sig)
+		server.GracefulShutdown("signal:" + sig.String())
+	})
+	defer stopSignals()
 
 	err = server.Start(port)
 	if err != nil && err != http.ErrServerClosed {
