@@ -55,7 +55,7 @@ Server mode is the long-running control plane around the same download service, 
 
 `api.NewServerWithConsoleLogHub` creates one `EventBus`, one `TaskManager`, one `DownloadService`, one `DownloadQueue`, and optionally a `Scheduler` from `{appRootPath}/schedules.yaml`. HTTP handlers create tasks, build a service run function, and enqueue it with `DownloadQueue`.
 
-The server also owns the Web UI. `internal/api/handlers.go` embeds `internal/api/web/*`, defaults to `web1`, can switch to `web2`, and uses local files in `TMD_DEV=1` development mode.
+The server also owns the Web UI. `internal/api/handlers.go` embeds `internal/api/web/*`, defaults to `web1`, can switch among `web1`, `web2`, and `web3`, and uses local files in `TMD_DEV=1` development mode.
 
 ## Task And Event Flow
 

@@ -149,9 +149,23 @@ internal/api/web/
 
 - **No build step** — pure HTML/CSS/JS, embedded via Go `//go:embed`
 - **Runtime hot-switch** — `GET/POST /api/v1/config/theme` + `GET /api/v1/config/themes`
-- **Theme switcher** — floating 🎨 button injected by Go handler (`themeSwitcherHTML()`)
+- **Theme switcher** — server-injected switcher from `themeSwitcherHTML()`; each theme may place and style it within its own navigation model
 - **Security** — validates target directory exists and contains index.html
 - **Shared backend** — all three themes call same REST API + EventSource SSE
+
+## Web3 Console Theme
+
+Web3 is a zero-build dark glass operations console that preserves the shared REST and SSE contracts while providing its own hash-routed presentation layer.
+
+The theme uses neutral dark page surfaces, restrained translucent panels, one brand accent, and semantic success, warning, error, and information colors. Desktop keeps a fixed navigation rail; mobile moves it into an off-canvas menu and keeps every interactive row at a touch-safe height.
+
+[[internal/api/web/web3/app.js#enhanceThemeSwitcher]] moves the server-injected theme switcher into the sidebar so it no longer obscures health state or mobile content. The Tasks, Data, and Settings segmented controls use tablist, tab, and tabpanel relationships with arrow-key navigation.
+
+### Presentation Contract
+
+Web3 assets must keep responsive background continuity, themed native controls, explicit form labels, keyboard-visible focus, and readable long log lines across desktop and mobile layouts.
+
+[[internal/api/web3_frontend_test.go#TestWeb3ThemePresentationContract]] locks the static contract for mobile surface continuity, 44px touch controls, tab semantics, labels, local SVG icons, and wrapped log output. Browser acceptance additionally covers Dashboard, Tasks, Data, Settings, and Logs at representative desktop and mobile widths.
 
 ## Web1 Console Architecture
 

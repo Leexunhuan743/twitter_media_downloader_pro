@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024' style='color:%237c8cff'%3E%3Cpath fill='currentColor' d='M582 88c16 0 28 12 28 28v178h192c23 0 34 28 17 45l-76 76c-5 5-12 8-20 8H610v248c0 80 43 129 130 145 25 5 35 35 19 54l-70 82c-8 9-20 14-32 11-122-27-205-122-205-267V423H274c-24 0-35-29-17-46l77-75c5-5 12-8 19-8h99V116c0-16 12-28 28-28h102Zm-74 335v290c0 102 59 177 153 209l42-49c-99-31-149-101-149-202V423h-46Z'/%3E%3C/svg%3E">
 <style>
 /* 防 FOUC 最小变量 + 全量 reduced-motion（与 styles.css 的 :root 必须一致，改配色同步两处） */
-:root{--bg-0:#0b0e1a;--bg-1:#101528;--accent:#7c8cff;--text-1:#e8ebff;--text-2:#9aa3c7;--ok:#34d399;--warn:#fbbf24;--err:#f87171;--info:#38bdf8}
+:root{--bg-0:#090b10;--bg-1:#12151d;--accent:#8b95ff;--text-1:#f4f6fb;--text-2:#b4bdcc;--ok:#45d69c;--warn:#f6c85f;--err:#ff7676;--info:#52c7ea}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:0s!important;animation-duration:.01ms!important;animation-iteration-count:1!important}}
 </style>
 <link rel="stylesheet" href="/static/styles.css">
@@ -83,7 +83,7 @@
   <!-- 主区域 -->
   <main class="main">
     <header class="topbar">
-      <button class="icon-btn" id="menuToggle" aria-label="Open menu">
+      <button class="icon-btn" id="menuToggle" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
       <h1 class="page-title" id="pageTitle">Dashboard</h1>
@@ -101,10 +101,11 @@
 <div class="toast-container" id="toastRoot" role="status" aria-live="polite"></div>
 
 <!-- Auth overlay -->
-<div class="auth-overlay" id="authOverlay">
+<div class="auth-overlay" id="authOverlay" aria-hidden="true">
   <div class="auth-card glass" role="dialog" aria-modal="true" aria-labelledby="authTitle">
     <h2 id="authTitle">Authentication Required</h2>
     <p class="auth-desc" id="authDesc">Enter your API key to continue.</p>
+    <label class="sr-only" for="authKey">API Key</label>
     <input type="password" id="authKey" placeholder="API Key" autocomplete="off">
     <div class="auth-error" id="authError"></div>
     <div class="auth-actions">

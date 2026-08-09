@@ -12,6 +12,26 @@ const fmtDur = (a, b) => { const ms = new Date(b) - new Date(a); if (isNaN(ms) |
 const relTime = (t) => { if (!t) return '-'; const d = new Date(t); if (isNaN(d.getTime())) return '-'; const s = (Date.now() - d.getTime()) / 1000; if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + 'm ago'; if (s < 86400) return Math.floor(s / 3600) + 'h ago'; return Math.floor(s / 86400) + 'd ago'; };
 const stripAnsi = (s) => String(s ?? '').replace(/\x1b\[[0-9;]*m/g, '');
 const toRFC3339 = (v) => { if (!v) return ''; const t = new Date(v); return isNaN(t.getTime()) ? '' : t.toISOString().replace(/\.\d{3}Z$/, 'Z'); };
+const ICON_PATHS = {
+  alert: '<path d="M10.3 3.3 2.1 17.2A2 2 0 0 0 3.8 20h16.4a2 2 0 0 0 1.7-2.8L13.7 3.3a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  check: '<path d="m5 12 4 4L19 6"/>',
+  chevronLeft: '<path d="m15 18-6-6 6-6"/>',
+  chevronRight: '<path d="m9 18 6-6-6-6"/>',
+  copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  file: '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5Z"/><polyline points="14 2 14 8 20 8"/>',
+  folder: '<path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>',
+  image: '<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
+  info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
+  list: '<path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/>',
+  package: '<path d="m7.5 4.3 9 5.15M3.27 6.96 12 12l8.73-5.04M12 22V12"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>',
+  palette: '<circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.6-1.4-.4-.4-.6-.9-.6-1.4a2 2 0 0 1 2-2H17a5 5 0 0 0 5-5C22 5.7 17.5 2 12 2Z"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  tag: '<path d="M12.6 2.6H4a2 2 0 0 0-2 2v8.6a2 2 0 0 0 .6 1.4l6.8 6.8a2 2 0 0 0 2.8 0l9.2-9.2a2 2 0 0 0 0-2.8l-6.8-6.8a2 2 0 0 0-1.4-.6Z"/><circle cx="7.5" cy="7.5" r=".5"/>',
+  user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+};
+const iconSVG = (name, size = 16) => `<svg class="inline-icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name] || ICON_PATHS.info}</svg>`;
 
 /* ---------- API 层 ---------- */
 const apiBase = () => ((window.TMD_DEV_BASE) || '');
@@ -205,14 +225,14 @@ const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn)
 let pageTasks = []; // SSE 实时快照（与 REST 加载分离）
 
 /* ---------- Toast ---------- */
-const icons = { ok: '✓', err: '✕', warn: '!', info: 'ℹ' };
+const toastIcons = { ok: 'check', err: 'x', warn: 'alert', info: 'info' };
 function toast(msg, type = 'info', ms = 5000) {
   const root = document.getElementById('toastRoot');
   if (!root) return;
   const el = document.createElement('div');
   el.className = 'toast ' + type;
   if (type === 'err') el.setAttribute('role', 'alert');
-  el.innerHTML = '<span class="toast-icon">' + icons[type] + '</span><span class="toast-msg">' + esc(msg) + '</span><button class="toast-close" aria-label="Dismiss">✕</button>';
+  el.innerHTML = '<span class="toast-icon">' + iconSVG(toastIcons[type] || 'info', 16) + '</span><span class="toast-msg">' + esc(msg) + '</span><button class="toast-close" aria-label="Dismiss">' + iconSVG('x', 15) + '</button>';
   el.querySelector('.toast-close').onclick = () => el.remove();
   root.appendChild(el);
   let timer = setTimeout(() => el.remove(), ms);
@@ -230,6 +250,13 @@ function openModal(html) {
   overlay.setAttribute('aria-modal', 'true');
   overlay._lastFocused = document.activeElement;
   overlay.innerHTML = '<div class="modal glass">' + html + '</div>';
+  const heading = overlay.querySelector('h2');
+  if (heading) {
+    heading.id = heading.id || 'web3ModalTitle';
+    overlay.setAttribute('aria-labelledby', heading.id);
+  } else {
+    overlay.setAttribute('aria-label', 'Dialog');
+  }
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
   document.body.appendChild(overlay);
   currentModal = overlay;
@@ -253,8 +280,10 @@ document.addEventListener('keydown', (e) => {
     if (document.getElementById('authOverlay').classList.contains('open')) { hideAuth(); return; }
     return;
   }
-  if (e.key !== 'Tab' || !currentModal) return;
-  const focusables = currentModal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+  const authCard = document.getElementById('authOverlay').classList.contains('open') ? document.querySelector('.auth-card') : null;
+  const focusRoot = currentModal || authCard;
+  if (e.key !== 'Tab' || !focusRoot) return;
+  const focusables = focusRoot.querySelectorAll('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])');
   if (!focusables.length) { e.preventDefault(); return; }
   const first = focusables[0];
   const last = focusables[focusables.length - 1];
@@ -263,24 +292,33 @@ document.addEventListener('keydown', (e) => {
 });
 
 /* ---------- Sidebar（移动端） ---------- */
-function openSidebar() { document.getElementById('sidebar').classList.add('open'); document.getElementById('sidebarOverlay').classList.add('open'); }
-function closeSidebar() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebarOverlay').classList.remove('open'); }
+function openSidebar() { document.getElementById('sidebar').classList.add('open'); document.getElementById('sidebarOverlay').classList.add('open'); document.getElementById('menuToggle').setAttribute('aria-expanded', 'true'); }
+function closeSidebar() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebarOverlay').classList.remove('open'); document.getElementById('menuToggle').setAttribute('aria-expanded', 'false'); }
 
 /* ---------- Auth ---------- */
 let _authDialogOpen = false;
+let _authLastFocused = null;
 function showAuth(message) {
   if (document.getElementById('authOverlay').classList.contains('open')) return; // 去重
   _authDialogOpen = true;
+  _authLastFocused = document.activeElement;
   const ov = document.getElementById('authOverlay');
   if (message) document.getElementById('authDesc').textContent = message;
   document.getElementById('authError').textContent = '';
   document.getElementById('authKey').value = '';
   ov.classList.add('open');
+  ov.setAttribute('aria-hidden', 'false');
+  document.getElementById('app').inert = true;
   setTimeout(() => document.getElementById('authKey').focus(), 80);
 }
 function hideAuth() {
   _authDialogOpen = false;
-  document.getElementById('authOverlay').classList.remove('open');
+  const overlay = document.getElementById('authOverlay');
+  overlay.classList.remove('open');
+  overlay.setAttribute('aria-hidden', 'true');
+  document.getElementById('app').inert = false;
+  if (_authLastFocused && _authLastFocused.isConnected) _authLastFocused.focus();
+  _authLastFocused = null;
   // 认证框关闭后若 SSE 已停止（无 token 暂停分支），恢复重连
   if (!sseSource && !_authDialogOpen) {
     sseReconnectDelay = 2000;
@@ -348,9 +386,35 @@ const TASK_STATUS_SAFE = { queued: 1, running: 1, completed: 1, failed: 1, cance
 const safeStatus = (s) => (TASK_STATUS_SAFE[s] ? s : 'queued');
 function taskTypeIcon(t) {
   const n = taskTypeName(t);
-  const g = { User: '👤', List: '📋', Following: '👥', 'JSON File': '📄', 'JSON Folder': '📁', Batch: '📦', Mark: '🏷️', Profile: '🖼️' };
-  return g[n] || '📦';
+  const icons = { User: 'user', List: 'list', Following: 'users', 'JSON File': 'file', 'JSON Folder': 'folder', Batch: 'package', Mark: 'tag', Profile: 'image' };
+  return `<span class="type-icon" title="${esc(n)}">${iconSVG(icons[n] || 'package', 16)}</span>`;
 }
+
+function syncTabs(containerID, activeLabel) {
+  document.querySelectorAll('#' + containerID + ' [role="tab"]').forEach((tab) => {
+    const active = tab.textContent.trim() === activeLabel;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
+    if (active && tab.getAttribute('aria-controls')) {
+      document.getElementById(tab.getAttribute('aria-controls'))?.setAttribute('aria-labelledby', tab.id);
+    }
+  });
+}
+
+document.addEventListener('keydown', (event) => {
+  const tab = event.target instanceof Element ? event.target.closest('[role="tab"]') : null;
+  if (!tab || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  const tabs = [...tab.parentElement.querySelectorAll('[role="tab"]')];
+  if (!tabs.length) return;
+  event.preventDefault();
+  const current = tabs.indexOf(tab);
+  const next = event.key === 'Home' ? tabs[0]
+    : event.key === 'End' ? tabs[tabs.length - 1]
+      : tabs[(current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+  next.focus();
+  next.click();
+});
 
 /* ---------- 调度工具 ---------- */
 function normalizeEntry(item) {
@@ -391,7 +455,6 @@ function renderTasks(root) {
   root.innerHTML = `
     <div class="page">
       <div class="page-header">
-        <h2>Tasks</h2>
         <div class="page-actions">
           <button class="btn ghost" onclick="cancelAllQueued()">Cancel Queued</button>
         </div>
@@ -399,11 +462,11 @@ function renderTasks(root) {
       <!-- 创建下载：核心操作内嵌页面顶部，零弹窗 -->
       <div class="glass card" id="taskFormCard">
         <div class="filter-bar">
-          <div class="tabs" id="taskFormTabs">
-            ${Object.entries(TASK_FORM_LABELS).map(([id, label]) => `<button class="tab ${taskFormType === id ? 'active' : ''}" onclick="switchTaskForm('${id}')">${esc(label)}</button>`).join('')}
+          <div class="tabs" id="taskFormTabs" role="tablist" aria-label="Download type">
+            ${Object.entries(TASK_FORM_LABELS).map(([id, label]) => `<button type="button" id="task-tab-${id}" role="tab" aria-controls="taskFormBody" aria-selected="${taskFormType === id}" tabindex="${taskFormType === id ? '0' : '-1'}" class="tab ${taskFormType === id ? 'active' : ''}" onclick="switchTaskForm('${id}')">${esc(label)}</button>`).join('')}
           </div>
         </div>
-        <div style="padding:16px 20px" id="taskFormBody"></div>
+        <div class="panel-body" id="taskFormBody" role="tabpanel" aria-labelledby="task-tab-${taskFormType}"></div>
       </div>
       <div class="stats-grid">
         <div class="stat-card glass info"><div class="stat-value" data-taskstat="queued">—</div><div class="stat-label">Queued</div></div>
@@ -417,13 +480,13 @@ function renderTasks(root) {
         <div class="glass card" id="taskListCard"></div>
       </div>
       <div class="errors-panel glass card" id="errorsPanel">
-        <div class="errors-panel-header" onclick="toggleErrorsPanel()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleErrorsPanel()}" tabindex="0" role="button" aria-expanded="false">
-          <span class="errors-icon" id="errorsIcon">⚠</span>
+        <button type="button" class="errors-panel-header" onclick="toggleErrorsPanel()" aria-expanded="false" aria-controls="errorsBody">
+          <span class="errors-icon" id="errorsIcon">${iconSVG('alert', 13)}</span>
           <span class="errors-title">Failed Records</span>
           <span class="errors-badge hidden" id="errorsBadge">0</span>
-          <span class="errors-arrow" id="errorsArrow">▶</span>
-        </div>
-        <div class="errors-body hidden" id="errorsBody">
+          <span class="errors-arrow" id="errorsArrow">${iconSVG('chevronRight', 14)}</span>
+        </button>
+        <div class="errors-body hidden" id="errorsBody" aria-hidden="true">
           <div id="errorsContent"><div class="loading-block"><div class="spinner sm"></div></div></div>
         </div>
       </div>
@@ -476,7 +539,7 @@ function taskRowHTML(t) {
   const canRetry = t.status === 'failed' || t.status === 'cancelled';
   const canDelete = t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled';
   return `<tr data-task-id="${jsEsc(t.task_id)}" data-status="${jsEsc(safeStatus(t.status))}">
-    <td>${esc(taskTypeIcon(t))}</td>
+    <td>${taskTypeIcon(t)}</td>
     <td><span class="mono">${esc(t.task_id)}</span><div class="text-sm text-muted ellipsis">${esc(taskTypeName(t))}${target ? ' · ' + esc(target) : ''}</div></td>
     <td><span class="badge badge-${safeStatus(t.status)}">${esc(t.status)}</span></td>
     <td style="min-width:180px">${progressHTML(t)}</td>
@@ -520,24 +583,24 @@ const TASK_FORM_LABELS = { user: 'User', list: 'List', following: 'Following', b
 let taskFormType = 'user';
 
 const TASK_FORM_HTML = {
-  user: `<div class="form-row"><div class="form-group"><label>Screen Name</label><input type="text" id="tf-target" placeholder="@username" style="max-width:420px"></div></div>`,
-  list: `<div class="form-row"><div class="form-group"><label>List ID</label><input type="text" id="tf-listid" placeholder="List ID (numeric)" style="max-width:420px"></div></div>`,
-  following: `<div class="form-row"><div class="form-group"><label>Screen Name</label><input type="text" id="tf-target" placeholder="@username" style="max-width:420px"></div></div>`,
+  user: `<div class="form-row"><div class="form-group"><label for="tf-target">Screen Name</label><input type="text" id="tf-target" placeholder="@username" style="max-width:420px"></div></div>`,
+  list: `<div class="form-row"><div class="form-group"><label for="tf-listid">List ID</label><input type="text" id="tf-listid" inputmode="numeric" placeholder="List ID (numeric)" style="max-width:420px"></div></div>`,
+  following: `<div class="form-row"><div class="form-group"><label for="tf-target">Screen Name</label><input type="text" id="tf-target" placeholder="@username" style="max-width:420px"></div></div>`,
   batch: `<div class="form-row">
-    <div class="form-group"><label>Users (one per line)</label><textarea id="tf-users"></textarea></div>
-    <div class="form-group"><label>Lists (one per line)</label><textarea id="tf-lists"></textarea></div>
-    <div class="form-group"><label>Following (one per line)</label><textarea id="tf-following"></textarea></div>
+    <div class="form-group"><label for="tf-users">Users (one per line)</label><textarea id="tf-users"></textarea></div>
+    <div class="form-group"><label for="tf-lists">Lists (one per line)</label><textarea id="tf-lists"></textarea></div>
+    <div class="form-group"><label for="tf-following">Following (one per line)</label><textarea id="tf-following"></textarea></div>
   </div>`,
-  jsonFile: `<div class="form-group"><label>Upload JSON files exported by third-party tools</label><input type="file" id="tf-files" accept=".json,application/json" multiple><div class="form-hint">Multiple .json files supported; leave empty to use the server-path mode below</div></div>
-    <div class="form-group"><label>Advanced: server-side JSON file paths (one per line)</label><textarea id="tf-paths" rows="3" placeholder="/path/to/twitter-followers-123.json"></textarea></div>`,
-  jsonFolder: `<div class="form-group"><label>Upload LoongTweet JSON files</label><input type="file" id="tf-files" accept=".json,application/json" multiple><div class="form-hint">Pick one or more .loongtweet JSON files; leave empty to use the server-path mode below</div></div>
-    <div class="form-group"><label>Advanced: server-side .loongtweet folder paths (one per line)</label><textarea id="tf-paths" rows="3" placeholder="/path/to/.loongtweet"></textarea></div>`,
+  jsonFile: `<div class="form-group"><label for="tf-files">Upload JSON files exported by third-party tools</label><input type="file" id="tf-files" accept=".json,application/json" multiple><div class="form-hint">Multiple .json files supported; leave empty to use the server-path mode below</div></div>
+    <div class="form-group"><label for="tf-paths">Advanced: server-side JSON file paths (one per line)</label><textarea id="tf-paths" rows="3" placeholder="/path/to/twitter-followers-123.json"></textarea></div>`,
+  jsonFolder: `<div class="form-group"><label for="tf-files">Upload LoongTweet JSON files</label><input type="file" id="tf-files" accept=".json,application/json" multiple><div class="form-hint">Pick one or more .loongtweet JSON files; leave empty to use the server-path mode below</div></div>
+    <div class="form-group"><label for="tf-paths">Advanced: server-side .loongtweet folder paths (one per line)</label><textarea id="tf-paths" rows="3" placeholder="/path/to/.loongtweet"></textarea></div>`,
   mark: `<div class="form-row">
-    <div class="form-group"><label>Users (one per line)</label><textarea id="tf-users"></textarea></div>
-    <div class="form-group"><label>Lists (one per line)</label><textarea id="tf-lists"></textarea></div>
-    <div class="form-group"><label>Following (one per line)</label><textarea id="tf-following"></textarea></div>
+    <div class="form-group"><label for="tf-users">Users (one per line)</label><textarea id="tf-users"></textarea></div>
+    <div class="form-group"><label for="tf-lists">Lists (one per line)</label><textarea id="tf-lists"></textarea></div>
+    <div class="form-group"><label for="tf-following">Following (one per line)</label><textarea id="tf-following"></textarea></div>
   </div>
-  <div class="form-row"><div class="form-group"><label>Mark timestamp (optional)</label><input type="datetime-local" id="tf-marktime" style="max-width:420px"></div></div>`,
+  <div class="form-row"><div class="form-group"><label for="tf-marktime">Mark timestamp (optional)</label><input type="datetime-local" id="tf-marktime" style="max-width:420px"></div></div>`,
 };
 const TASK_FORM_OPTS = `<div class="checkbox-grid" id="tf-opts">
     <label class="checkbox-line"><input type="checkbox" id="tf-autofollow"> Auto follow</label>
@@ -570,7 +633,7 @@ function renderTaskFormInline() {
 }
 function switchTaskForm(type) {
   taskFormType = TASK_FORM_HTML[type] ? type : 'user';
-  document.querySelectorAll('#taskFormTabs .tab').forEach(t => t.classList.toggle('active', t.textContent === TASK_FORM_LABELS[taskFormType]));
+  syncTabs('taskFormTabs', TASK_FORM_LABELS[taskFormType]);
   renderTaskFormInline();
 }
 
@@ -710,6 +773,7 @@ function toggleErrorsPanel() {
   if (!body) return;
   const isOpen = !body.classList.contains('hidden');
   body.classList.toggle('hidden', isOpen);
+  body.setAttribute('aria-hidden', String(isOpen));
   arrow.style.transform = isOpen ? '' : 'rotate(90deg)';
   const header = document.querySelector('.errors-panel-header');
   if (header) header.setAttribute('aria-expanded', String(!isOpen));
@@ -733,6 +797,7 @@ function updateErrorsPanel() {
   if (icon) icon.style.display = total ? '' : 'none';
   if (!total) {
     body.classList.add('hidden');
+    body.setAttribute('aria-hidden', 'true');
     document.querySelector('.errors-panel-header')?.setAttribute('aria-expanded', 'false');
     if (document.getElementById('errorsArrow')) document.getElementById('errorsArrow').style.transform = '';
     content.innerHTML = '<div class="errors-empty">No failed records — everything looks good.</div>';
@@ -740,6 +805,7 @@ function updateErrorsPanel() {
   }
   if (body.classList.contains('hidden')) {
     body.classList.remove('hidden');
+    body.setAttribute('aria-hidden', 'false');
     document.querySelector('.errors-panel-header')?.setAttribute('aria-expanded', 'true');
     if (document.getElementById('errorsArrow')) document.getElementById('errorsArrow').style.transform = 'rotate(90deg)';
   }
@@ -791,6 +857,14 @@ const DB_TABS = [
   { id: 'user-links', label: 'User Links', endpoint: 'dbUserLinks', columns: ['id', 'name', 'parent_lst_entity_name', 'parent_lst_entity_id', 'created_at'], sortable: ['id', 'name', 'created_at'] },
   { id: 'previous-names', label: 'Previous Names', endpoint: 'dbPreviousNames', columns: ['id', 'screen_name', 'name', 'record_date', 'current_screen_name'], sortable: ['id', 'screen_name', 'name', 'record_date'] },
 ];
+const DB_STAT_LABELS = {
+  users: 'Users',
+  lsts: 'Lists',
+  user_entities: 'User entities',
+  lst_entities: 'List entities',
+  user_links: 'User links',
+  user_previous_names: 'Previous names',
+};
 const DB_EDIT_FIELDS = {
   'users': [{ key: 'screen_name', label: 'Screen Name' }, { key: 'name', label: 'Name' }],
   'lists': [{ key: 'name', label: 'Name' }],
@@ -805,19 +879,19 @@ function renderData(root) {
   root.innerHTML = `
     <div class="page">
       <div class="page-header">
-        <h2>Data</h2>
-        <div class="page-actions">
-          <input type="text" id="dbSearch" placeholder="Search..." style="width:220px" value="${esc(dbState.q)}" onkeydown="if(event.key==='Enter')dbSearchSubmit()">
+        <div class="page-actions search-actions">
+          <label class="sr-only" for="dbSearch">Search data</label>
+          <input type="text" id="dbSearch" aria-label="Search data" placeholder="Search records" style="width:220px" value="${esc(dbState.q)}" onkeydown="if(event.key==='Enter')dbSearchSubmit()">
           <button class="btn ghost sm" onclick="dbSearchSubmit()">Search</button>
           <button class="btn ghost sm" onclick="dbRefresh()">Refresh</button>
         </div>
       </div>
       <div class="glass card">
         <div class="filter-bar">
-          <div class="tabs" id="dbTabs">${DB_TABS.map(t => `<button class="tab ${dbState.tab === t.id ? 'active' : ''}" onclick="dbSwitchTab('${t.id}')">${esc(t.label)}</button>`).join('')}</div>
-          <span class="text-sm text-muted" id="dbStats">—</span>
+          <div class="tabs" id="dbTabs" role="tablist" aria-label="Data table">${DB_TABS.map(t => `<button type="button" id="db-tab-${t.id}" role="tab" aria-controls="dbTableWrap" aria-selected="${dbState.tab === t.id}" tabindex="${dbState.tab === t.id ? '0' : '-1'}" class="tab ${dbState.tab === t.id ? 'active' : ''}" onclick="dbSwitchTab('${t.id}')">${esc(t.label)}</button>`).join('')}</div>
+          <span class="db-stats" id="dbStats" aria-live="polite">—</span>
         </div>
-        <div class="table-wrap" id="dbTableWrap"><div class="loading-block"><div class="spinner"></div></div></div>
+        <div class="table-wrap" id="dbTableWrap" role="tabpanel" aria-labelledby="db-tab-${dbState.tab}"><div class="loading-block"><div class="spinner"></div></div></div>
         <div class="filter-bar" id="dbPagination"></div>
       </div>
     </div>`;
@@ -826,7 +900,7 @@ function renderData(root) {
 
 async function dbSwitchTab(tab) {
   dbState.tab = tab; dbState.page = 1; dbState.q = '';
-  document.querySelectorAll('#dbTabs .tab').forEach(t => t.classList.toggle('active', t.textContent === DB_TABS.find(x => x.id === tab).label));
+  syncTabs('dbTabs', DB_TABS.find(x => x.id === tab).label);
   const si = document.getElementById('dbSearch'); if (si) si.value = '';
   dbLoad();
 }
@@ -857,7 +931,9 @@ async function dbLoad() {
   }
   ENDPOINTS.dbStats().then(s => {
     const el = document.getElementById('dbStats');
-    if (el && s) el.textContent = Object.entries(s).map(([k, v]) => k + ': ' + v).join(' · ');
+    if (el && s) {
+      el.innerHTML = Object.entries(s).map(([key, value]) => `<span class="db-stat"><strong>${esc(value)}</strong> ${esc(DB_STAT_LABELS[key] || key.replaceAll('_', ' '))}</span>`).join('');
+    }
   }).catch(() => {});
 }
 
@@ -904,8 +980,8 @@ function renderDBPagination() {
   if (!el) return;
   el.innerHTML = `<span class="text-sm text-muted">${dbState.total} records · page ${dbState.page}/${dbState.totalPages}</span>
     <span style="margin-left:auto;display:flex;gap:6px">
-      <button class="btn xs ghost" onclick="dbChangePage(-1)" ${dbState.page <= 1 ? 'disabled' : ''}>← Prev</button>
-      <button class="btn xs ghost" onclick="dbChangePage(1)" ${dbState.page >= dbState.totalPages ? 'disabled' : ''}>Next →</button>
+      <button class="btn xs ghost" onclick="dbChangePage(-1)" ${dbState.page <= 1 ? 'disabled' : ''}>${iconSVG('chevronLeft', 14)} Prev</button>
+      <button class="btn xs ghost" onclick="dbChangePage(1)" ${dbState.page >= dbState.totalPages ? 'disabled' : ''}>Next ${iconSVG('chevronRight', 14)}</button>
     </span>`;
 }
 
@@ -1035,9 +1111,8 @@ function renderSchedules(root) {
   root.innerHTML = `
     <div class="page">
       <div class="page-header">
-        <h2>Schedules</h2>
         <div class="page-actions">
-          <button class="btn" onclick="openScheduleEdit(null)">+ Add</button>
+          <button class="btn" onclick="openScheduleEdit(null)">${iconSVG('plus', 15)} Add</button>
           <button class="btn ghost" onclick="schedToggleMode()" id="schedModeBtn">Raw YAML</button>
           <button class="btn ghost" onclick="triggerAllSchedules()">Trigger All</button>
           <button class="btn ghost" onclick="reloadSchedules()">Reload</button>
@@ -1086,7 +1161,7 @@ function renderSchedView() {
   }
   const items = schedState.items;
   if (!items.length) {
-    view.innerHTML = '<div class="empty"><div class="empty-title">No schedules</div><div class="empty-desc">Click + Add to create a schedule</div></div>';
+    view.innerHTML = '<div class="empty"><div class="empty-title">No schedules</div><div class="empty-desc">Use Add to create a schedule</div></div>';
     return;
   }
   view.innerHTML = `<div class="table-wrap"><table>
@@ -1237,7 +1312,7 @@ function renderPage() {
     PAGES[page](content);
   } catch (e) {
     console.error('renderPage error', e);
-    content.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Render error</div><div class="empty-desc">' + esc(e.message) + '</div></div>';
+    content.innerHTML = '<div class="empty"><div class="empty-icon">' + iconSVG('alert', 28) + '</div><div class="empty-title">Render error</div><div class="empty-desc">' + esc(e.message) + '</div></div>';
   }
 }
 
@@ -1248,18 +1323,17 @@ let settingsGen = 0;
 function renderSettings(root) {
   root.innerHTML = `
     <div class="page">
-      <div class="page-header"><h2>Settings</h2></div>
       <div class="glass card">
         <div class="filter-bar">
-          <div class="tabs" id="settingsTabs">
-            <button class="tab ${settingsTab === 'config' ? 'active' : ''}" onclick="settingsSwitch('config')">Configuration</button>
-            <button class="tab ${settingsTab === 'cookies' ? 'active' : ''}" onclick="settingsSwitch('cookies')">Cookies</button>
-            <button class="tab ${settingsTab === 'security' ? 'active' : ''}" onclick="settingsSwitch('security')">Security</button>
-            <button class="tab ${settingsTab === 'theme' ? 'active' : ''}" onclick="settingsSwitch('theme')">Theme</button>
-            <button class="tab ${settingsTab === 'raw' ? 'active' : ''}" onclick="settingsSwitch('raw')">Raw YAML</button>
+          <div class="tabs" id="settingsTabs" role="tablist" aria-label="Settings section">
+            <button type="button" id="settings-tab-config" role="tab" aria-controls="settingsBody" aria-selected="${settingsTab === 'config'}" class="tab ${settingsTab === 'config' ? 'active' : ''}" onclick="settingsSwitch('config')">Configuration</button>
+            <button type="button" id="settings-tab-cookies" role="tab" aria-controls="settingsBody" aria-selected="${settingsTab === 'cookies'}" class="tab ${settingsTab === 'cookies' ? 'active' : ''}" onclick="settingsSwitch('cookies')">Cookies</button>
+            <button type="button" id="settings-tab-security" role="tab" aria-controls="settingsBody" aria-selected="${settingsTab === 'security'}" class="tab ${settingsTab === 'security' ? 'active' : ''}" onclick="settingsSwitch('security')">Security</button>
+            <button type="button" id="settings-tab-theme" role="tab" aria-controls="settingsBody" aria-selected="${settingsTab === 'theme'}" class="tab ${settingsTab === 'theme' ? 'active' : ''}" onclick="settingsSwitch('theme')">Theme</button>
+            <button type="button" id="settings-tab-raw" role="tab" aria-controls="settingsBody" aria-selected="${settingsTab === 'raw'}" class="tab ${settingsTab === 'raw' ? 'active' : ''}" onclick="settingsSwitch('raw')">Raw YAML</button>
           </div>
         </div>
-        <div id="settingsBody"><div class="loading-block"><div class="spinner"></div></div></div>
+        <div id="settingsBody" role="tabpanel" aria-labelledby="settings-tab-${settingsTab}"><div class="loading-block"><div class="spinner"></div></div></div>
       </div>
     </div>`;
   settingsSwitch(settingsTab);
@@ -1269,7 +1343,7 @@ function settingsSwitch(tab) {
   settingsTab = tab;
   const gen = ++settingsGen; // 代际守卫：快速切换 tab 时旧响应不覆盖新内容
   const labels = { config: 'Configuration', cookies: 'Cookies', security: 'Security', theme: 'Theme', raw: 'Raw YAML' };
-  document.querySelectorAll('#settingsTabs .tab').forEach(t => t.classList.toggle('active', t.textContent === labels[tab]));
+  syncTabs('settingsTabs', labels[tab]);
   const body = document.getElementById('settingsBody');
   // 旧响应晚到时：重新渲染当前 tab 自愈（不可清空 body——会误删新 tab 内容）
   const wrap = (renderFn) => { const p = renderFn(body); if (p && p.then) p.then(() => { if (gen !== settingsGen) settingsSwitch(settingsTab); }).catch(() => {}); };
@@ -1286,11 +1360,11 @@ async function renderTheme(body) {
     const r = await ENDPOINTS.configThemes();
     const themes = r.themes || [];
     const current = r.current || 'web1';
-    body.innerHTML = `<div style="padding:18px 20px;max-width:520px">
+    body.innerHTML = `<div class="panel-body narrow">
       <div class="section-title">Interface Theme</div>
       <div class="checkbox-grid">${themes.map(t => `
         <button class="btn ${t === current ? 'primary' : 'ghost'}" style="justify-content:flex-start" onclick="switchTheme('${jsEsc(t)}')">
-          <span style="flex:1">${esc(t)}</span>${t === current ? ' ✓' : ''}
+          <span style="flex:1">${esc(t)}</span>${t === current ? iconSVG('check', 14) : ''}
         </button>`).join('')}</div>
       <div class="form-hint mt-2">Switching reloads the page.</div>
     </div>`;
@@ -1304,15 +1378,25 @@ async function switchTheme(theme) {
 }
 
 /* ---- 配置字段（password 字段掩码哨兵；数值/布尔类型按后端契约） ---- */
+const CONFIG_FIELD_LABELS = {
+  root_path: 'Download root',
+  auth_token: 'Primary auth token',
+  ct0: 'Primary CT0 token',
+  max_download_routine: 'Concurrent downloads',
+  max_file_name_len: 'Maximum file name length',
+  proxy_url: 'Proxy URL',
+  api_key: 'API key',
+};
+const configFieldLabel = (name) => CONFIG_FIELD_LABELS[name] || String(name || '').replaceAll('_', ' ').replace(/^./, (c) => c.toUpperCase());
 async function renderConfigFields(body) {
   try {
     const r = await ENDPOINTS.configFields();
     const fields = Array.isArray(r) ? r : (r.fields || []);
     if (!fields.length) { body.innerHTML = '<div class="empty">No configurable fields</div>'; return; }
-    body.innerHTML = `<div style="padding:18px 20px">
+    body.innerHTML = `<div class="panel-body">
       <div class="form-row">${fields.map((f, i) => `
         <div class="form-group">
-          <label>${esc(f.name || f.key || '')}</label>
+          <label for="cf-${i}">${esc(configFieldLabel(f.name || f.key || ''))}</label>
           ${f.type === 'password'
             ? `<div><input type="password" id="cf-${i}" data-fname="${esc(f.name)}" autocomplete="off" placeholder="${f.value ? 'Leave empty to keep current' : ''}">
                ${f.name === 'api_key' && f.value ? `<label class="checkbox-line mt-1" style="font-size:12px"><input type="checkbox" id="cf-clear-${i}"> Clear API key (disables auth)</label>` : ''}</div>`
@@ -1324,7 +1408,7 @@ async function renderConfigFields(body) {
           ${f.prompt ? `<div class="form-hint">${esc(f.prompt)}</div>` : ''}
         </div>`).join('')}
       </div>
-      <div class="flex gap-2" style="justify-content:flex-end"><button class="btn primary" onclick="saveConfigFields()">Save</button></div>
+      <div class="form-actions"><button class="btn primary" onclick="saveConfigFields()">Save</button></div>
     </div>`;
   } catch (e) { body.innerHTML = '<div class="empty">Load failed: ' + esc(e.message) + '</div>'; }
 }
@@ -1369,15 +1453,15 @@ async function renderCookies(body) {
     return;
   }
   const cArr = Array.isArray(cookies) ? cookies : ((cookies && cookies.items) || []);
-  body.innerHTML = `<div style="padding:18px 20px">
+  body.innerHTML = `<div class="panel-body">
     ${cArr.length === 0 ? '<div class="empty" style="padding:20px">No additional cookies configured.</div>' : ''}
     <div id="cookiesForm">${cArr.map((c, i) => `
       <div class="form-row">
-        <div class="form-group"><label>auth_token</label><input type="text" id="ck-at-${i}" value="${jsEsc(c.auth_token || '')}" data-orig="${jsEsc(c.auth_token || '')}" data-index="${jsEsc(c.index != null ? c.index : '')}" placeholder="empty = clear" style="font-family:var(--mono);font-size:12px"></div>
-        <div class="form-group"><label>ct0</label><input type="text" id="ck-ct0-${i}" value="${jsEsc(c.ct0 || '')}" data-orig="${jsEsc(c.ct0 || '')}" data-index="${jsEsc(c.index != null ? c.index : '')}" placeholder="empty = clear" style="font-family:var(--mono);font-size:12px"></div>
+        <div class="form-group"><label for="ck-at-${i}">Auth token</label><input type="text" id="ck-at-${i}" value="${jsEsc(c.auth_token || '')}" data-orig="${jsEsc(c.auth_token || '')}" data-index="${jsEsc(c.index != null ? c.index : '')}" placeholder="empty = clear" style="font-family:var(--mono);font-size:12px"></div>
+        <div class="form-group"><label for="ck-ct0-${i}">CT0 token</label><input type="text" id="ck-ct0-${i}" value="${jsEsc(c.ct0 || '')}" data-orig="${jsEsc(c.ct0 || '')}" data-index="${jsEsc(c.index != null ? c.index : '')}" placeholder="empty = clear" style="font-family:var(--mono);font-size:12px"></div>
       </div>`).join('')}</div>
     <div class="flex gap-2" style="margin-top:12px">
-      <button class="btn ghost sm" onclick="addCookieRow()">+ Add Account</button>
+      <button class="btn ghost sm" onclick="addCookieRow()">${iconSVG('plus', 14)} Add Account</button>
       <span style="flex:1"></span>
       <button class="btn primary" onclick="saveCookies()">Save</button>
     </div>
@@ -1389,8 +1473,8 @@ function addCookieRow() {
   const idx = form.children.length;
   const div = document.createElement('div');
   div.className = 'form-row';
-  div.innerHTML = `<div class="form-group"><label>auth_token</label><input type="text" id="ck-at-${idx}" placeholder="empty = clear" style="font-family:var(--mono);font-size:12px"></div>
-    <div class="form-group"><label>ct0</label><input type="text" id="ck-ct0-${idx}" placeholder="empty = clear" style="font-family:var(--mono);font-size:12px"></div>`;
+  div.innerHTML = `<div class="form-group"><label for="ck-at-${idx}">Auth token</label><input type="text" id="ck-at-${idx}" placeholder="empty = clear" style="font-family:var(--mono);font-size:12px"></div>
+    <div class="form-group"><label for="ck-ct0-${idx}">CT0 token</label><input type="text" id="ck-ct0-${idx}" placeholder="empty = clear" style="font-family:var(--mono);font-size:12px"></div>`;
   form.appendChild(div);
 }
 async function saveCookies() {
@@ -1427,9 +1511,9 @@ function getJWTStatus() {
 }
 async function renderSecurity(body) {
   const st = getJWTStatus();
-  body.innerHTML = `<div style="padding:18px 20px;max-width:520px">
+  body.innerHTML = `<div class="panel-body narrow">
     <div class="form-group"><label>Session</label><span class="badge ${st.cls === 'ok' ? 'badge-completed' : st.cls === 'err' ? 'badge-failed' : ''}">${esc(st.label)}</span></div>
-    <div class="form-group"><label>API Key</label><input type="password" id="secKey" placeholder="Enter API Key" autocomplete="off"></div>
+    <div class="form-group"><label for="secKey">API Key</label><input type="password" id="secKey" placeholder="Enter API Key" autocomplete="off"></div>
     <div class="form-hint" style="margin-bottom:12px">API Key is never stored in the browser — only the JWT session.</div>
     <div class="flex gap-2">
       <button class="btn primary" onclick="secLogin()">Login</button>
@@ -1530,7 +1614,6 @@ function renderLogs(root) {
   root.innerHTML = `
     <div class="page">
       <div class="page-header">
-        <h2>Logs</h2>
         <div class="page-actions">
           <button class="btn ghost sm" onclick="logRefresh()">Refresh</button>
           <button class="btn ghost sm" onclick="logExport()">Export</button>
@@ -1538,18 +1621,18 @@ function renderLogs(root) {
         </div>
       </div>
       <div class="glass card">
-        <div class="filter-bar">
-          <div class="tabs" id="logStatsBar" style="display:none"></div>
-          <select id="logLevel" onchange="logApplyFilters()">
+        <div class="filter-bar log-filter-bar">
+          <div class="tabs log-stats" id="logStatsBar" aria-label="Log level counts" style="display:none"></div>
+          <label class="filter-field"><span class="filter-label">Level</span><select id="logLevel" onchange="logApplyFilters()">
             <option value="">All levels</option>
             ${['debug','info','warn','error','fatal'].map(l => `<option value="${l}">${l.toUpperCase()}</option>`).join('')}
-          </select>
-          <select id="logDomain" onchange="logApplyFilters()">
+          </select></label>
+          <label class="filter-field"><span class="filter-label">Domain</span><select id="logDomain" onchange="logApplyFilters()">
             <option value="">All domains</option>
-          </select>
-          <input type="text" id="logQ" placeholder="search text..." style="width:150px" onkeydown="if(event.key==='Enter')logApplyFilters()">
-          <input type="datetime-local" id="logStart" title="From time" style="width:170px">
-          <input type="datetime-local" id="logEnd" title="To time" style="width:170px">
+          </select></label>
+          <label class="filter-field"><span class="filter-label">Search</span><input type="text" id="logQ" placeholder="Message text" onkeydown="if(event.key==='Enter')logApplyFilters()"></label>
+          <label class="filter-field"><span class="filter-label">From</span><input type="datetime-local" id="logStart"></label>
+          <label class="filter-field"><span class="filter-label">To</span><input type="datetime-local" id="logEnd"></label>
           <button class="btn primary sm" onclick="logApplyFilters()">Filter</button>
         </div>
         <div class="log-stream" id="logStream"><div class="text-muted">Loading...</div></div>
@@ -1593,7 +1676,7 @@ function logEntryHTML(clean, tweetId, color) {
   let html = '<div class="log-entry" style="color:' + color + '"';
   if (tweetId) html += ' data-tweet-id="' + tweetId + '"';
   html += '>' + esc(clean);
-  if (tweetId) html += ' <button class="log-copy-btn" onclick="copyLogTweetId(this)" title="Copy tweet ID">📋</button>';
+  if (tweetId) html += ' <button class="log-copy-btn" onclick="copyLogTweetId(this)" title="Copy tweet ID" aria-label="Copy tweet ID">' + iconSVG('copy', 14) + '</button>';
   html += '</div>';
   return html;
 }
@@ -1779,7 +1862,8 @@ function renderDashboard(root) {
 
       <div class="glass card">
         <div class="filter-bar">
-          <input type="text" id="quickDlInput" placeholder="Twitter URL or @username ..." style="flex:1;min-width:200px" onkeydown="if(event.key==='Enter')quickDownload()">
+          <label class="sr-only" for="quickDlInput">Twitter URL or username</label>
+          <input type="text" id="quickDlInput" aria-label="Twitter URL or username" placeholder="Twitter URL or @username" style="flex:1;min-width:200px" onkeydown="if(event.key==='Enter')quickDownload()">
           <button class="btn primary" onclick="quickDownload()">Quick Download</button>
         </div>
       </div>
@@ -1826,7 +1910,7 @@ function renderRecentTasks() {
     <thead><tr><th>Type</th><th>ID</th><th>Status</th><th>Progress</th><th>Time</th></tr></thead>
     <tbody>${recent.map(t => `
       <tr>
-        <td>${esc(taskTypeIcon(t))}</td>
+        <td>${taskTypeIcon(t)}</td>
         <td><span class="mono">${esc(t.task_id)}</span><div class="text-sm text-muted">${esc(taskTypeName(t))}${taskTarget(t) ? ' · ' + esc(taskTarget(t)) : ''}</div></td>
         <td><span class="badge badge-${safeStatus(t.status)}">${esc(t.status)}</span></td>
         <td style="min-width:160px">${progressHTML(t)}</td>
@@ -1953,6 +2037,27 @@ function connectSSE() {
   });
 }
 
+function enhanceThemeSwitcher() {
+  const widget = document.getElementById('tmd-theme-switcher');
+  const target = document.querySelector('.sidebar-bottom');
+  const button = document.getElementById('ts-toggle');
+  const panel = document.getElementById('ts-panel');
+  if (!widget || !target || !button || !panel) return;
+  target.appendChild(widget);
+  button.innerHTML = iconSVG('palette', 17) + '<span>Theme</span>';
+  button.setAttribute('role', 'button');
+  button.setAttribute('tabindex', '0');
+  button.setAttribute('aria-label', 'Switch theme');
+  button.setAttribute('aria-controls', 'ts-panel');
+  button.setAttribute('aria-expanded', 'false');
+  button.addEventListener('click', () => requestAnimationFrame(() => button.setAttribute('aria-expanded', String(panel.classList.contains('open')))));
+  button.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    button.click();
+  });
+}
+
 /* ---------- 初始化 ---------- */
 async function init() {
   // hash 路由：主题切换器 reload 后保留 hash，必须从 hash 恢复当前页
@@ -1970,6 +2075,7 @@ async function init() {
   document.getElementById('authSubmit').onclick = submitAuth;
   document.getElementById('authCancel').onclick = hideAuth;
   document.getElementById('authKey').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAuth(); });
+  setTimeout(enhanceThemeSwitcher, 0); // switcher markup is injected after app.js
 
   setState({ page: currentPageFromHash() });
   renderPage();
