@@ -118,13 +118,28 @@ func TestSyncRejectsUnsafeEntityNames(t *testing.T) {
 	}
 }
 
+// installWriteFailureTrigger 在实体表上安装 BEFORE INSERT/UPDATE/DELETE
+// 触发器，使数据库写失败精确发生在最终写入（文件系统变更之后），
+// 从而真实驱动 change.rollback / staged.rollback 分支。
+func installWriteFailureTrigger(t *testing.T, db *sqlx.DB, event string) {
+	t.Helper()
+	for _, table := range []string{"user_entities", "lst_entities"} {
+		_, err := db.Exec("CREATE TRIGGER test_fail_" + table + "_" + event +
+			" BEFORE " + event + " ON " + table +
+			" BEGIN SELECT RAISE(FAIL, 'injected write failure'); END")
+		require.NoError(t, err)
+	}
+}
+
 func TestCreateRollsBackDirectoryWhenDatabaseWriteFails(t *testing.T) {
 	for _, fixture := range entityFixtures {
 		t.Run(fixture.name, func(t *testing.T) {
 			db := openEntityTestDB(t)
 			parentDir := t.TempDir()
 			result := newFixtureEntity(t, fixture, db, parentDir)
-			require.NoError(t, db.Close())
+			// 预检（LocateUserEntity，SELECT）不受触发器影响；失败点落在
+			// ensureEntityDirectory 之后的 INSERT，真实驱动 change.rollback。
+			installWriteFailureTrigger(t, db, "INSERT")
 
 			err := result.Create("created")
 
@@ -146,7 +161,7 @@ func TestCreatePreservesExistingDirectoryWhenDatabaseWriteFails(t *testing.T) {
 			existingDir := filepath.Join(parentDir, "existing")
 			require.NoError(t, os.Mkdir(existingDir, 0755))
 			require.NoError(t, os.WriteFile(filepath.Join(existingDir, "marker.txt"), []byte("keep"), 0600))
-			require.NoError(t, db.Close())
+			installWriteFailureTrigger(t, db, "INSERT")
 
 			err := result.Create("existing")
 
@@ -165,7 +180,9 @@ func TestRenameRollsBackDirectoryWhenDatabaseWriteFails(t *testing.T) {
 			result := newFixtureEntity(t, fixture, db, parentDir)
 			require.NoError(t, result.Create("old"))
 			require.NoError(t, os.WriteFile(filepath.Join(parentDir, "old", "data.txt"), []byte("data"), 0600))
-			require.NoError(t, db.Close())
+			// refreshRecord 是 SELECT 不受影响；失败点落在目录移动后的
+			// name-only CAS（UPDATE），真实驱动 moved 回滚。
+			installWriteFailureTrigger(t, db, "UPDATE")
 
 			err := result.Rename("new")
 
@@ -386,6 +403,83 @@ func TestUserRenamePreservesFreshStatistics(t *testing.T) {
 	assert.True(t, record.MediaCount.Valid)
 }
 
+func TestCreateRejectsDirectoryOwnedByAnotherEntity(t *testing.T) {
+	for _, fixture := range entityFixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			db := openEntityTestDB(t)
+			parentDir := t.TempDir()
+			first := newFixtureEntity(t, fixture, db, parentDir)
+			require.NoError(t, first.Create("shared-name"))
+			require.NoError(t, os.WriteFile(filepath.Join(parentDir, "shared-name", "media.jpg"), []byte("keep"), 0600))
+
+			// 第二个实体（不同 owner）试图创建同名目录。
+			var second entity.Entity
+			if fixture.name == "user" {
+				require.NoError(t, database.CreateUser(db, &database.User{Id: 202, ScreenName: "second", Name: "Second"}))
+				second, _ = entity.NewUserEntity(db, 202, parentDir)
+			} else {
+				require.NoError(t, database.CreateLst(db, &database.Lst{Id: 203, Name: "Second List"}))
+				second, _ = entity.NewListEntity(db, 203, parentDir)
+			}
+
+			err := second.Create("shared-name")
+
+			assert.Error(t, err)
+			// 第一实体的目录与内容不受影响。
+			assert.FileExists(t, filepath.Join(parentDir, "shared-name", "media.jpg"))
+			_, nameErr := second.Name()
+			assert.Error(t, nameErr)
+		})
+	}
+}
+
+func TestCreateAllowsSameOwnerDirectoryReuse(t *testing.T) {
+	db := openEntityTestDB(t)
+	parentDir := t.TempDir()
+	first := newFixtureEntity(t, entityFixtures[0], db, parentDir)
+	require.NoError(t, first.Create("own-dir"))
+
+	// 同 owner 同 parent 重复 Create（Locate 已存在 → 报 already exists，
+	// 不被归属检查误伤；目录保留）。
+	err := first.Create("own-dir")
+	assert.Error(t, err)
+	assert.DirExists(t, filepath.Join(parentDir, "own-dir"))
+}
+
+func TestRenameRejectsTargetOwnedByAnotherEntity(t *testing.T) {
+	for _, fixture := range entityFixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			db := openEntityTestDB(t)
+			parentDir := t.TempDir()
+			first := newFixtureEntity(t, fixture, db, parentDir)
+			require.NoError(t, first.Create("original"))
+			require.NoError(t, os.WriteFile(filepath.Join(parentDir, "original", "data.txt"), []byte("keep"), 0600))
+
+			// 第二个实体（不同 owner）记录占用目标名（目录缺失，模拟
+			// 遗留归一化碰撞的磁盘态）。
+			if fixture.name == "user" {
+				require.NoError(t, database.CreateUser(db, &database.User{Id: 203, ScreenName: "third", Name: "Third"}))
+				require.NoError(t, database.CreateUserEntity(db, &database.UserEntity{UserId: 203, Name: "target-name", ParentDir: parentDir}))
+			} else {
+				require.NoError(t, database.CreateLst(db, &database.Lst{Id: 204, Name: "Fourth List"}))
+				require.NoError(t, database.CreateLstEntity(db, &database.LstEntity{LstId: 204, Name: "target-name", ParentDir: parentDir}))
+			}
+
+			// first 改名为被他人记录占用的目标名：必须被拒绝（目标目录
+			// 缺失时 renameEntityDirectory 的 ErrPathConflict 不触发，靠
+			// 归属检查拦截）。
+			err := first.Rename("target-name")
+
+			assert.Error(t, err)
+			name, nameErr := first.Name()
+			require.NoError(t, nameErr)
+			assert.Equal(t, "original", name)
+			assert.FileExists(t, filepath.Join(parentDir, "original", "data.txt"))
+			assert.NoDirExists(t, filepath.Join(parentDir, "target-name"))
+		})
+	}
+}
+
 func TestRemoveRestoresDirectoryWhenDatabaseDeleteFails(t *testing.T) {
 	for _, fixture := range entityFixtures {
 		t.Run(fixture.name, func(t *testing.T) {
@@ -394,7 +488,10 @@ func TestRemoveRestoresDirectoryWhenDatabaseDeleteFails(t *testing.T) {
 			result := newFixtureEntity(t, fixture, db, parentDir)
 			require.NoError(t, result.Create("remove"))
 			require.NoError(t, os.WriteFile(filepath.Join(parentDir, "remove", "data.txt"), []byte("data"), 0600))
-			require.NoError(t, db.Close())
+			// refreshRecord 是 SELECT 不受影响；失败点落在 stage（目录改名 +
+			// journal 写入）之后的实体行 DELETE，真实驱动 staged.rollback
+			// （恢复目录 + 删除 journal）。
+			installWriteFailureTrigger(t, db, "DELETE")
 
 			err := result.Remove()
 
@@ -402,6 +499,10 @@ func TestRemoveRestoresDirectoryWhenDatabaseDeleteFails(t *testing.T) {
 			assert.True(t, result.Recorded())
 			assert.DirExists(t, filepath.Join(parentDir, "remove"))
 			assert.FileExists(t, filepath.Join(parentDir, "remove", "data.txt"))
+			// rollback 必须同时清理 journal，否则启动清扫会重复处理。
+			journals, listErr := database.ListEntityRemovalJournals(db)
+			require.NoError(t, listErr)
+			assert.Empty(t, journals)
 		})
 	}
 }

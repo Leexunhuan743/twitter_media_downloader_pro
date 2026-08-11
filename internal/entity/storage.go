@@ -46,15 +46,63 @@ func joinEntityPath(parentDir, name string) (string, error) {
 	return filepath.Join(parentDir, name), nil
 }
 
+// entityDirectoryOwnedByAnother 检查目标目录是否已被其他实体的记录占用。
+// 不同 owner 可能因命名归一化（遗留尾点/尾空格在 Windows 与无尾点记录
+// 映射到同一目录）或大小写变体共享同一目录；Create 必须拒绝这种冲突，
+// 否则两个实体记录指向同一目录导致媒体混写。
+func entityDirectoryOwnedByAnother(db *sqlx.DB, parentDir, path, ownerKind string, ownerID uint64) (bool, error) {
+	if db == nil {
+		return false, fmt.Errorf("entity database is nil")
+	}
+	type entityRow struct {
+		Kind    string `db:"kind"`
+		OwnerID uint64 `db:"owner_id"`
+		Name    string `db:"name"`
+		Parent  string `db:"parent_dir"`
+	}
+	var rows []entityRow
+	if err := db.Select(&rows, `
+		SELECT 'user' AS kind, user_id AS owner_id, name, parent_dir FROM user_entities WHERE parent_dir=?
+		UNION ALL
+		SELECT 'list' AS kind, lst_id AS owner_id, name, parent_dir FROM lst_entities WHERE parent_dir=?`,
+		parentDir, parentDir); err != nil {
+		return false, fmt.Errorf("load sibling entity paths: %w", err)
+	}
+	target := comparablePath(path)
+	for _, row := range rows {
+		if row.Kind == ownerKind && row.OwnerID == ownerID {
+			continue
+		}
+		sibling, err := storedEntityPath(row.Parent, row.Name)
+		if err != nil {
+			continue
+		}
+		if comparablePath(sibling) == target {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // ValidateName ensures an entity name cannot escape its configured parent directory.
 func ValidateName(name string) error {
 	if err := validateNameComponent(name); err != nil {
 		return err
 	}
-	if strings.HasPrefix(name, stagedDirectoryPrefix) {
+	if isStagedDirectoryPrefix(name) {
 		return fmt.Errorf("%w: name uses an internal reserved prefix: %q", ErrInvalidName, name)
 	}
 	return validateWindowsCompatibleName(name)
+}
+
+// isStagedDirectoryPrefix reports whether name carries the internal staged
+// removal prefix, case-insensitively (Windows file systems are
+// case-insensitive, so a case variant would otherwise bypass the check).
+func isStagedDirectoryPrefix(name string) bool {
+	if len(name) < len(stagedDirectoryPrefix) {
+		return false
+	}
+	return strings.EqualFold(name[:len(stagedDirectoryPrefix)], stagedDirectoryPrefix)
 }
 
 func normalizeStoredName(name string) (string, error) {
@@ -191,7 +239,19 @@ func CleanupStagedDirectories(db *sqlx.DB, parentDirs ...string) (StagedDirector
 			activeByParentAndHash[parentKey] = byHash
 		}
 		hash := stagedDirectoryNameHash(filepath.Base(activePath))
-		byHash[hash] = append(byHash[hash], activePath)
+		// 归一化可能让不同记录（如遗留 "foo." 与 "foo"）映射到同一目录；
+		// 去重后按真实候选数判断歧义，避免假歧义永久阻塞恢复。
+		existing := byHash[hash]
+		dup := false
+		for _, candidate := range existing {
+			if comparablePath(candidate) == comparablePath(activePath) {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			byHash[hash] = append(byHash[hash], activePath)
+		}
 		if _, err := os.Lstat(activePath); err == nil {
 			continue
 		} else if !os.IsNotExist(err) {
@@ -224,7 +284,7 @@ func CleanupStagedDirectories(db *sqlx.DB, parentDirs ...string) (StagedDirector
 			continue
 		}
 		for _, entry := range entries {
-			if !strings.HasPrefix(entry.Name(), stagedDirectoryPrefix) {
+			if !isStagedDirectoryPrefix(entry.Name()) {
 				continue
 			}
 			stagedPath := filepath.Join(parentDir, entry.Name())
@@ -252,19 +312,66 @@ func CleanupStagedDirectories(db *sqlx.DB, parentDirs ...string) (StagedDirector
 			if journaled {
 				handledJournals[stagedKey] = struct{}{}
 				targetKey := comparablePath(journal.OriginalPath)
-				if _, active := activePaths[targetKey]; active {
-					if _, err := os.Lstat(journal.OriginalPath); os.IsNotExist(err) {
-						if err := os.Rename(stagedPath, journal.OriginalPath); err != nil {
-							cleanupErr = errors.Join(cleanupErr, fmt.Errorf("restore journaled entity directory %q to %q: %w", stagedPath, journal.OriginalPath, err))
+				_, active := activePaths[targetKey]
+				restoreTarget := journal.OriginalPath
+				// 尾点/尾空格记录在 Windows 被归一化（storedEntityPath
+				// TrimRight），其他平台按原样存储；journal 的 OriginalPath
+				// 可能来自任一平台。原样未命中时尝试变体匹配，避免把中断
+				// 删除误判为已提交而 RemoveAll 掉媒体。
+				if !active {
+					base := filepath.Base(journal.OriginalPath)
+					trimmed := strings.TrimRight(base, " .")
+					if trimmed != base {
+						// journal 带尾点（如 "foo."）：active 记录可能是
+						// 归一化后的 "foo"（Windows 扫描）。恢复目标用
+						// 裁剪名（与 active 记录的磁盘名一致）。
+						altKey := comparablePath(filepath.Join(filepath.Dir(journal.OriginalPath), trimmed))
+						if _, activeAlt := activePaths[altKey]; activeAlt {
+							targetKey = altKey
+							restoreTarget = filepath.Join(filepath.Dir(journal.OriginalPath), trimmed)
+							active = true
+						}
+					} else {
+						// journal 是裁剪名（Windows 源删除流程经
+						// storedEntityPath 归一化）：active 记录可能是
+						// 原样尾点名（"foo."，Linux 扫描）。在 activePaths
+						// 中找同父目录且裁剪后 base 相等的记录，恢复目标
+						// 用记录的实际路径。
+						dirKey := comparablePath(filepath.Dir(journal.OriginalPath))
+						var matches []string
+						for candidate := range activePaths {
+							if comparablePath(filepath.Dir(candidate)) != dirKey {
+								continue
+							}
+							if strings.TrimRight(filepath.Base(candidate), " .") == base {
+								matches = append(matches, candidate)
+							}
+						}
+						if len(matches) == 1 {
+							targetKey = comparablePath(matches[0])
+							restoreTarget = matches[0]
+							active = true
+						} else if len(matches) > 1 {
+							// 同名尾点变体并存（如 Linux 上 "foo." 与
+							// "foo" 两个真实目录），恢复目标不明：保留。
+							cleanupErr = errors.Join(cleanupErr, fmt.Errorf("retain journaled entity directory %q: recovery target is ambiguous", stagedPath))
+							continue
+						}
+					}
+				}
+				if active {
+					if _, err := os.Lstat(restoreTarget); os.IsNotExist(err) {
+						if err := os.Rename(stagedPath, restoreTarget); err != nil {
+							cleanupErr = errors.Join(cleanupErr, fmt.Errorf("restore journaled entity directory %q to %q: %w", stagedPath, restoreTarget, err))
 							continue
 						}
 						activePaths[targetKey] = struct{}{}
 						result.Restored++
 					} else if err != nil {
-						cleanupErr = errors.Join(cleanupErr, fmt.Errorf("inspect journaled entity recovery target %q: %w", journal.OriginalPath, err))
+						cleanupErr = errors.Join(cleanupErr, fmt.Errorf("inspect journaled entity recovery target %q: %w", restoreTarget, err))
 						continue
 					} else {
-						cleanupErr = errors.Join(cleanupErr, fmt.Errorf("retain journaled entity directory %q: active recovery target %q already exists", stagedPath, journal.OriginalPath))
+						cleanupErr = errors.Join(cleanupErr, fmt.Errorf("retain journaled entity directory %q: active recovery target %q already exists", stagedPath, restoreTarget))
 						continue
 					}
 				} else if err := os.RemoveAll(stagedPath); err != nil {
@@ -302,6 +409,18 @@ func CleanupStagedDirectories(db *sqlx.DB, parentDirs ...string) (StagedDirector
 						cleanupErr = errors.Join(cleanupErr, fmt.Errorf("retain staged entity directory %q: active recovery target %q already exists", stagedPath, targetPath))
 						continue
 					}
+				}
+				// Zero candidates: normally this stage's record was already
+				// deleted and the directory may be removed. But when an active
+				// entity directory in this parent is missing, the stage may be
+				// the interrupted removal of that entity whose hash does not
+				// match here (for example the stage was created on Windows,
+				// where trailing dots/spaces are normalized, and the record is
+				// scanned on a case-sensitive platform). Removing it would
+				// destroy the entity's media, so retain it for inspection.
+				if _, missing := parentsWithMissingActivePaths[parentKey]; missing {
+					cleanupErr = errors.Join(cleanupErr, fmt.Errorf("retain staged entity directory %q: an active entity directory in %q is missing", stagedPath, parentDir))
+					continue
 				}
 				if err := os.RemoveAll(stagedPath); err != nil {
 					cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove staged entity directory %q: %w", stagedPath, err))

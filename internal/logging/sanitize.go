@@ -45,10 +45,11 @@ var (
 		"x_xsrf_token":        {},
 		"xsrf_token":          {},
 	}
-	bearerTokenRegex  = regexp.MustCompile(`(?i)\bBearer[ \t]+[^\s,;&"']+`)
-	namedSecretRegex  = regexp.MustCompile(`(?i)(["']?)\b(` + sensitiveFieldPattern() + `)(["']?)([ \t]*[:=][ \t]*)(Bearer[ \t]+[^\s,;&"']+|Basic[ \t]+[^\s,;&"']+|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&"']+)`)
-	absoluteURLRegex  = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s<>"']+`)
-	maskedSecretRegex = regexp.MustCompile(`^\[redacted:[0-9a-f]{8,64}\]$`)
+	bearerTokenRegex      = regexp.MustCompile(`(?i)\bBearer[ \t]+[^\s,;&"']+`)
+	namedSecretRegex      = regexp.MustCompile(`(?i)(["']?)\b(` + sensitiveFieldPattern() + `)(["']?)([ \t]*[:=][ \t]*)(Bearer[ \t]+[^\s,;&"']+|Basic[ \t]+[^\s,;&"']+|"(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?|[^,;&"'\n]+)`)
+	absoluteURLRegex      = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s<>"']+`)
+	rootlessUserinfoRegex = regexp.MustCompile(`\b[A-Za-z0-9._~%!$&'()*+,;=:/-]+:[^@\s,;&"'\]]*@[^\s,;&"']+`)
+	maskedSecretRegex     = regexp.MustCompile(`^\[redacted:[0-9a-f]{8,64}\]$`)
 )
 
 func sensitiveFieldPattern() string {
@@ -159,6 +160,19 @@ func MaskSecret(value string) string {
 // RedactSensitiveText removes common credential forms from free-form text.
 func RedactSensitiveText(text string) string {
 	text = absoluteURLRegex.ReplaceAllStringFunc(text, SanitizeURL)
+	// 无 scheme 的 user:pass@host 形态（url.Parse 按 scheme:opaque 解析、
+	// User 恒为 nil），在自由文本与 query 值中按凭据掩码。
+	text = rootlessUserinfoRegex.ReplaceAllStringFunc(text, func(match string) string {
+		at := strings.LastIndex(match, "@")
+		if at <= 0 {
+			return match
+		}
+		// 已掩码的指纹（[redacted:...] 去括号形态）保持原样，保证幂等。
+		if maskedSecretRegex.MatchString("[" + match[:at] + "]") {
+			return match
+		}
+		return MaskSecret(match[:at]) + match[at:]
+	})
 	text = namedSecretRegex.ReplaceAllStringFunc(text, func(match string) string {
 		parts := namedSecretRegex.FindStringSubmatch(match)
 		if len(parts) != 6 || !isSensitiveFieldName(parts[2]) {
@@ -220,6 +234,16 @@ func SanitizeURL(raw string) string {
 	}
 	if u.User != nil {
 		u.User = url.User(MaskSecret(u.User.String()))
+	} else if u.Opaque != "" {
+		// scheme:opaque 形态（如 "user:pass@host" 被 url.Parse 解析为
+		// scheme=user、opaque=pass@host，User 恒为 nil）不会经过上面的
+		// userinfo 掩码。按最后一个 @ 手工掩码凭据部分（连同 scheme，
+		// 该形态在日志中几乎总是配置错误的值而非真实 URL），防止无
+		// scheme 的 user:pass@host 原样进入日志。直接返回掩码串而不
+		// 走 String()，避免掩码后的 scheme 含特殊字符无法再次解析。
+		if at := strings.LastIndex(u.Opaque, "@"); at >= 0 {
+			return MaskSecret(u.Scheme+":"+u.Opaque[:at]) + u.Opaque[at:]
+		}
 	}
 
 	query, err := url.ParseQuery(u.RawQuery)

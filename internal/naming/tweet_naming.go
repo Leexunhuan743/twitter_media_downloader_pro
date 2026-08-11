@@ -19,7 +19,7 @@ type TweetNaming struct {
 
 func NewTweetNaming(text string, tweetID uint64, creator string, maxLen int) *TweetNaming {
 	return &TweetNaming{
-		sanitized: sanitizeNamePart(text, maxLen),
+		sanitized: sanitizeTweetPart(text, maxLen),
 		tweetID:   tweetID,
 		creator:   normalizeLogLabel(creator, maxLen),
 		maxLen:    maxLen,
@@ -59,9 +59,11 @@ func (tn *TweetNaming) LogFormat() string {
 }
 
 // FileName returns a filename whose extension is normalized into the reserved
-// extension budget.
+// extension budget. The final name is re-checked for Windows reserved device
+// names so a future caller that drops the tweet-id suffix cannot produce an
+// uncreatable file.
 func (tn *TweetNaming) FileName(ext string) string {
-	return tn.baseName() + normalizeExtension(ext)
+	return guardReservedFileName(tn.baseName() + normalizeExtension(ext))
 }
 
 // FilePath returns a collision-free path based on the current filesystem.

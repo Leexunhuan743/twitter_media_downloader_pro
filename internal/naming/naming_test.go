@@ -231,6 +231,41 @@ func TestTweetNaming_FileName(t *testing.T) {
 			ext:      ".abcdefghijk",
 			expected: "file_777.abcdefg",
 		},
+		{
+			name:     "trailing dot preserved for upgrade stability",
+			text:     "Hello world.",
+			tweetID:  1355100264760393735,
+			ext:      ".jpg",
+			expected: "Hello world._1355100264760393735.jpg",
+		},
+		{
+			name:     "trailing space preserved for upgrade stability",
+			text:     "Hello world ",
+			tweetID:  1355100264760393736,
+			ext:      ".jpg",
+			expected: "Hello world _1355100264760393736.jpg",
+		},
+		{
+			name:     "leading space preserved for upgrade stability",
+			text:     " hello",
+			tweetID:  1355100264760393737,
+			ext:      ".jpg",
+			expected: " hello_1355100264760393737.jpg",
+		},
+		{
+			name:     "tab control character removed",
+			text:     "a\tb",
+			tweetID:  1355100264760393738,
+			ext:      ".jpg",
+			expected: "ab_1355100264760393738.jpg",
+		},
+		{
+			name:     "reserved device name with tweet id is not prefixed",
+			text:     "CON",
+			tweetID:  1355100264760393739,
+			ext:      ".jpg",
+			expected: "CON_1355100264760393739.jpg",
+		},
 	}
 
 	for _, tt := range tests {

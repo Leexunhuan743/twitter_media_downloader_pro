@@ -193,7 +193,7 @@ const ENDPOINTS = {
   dbUserLink: (id) => API.get(apiBase() + '/api/v1/db/user-links/' + encodeURIComponent(id)),
   dbUserLinkUpdate: (id, data) => API.patch(apiBase() + '/api/v1/db/user-links/' + encodeURIComponent(id), data),
   dbUserLinkDelete: (id) => API.delete(apiBase() + '/api/v1/db/user-links/' + encodeURIComponent(id)),
-  dbPreviousNames: (p) => API.get(apiBase() + '/api/v1/db/previous-names' + (p ? '?' + p : '')),
+  dbPreviousNames: (p) => API.get(apiBase() + '/api/v1/db/user-previous-names' + (p ? '?' + p : '')),
   dbStats: () => API.get(apiBase() + '/api/v1/db/stats'),
   dbUserPrevNames: (id) => API.get(apiBase() + '/api/v1/db/users/' + encodeURIComponent(id) + '/previous-names'),
   dbUserRelatedEntities: (id) => API.get(apiBase() + '/api/v1/db/users/' + encodeURIComponent(id) + '/entities'),
@@ -1091,7 +1091,7 @@ async function dbSaveEdit(tab, id) {
   try { await updaters[tab](id, data); toast('Saved', 'ok'); dbLoad(); } catch (e) { toast(e.message, 'err'); }
 }
 async function dbDelete(tab, id) {
-  const removesMedia = tab === 'user-entities' || tab === 'list-entities';
+  const removesMedia = tab === 'user-entities' || tab === 'list-entities' || tab === 'users' || tab === 'lists';
   const warning = removesMedia ? '\nThis also permanently deletes the media directory.' : '';
   if (!confirm('Delete record ' + id + '?' + warning)) return;
   const dels = { 'users': ENDPOINTS.dbUserDelete, 'lists': ENDPOINTS.dbListDelete, 'user-entities': ENDPOINTS.dbUserEntityDelete, 'list-entities': ENDPOINTS.dbListEntityDelete, 'user-links': ENDPOINTS.dbUserLinkDelete };

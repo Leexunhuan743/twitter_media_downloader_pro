@@ -305,6 +305,61 @@ func TestHandleDBUserUpdate_InvalidBody(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
+func TestHandleDBPreviousNamesSearch(t *testing.T) {
+	server, db := createTestServer(t)
+	defer db.Close()
+
+	// 用户 1 改名两次（两条 previous name），用户 2 改名一次。
+	for i := 1; i <= 2; i++ {
+		user := &database.User{
+			Id:         uint64(i),
+			ScreenName: "current" + string(rune('0'+i)),
+			Name:       "Current User " + string(rune('0'+i)),
+		}
+		require.NoError(t, database.CreateUser(db, user))
+	}
+	require.NoError(t, database.RecordUserPreviousName(db, 1, "Old Name A", "oldnamea"))
+	require.NoError(t, database.RecordUserPreviousName(db, 1, "Old Name B", "oldnameb"))
+	require.NoError(t, database.RecordUserPreviousName(db, 2, "Old Name C", "oldnamec"))
+	require.NoError(t, database.RecordUserPreviousName(db, 2, "Old Name D", "oldnamed"))
+
+	t.Run("search_matches_previous_name", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/db/user-previous-names?q=oldnamea", nil)
+		rr := httptest.NewRecorder()
+		server.handleDBPreviousNames(rr, req)
+		// 修复前：带点限定字段被 validIdent 拒绝 → SQL 以 AND 结尾 → 500。
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Contains(t, rr.Body.String(), "oldnamea")
+		assert.NotContains(t, rr.Body.String(), "oldnamec")
+	})
+
+	t.Run("search_matches_current_screen_name", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/db/user-previous-names?q=current2", nil)
+		rr := httptest.NewRecorder()
+		server.handleDBPreviousNames(rr, req)
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Contains(t, rr.Body.String(), "oldnamec")
+		assert.NotContains(t, rr.Body.String(), "oldnamea")
+	})
+
+	t.Run("search_without_keyword_still_lists", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/db/user-previous-names", nil)
+		rr := httptest.NewRecorder()
+		server.handleDBPreviousNames(rr, req)
+		assert.Equal(t, http.StatusOK, rr.Code)
+	})
+
+	t.Run("search_with_user_id_filter", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/db/user-previous-names?userId=1&q=oldname", nil)
+		rr := httptest.NewRecorder()
+		server.handleDBPreviousNames(rr, req)
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Contains(t, rr.Body.String(), "oldnamea")
+		assert.Contains(t, rr.Body.String(), "oldnameb")
+		assert.NotContains(t, rr.Body.String(), "oldnamec")
+	})
+}
+
 func TestHandleDBUserDelete_Success(t *testing.T) {
 	server, db := createTestServer(t)
 	defer db.Close()
@@ -316,6 +371,17 @@ func TestHandleDBUserDelete_Success(t *testing.T) {
 		Name:       "Delete User",
 	}
 	database.CreateUser(db, user)
+
+	// 创建用户实体（含磁盘目录）——删除用户必须连带删除实体目录。
+	entityRow := &database.UserEntity{
+		UserId:    1,
+		Name:      "Delete User(deleteuser)",
+		ParentDir: t.TempDir(),
+	}
+	require.NoError(t, database.CreateUserEntity(db, entityRow))
+	entityDir := filepath.Join(entityRow.ParentDir, entityRow.Name)
+	require.NoError(t, os.MkdirAll(entityDir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(entityDir, "media.jpg"), []byte("data"), 0600))
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/db/users/1", nil)
 	req.SetPathValue("id", "1")
@@ -329,6 +395,11 @@ func TestHandleDBUserDelete_Success(t *testing.T) {
 	deletedUser, err := database.GetUserById(db, 1)
 	assert.NoError(t, err)
 	assert.Nil(t, deletedUser)
+	// 实体行与目录都必须删除（staged removal 已完成）。
+	remaining, err := database.QueryUserEntities(db, "user_id = ?", []interface{}{uint64(1)}, "", 10, 0)
+	require.NoError(t, err)
+	assert.Empty(t, remaining)
+	assert.NoDirExists(t, entityDir)
 }
 
 func TestHandleDBUserDelete_NotFound(t *testing.T) {
@@ -1304,6 +1375,47 @@ func TestHandleDBUserEntityUpdateRejectsWindowsIncompatibleNames(t *testing.T) {
 			assert.DirExists(t, filepath.Join(parentDir, "Original Name"))
 		})
 	}
+}
+
+func TestHandleDBUserEntityUpdatePartialSuccessReportsSavedMetadata(t *testing.T) {
+	server, db := createTestServer(t)
+	defer db.Close()
+	require.NoError(t, database.CreateUser(db, &database.User{Id: 1, ScreenName: "entity_test", Name: "Entity Test", IsAccessible: true}))
+	parentDir := t.TempDir()
+	record := &database.UserEntity{UserId: 1, Name: "Original Name", ParentDir: parentDir}
+	require.NoError(t, database.CreateUserEntity(db, record))
+	require.NoError(t, os.Mkdir(filepath.Join(parentDir, record.Name), 0755))
+	// 预置目标目录使 Rename 必然 ErrPathConflict。
+	require.NoError(t, os.Mkdir(filepath.Join(parentDir, "Conflict Target"), 0755))
+
+	t.Run("metadata_saved_with_conflicting_name", func(t *testing.T) {
+		body := `{"name":"Conflict Target","media_count":10}`
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/db/user-entities/"+strconv.Itoa(int(record.Id.Int32)), bytes.NewBufferString(body))
+		req.SetPathValue("id", strconv.Itoa(int(record.Id.Int32)))
+		rr := httptest.NewRecorder()
+		server.handleDBUserEntityUpdate(rr, req)
+
+		assert.Equal(t, http.StatusConflict, rr.Code)
+		assert.Contains(t, rr.Body.String(), "statistics were saved")
+		// 元数据已提交但目录未改名。
+		after, err := database.GetUserEntity(db, int(record.Id.Int32))
+		require.NoError(t, err)
+		require.True(t, after.MediaCount.Valid)
+		assert.Equal(t, int32(10), after.MediaCount.Int32)
+		assert.Equal(t, "Original Name", after.Name)
+		assert.DirExists(t, filepath.Join(parentDir, "Original Name"))
+	})
+
+	t.Run("conflict_without_metadata_has_no_hint", func(t *testing.T) {
+		body := `{"name":"Conflict Target"}`
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/db/user-entities/"+strconv.Itoa(int(record.Id.Int32)), bytes.NewBufferString(body))
+		req.SetPathValue("id", strconv.Itoa(int(record.Id.Int32)))
+		rr := httptest.NewRecorder()
+		server.handleDBUserEntityUpdate(rr, req)
+
+		assert.Equal(t, http.StatusConflict, rr.Code)
+		assert.NotContains(t, rr.Body.String(), "statistics were saved")
+	})
 }
 
 func TestHandleDBUserEntityUpdateSeparatesMetadataFromRename(t *testing.T) {

@@ -40,7 +40,7 @@ func TestApplyGatewayStartupDeadlineRestoresLongLivedSettings(t *testing.T) {
 		return recorded, nil
 	}
 
-	restore := applyGatewayStartupDeadline(session, 50*time.Millisecond)
+	restore, interrupt := applyGatewayStartupDeadline(session, 50*time.Millisecond)
 	conn, err := session.Dialer.NetDialContext(context.Background(), "tcp", "example.invalid:443")
 	require.NoError(t, err)
 	defer conn.Close()
@@ -49,6 +49,8 @@ func TestApplyGatewayStartupDeadlineRestoresLongLivedSettings(t *testing.T) {
 	assert.Equal(t, 50*time.Millisecond, session.Dialer.HandshakeTimeout)
 	require.Len(t, recorded.deadlines, 1)
 	assert.False(t, recorded.deadlines[0].IsZero())
+	// interrupt 使已跟踪连接立即超时（在 Open 卡死场景中打断无界读）。
+	require.NotNil(t, interrupt)
 
 	restore()
 

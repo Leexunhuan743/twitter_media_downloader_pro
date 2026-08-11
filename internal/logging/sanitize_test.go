@@ -93,6 +93,57 @@ func TestSanitizeURLRedactsUserInfoAndFragment(t *testing.T) {
 	assert.Contains(t, got, "redacted")
 }
 
+func TestSanitizeURLRedactsSchemeOpaqueUserInfo(t *testing.T) {
+	// "user:pass@host" 无 scheme 前缀时被 url.Parse 解析为 scheme=user +
+	// opaque=pass@host，User 恒为 nil——必须手工掩码 @ 前的凭据部分
+	// （连同 scheme，该形态在日志中几乎总是配置错误的值），否则原样
+	// 进入日志（corner 2）。
+	got := SanitizeURL("user:pass@host")
+
+	assert.NotContains(t, got, "pass")
+	assert.Contains(t, got, "redacted")
+	assert.Contains(t, got, "@host")
+
+	// 幂等：掩码串经 RedactSensitiveText 二次处理稳定不变。
+	assert.Equal(t, got, RedactSensitiveText(got))
+
+	// 自由文本中的同类形态。
+	gotText := RedactSensitiveText("oauth callback received redirect=user:pass@host for state=abc")
+	assert.NotContains(t, gotText, "pass")
+	assert.Contains(t, gotText, "redacted")
+	assert.Contains(t, gotText, "@host")
+	assert.Contains(t, gotText, "state=abc")
+
+	// query 值中的同类形态（百分号编码后可还原）也必须被处理。
+	gotQuery := SanitizeURL("https://example.invalid/cb?next=user:pass@host")
+	assert.NotContains(t, gotQuery, "pass")
+	assert.Contains(t, gotQuery, "redacted")
+}
+
+func TestRedactSensitiveTextValueBoundaries(t *testing.T) {
+	// 值含空格到行尾：整体掩码，不允许残留 "secret value"。
+	got := RedactSensitiveText("token=my secret value")
+	assert.NotContains(t, got, "my")
+	assert.NotContains(t, got, "secret")
+	assert.Contains(t, got, "redacted")
+
+	// 未闭合引号（截断/拼接错误文本常见）：值整体掩码而非明文保留。
+	gotUnterminated := RedactSensitiveText(`token="unterminated`)
+	assert.NotContains(t, gotUnterminated, "unterminated")
+	assert.Contains(t, gotUnterminated, "redacted")
+
+	// 分号分隔的多值：后续值不携带字段名，保持现状（cookie 头场景由
+	// SanitizeHeaders 覆盖），首值仍被掩码。
+	gotSemicolon := RedactSensitiveText("cookie: a=b; c=d")
+	assert.NotContains(t, gotSemicolon, "a=b")
+	assert.Contains(t, gotSemicolon, "redacted")
+
+	// 闭合引号行为不变。
+	gotQuoted := RedactSensitiveText(`token="quoted value with spaces"`)
+	assert.NotContains(t, gotQuoted, "quoted")
+	assert.Contains(t, gotQuoted, "redacted")
+}
+
 func TestRequestTargetRedactsEventSourceToken(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/v1/sse/tasks?token=jwt-secret&level=info", nil)
 

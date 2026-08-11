@@ -356,10 +356,14 @@ func (s *Server) Start(port int) error {
 
 	if sched := s.getScheduler(); sched != nil {
 		if s.isShuttingDown() {
+			// startBots 尚未启动，其 defer close(startupDone) 不会执行；
+			// 关闭通道避免关停的 bot 阶段在 <-startupDone 上空等满截止时间。
+			close(startupDone)
 			return http.ErrServerClosed
 		}
 		sched.Start()
 		if s.isShuttingDown() {
+			close(startupDone)
 			return http.ErrServerClosed
 		}
 	}
@@ -388,7 +392,25 @@ func (s *Server) startBots(done chan<- struct{}) {
 			log.Infof("[bot] Started provider=%s", b.Name())
 		}(b)
 	}
-	starts.Wait()
+
+	// 等待所有 bot 启动，但受关停截止约束：某 provider 的 Start 挂死时
+	// （例如 discord 网关握手后黑洞，Hello/READY 无界读），startupDone
+	// 必须在截止时间内关闭，否则关停的 bot 阶段空等满预算且已启动的
+	// bot 收不到 Stop。挂死的 goroutine 由进程退出兜底。
+	waitCh := make(chan struct{})
+	go func() {
+		starts.Wait()
+		close(waitCh)
+	}()
+	timeout := s.shutdownTimeout
+	if timeout <= 0 {
+		timeout = defaultShutdownDrainTimeout
+	}
+	select {
+	case <-waitCh:
+	case <-time.After(timeout):
+		log.Warnf("[server] Bot startup drain timed out timeout=%s", timeout)
+	}
 }
 
 func (s *Server) isShuttingDown() bool {

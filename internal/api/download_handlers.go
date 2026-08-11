@@ -76,7 +76,9 @@ func formatTaskMarkTime(timestamp *time.Time) *string {
 	if timestamp == nil {
 		return nil
 	}
-	formatted := timestamp.Format("2006-01-02T15:04:05")
+	// RFC3339 携带时区偏移（JSON 解析出的 Z 输入保持 UTC），避免下游把
+	// UTC 墙钟按服务器本地时区二次解释导致标记时间偏移。
+	formatted := timestamp.Format(time.RFC3339)
 	return &formatted
 }
 

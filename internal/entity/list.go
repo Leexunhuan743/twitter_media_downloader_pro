@@ -65,6 +65,17 @@ func (le *ListEntity) Create(name string) error {
 	if err != nil {
 		return err
 	}
+	// 无论目录是否本次新建都要检查归属：他人记录可能因归一化（遗留
+	// 尾点/尾空格）或大小写变体映射到同一路径，且其目录当前缺失。
+	owned, ownerErr := entityDirectoryOwnedByAnother(le.db, le.record.ParentDir, path, "list", uint64(le.record.LstId))
+	if ownerErr != nil {
+		return fmt.Errorf("create %s: %w", le.description(), ownerErr)
+	}
+	if owned {
+		// 目录归属冲突：若本次新建了目录，回滚移除，避免残留空目录。
+		// 包 ErrPathConflict 使 API 层映射为 409（与目标已存在的冲突一致）。
+		return change.rollback(fmt.Errorf("%w: create %s: directory %q already belongs to another entity", ErrPathConflict, le.description(), path))
+	}
 
 	oldName := le.record.Name
 	oldID := le.record.Id
@@ -139,6 +150,19 @@ func (le *ListEntity) Rename(name string) error {
 	}
 
 	oldName := le.record.Name
+	// 新名归一化后若已被其他实体的记录占用，拒绝改名（同 user 侧）。
+	targetPath, targetErr := entityPath(le.record.ParentDir, name)
+	if targetErr != nil {
+		return fmt.Errorf("rename %s: %w", le.description(), targetErr)
+	}
+	owned, ownerErr := entityDirectoryOwnedByAnother(le.db, le.record.ParentDir, targetPath, "list", uint64(le.record.LstId))
+	if ownerErr != nil {
+		return fmt.Errorf("rename %s: %w", le.description(), ownerErr)
+	}
+	if owned {
+		return fmt.Errorf("%w: rename %s: target directory %q already belongs to another entity", ErrPathConflict, le.description(), targetPath)
+	}
+
 	change, err := renameEntityDirectory(le.record.ParentDir, oldName, name)
 	if err != nil {
 		return err

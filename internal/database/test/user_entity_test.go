@@ -294,6 +294,28 @@ func TestUpdateUserEntityTweetStat(t *testing.T) {
 		err := database.UpdateUserEntityTweetStat(db, 99999, time.Now(), 10)
 		assert.NoError(t, err)
 	})
+
+	t.Run("mixed_zone_offsets_do_not_regress_baseline", func(t *testing.T) {
+		// 存量数据可能以非 UTC 偏移存储（旧版本 mark 用本地时区写入）。
+		// SQLite 按 TEXT 字典序比较，混合偏移会让 MAX 保留更旧基线。
+		// 归一化到 UTC 后文本序等于时刻序，更新的时刻必须推进基线。
+		_, err := db.Exec(`UPDATE user_entities SET latest_release_time=? WHERE id=?`,
+			"2023-12-31 23:00:00.000000000+08:00", entity.Id.Int32)
+		require.NoError(t, err)
+		require.NoError(t, database.NormalizeLegacyTimestamps(db))
+
+		// 该时刻的 UTC 表示 = 2023-12-31T15:00:00Z；更新 1 小时后（16:00Z）必须推进。
+		baseline := time.Date(2023, 12, 31, 16, 0, 0, 0, time.UTC)
+		require.NoError(t, database.UpdateUserEntityTweetStat(db, int(entity.Id.Int32), baseline, 60))
+
+		retrieved, err := database.GetUserEntity(db, int(entity.Id.Int32))
+		require.NoError(t, err)
+		require.True(t, retrieved.LatestReleaseTime.Valid)
+		// 归一化后存的是 UTC 文本；比较时刻而非墙钟。
+		assert.Equal(t, int64(1704038400), retrieved.LatestReleaseTime.Time.Unix(),
+			"baseline must advance to the newer instant (2023-12-31T16:00:00Z)")
+		assert.Equal(t, int32(60), retrieved.MediaCount.Int32)
+	})
 }
 
 func TestSetUserEntityLatestReleaseTime(t *testing.T) {

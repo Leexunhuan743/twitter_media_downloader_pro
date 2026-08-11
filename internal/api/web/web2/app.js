@@ -1649,7 +1649,7 @@ async function renderDBEntities(content, page, search, ep, label, sort) {
   const rows = items.map(i => {
     const actions = `<td><button class="btn btn-xs btn-ghost" onclick="viewEntityDetail('${ep}', '${jsEsc(i.id)}')">View</button> <button class="btn btn-xs btn-ghost" onclick="if(confirmEntityDelete('${ep}', '${jsEsc(i.name || i.id)}')){deleteEntity('${ep}', '${jsEsc(i.id)}')}">Delete</button></td>`;
     if (label === 'user_entities')
-      return `<tr><td><span class="mono">${esc(i.id||'')}</span></td><td>${esc(i.user_id||'')}</td><td>${esc(i.name||'')}</td><td>${esc(i.parent_dir||'')}</td><td>${i.media_count||0}</td><td class="text-sm">${esc(i.latest_release_time||'')}</td>${actions}</tr>`;
+      return `<tr><td><span class="mono">${esc(i.id||'')}</span></td><td>${esc(i.user_id||'')}</td><td>${esc(i.name||'')}</td><td>${esc(i.parent_dir||'')}</td><td>${i.media_count||0}</td><td class="text-sm">${esc(i.latest_release_time ? fmt(i.latest_release_time) : '')}</td>${actions}</tr>`;
     else if (label === 'list_entities')
       return `<tr><td><span class="mono">${esc(i.id||'')}</span></td><td>${esc(i.lst_id||'')}</td><td>${esc(i.name||'')}</td><td>${esc(i.parent_dir||'')}</td><td>${esc(i.list_name||'')}</td>${actions}</tr>`;
     else
@@ -1803,7 +1803,7 @@ async function renderDBStats(content) {
   const s = await ENDPOINTS.dbStats();
   const items = [
     ['Total Users', s.users || 0],
-    ['Total Lists', s.lists || 0],
+    ['Total Lists', s.lsts || 0],
     ['User Entities', s.user_entities || 0],
     ['List Entities', s.lst_entities || 0],
     ['Links', s.user_links || 0],
@@ -1886,7 +1886,7 @@ async function viewUserDetail(id) {
       <div class="modal-footer">
         <button class="btn btn-ghost" onclick="closeModal()">Close</button>
         <button class="btn btn-primary" onclick="saveUserEdit('${jsEsc(u.id)}')">Save</button>
-        <button class="btn btn-danger" onclick="if(confirm('Delete user ${jsEsc(u.screen_name)}?')){ENDPOINTS.dbUserDelete('${jsEsc(u.id)}').then(()=>{closeModal();loadDBTab(currentDBTab());}).catch(e=>toast(e.message,'error'))}">Delete</button>
+        <button class="btn btn-danger" onclick="if(confirm('Delete user ${jsEsc(u.screen_name)}? This also permanently deletes the media directory.')){ENDPOINTS.dbUserDelete('${jsEsc(u.id)}').then(()=>{closeModal();loadDBTab(currentDBTab());}).catch(e=>toast(e.message,'error'))}">Delete</button>
       </div>`);
   } catch(e) { toast(e.message, 'error'); }
 }
@@ -1923,7 +1923,7 @@ async function viewListDetail(id) {
       <div class="modal-footer">
         <button class="btn btn-ghost" onclick="closeModal()">Close</button>
         <button class="btn btn-primary" onclick="saveListEdit('${jsEsc(l.id)}')">Save</button>
-        <button class="btn btn-danger" onclick="if(confirm('Delete list ${jsEsc(l.name)}?')){ENDPOINTS.dbListDelete('${jsEsc(l.id)}').then(()=>{closeModal();loadDBTab(currentDBTab());}).catch(e=>toast(e.message,'error'))}">Delete</button>
+        <button class="btn btn-danger" onclick="if(confirm('Delete list ${jsEsc(l.name)}? This also permanently deletes the media directory.')){ENDPOINTS.dbListDelete('${jsEsc(l.id)}').then(()=>{closeModal();loadDBTab(currentDBTab());}).catch(e=>toast(e.message,'error'))}">Delete</button>
       </div>`);
   } catch(e) { toast(e.message, 'error'); }
 }

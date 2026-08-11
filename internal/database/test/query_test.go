@@ -105,6 +105,45 @@ func TestBuildSearchCondition(t *testing.T) {
 		assert.Empty(t, condition)
 		assert.Nil(t, args)
 	})
+
+	t.Run("qualified_table_column_fields", func(t *testing.T) {
+		// 带点限定的 "表.列" 形式（previous-names 搜索），两段均须合法标识符。
+		condition, args := database.BuildSearchCondition([]string{"pn.screen_name", "pn.name", "u.screen_name"}, "elon")
+		assert.Equal(t, "(pn.screen_name LIKE ? OR pn.name LIKE ? OR u.screen_name LIKE ?)", condition)
+		assert.Equal(t, []interface{}{"%elon%", "%elon%", "%elon%"}, args)
+	})
+
+	t.Run("unsafe_qualified_fields_rejected", func(t *testing.T) {
+		// 分隔符/引号/注释/多级点/非 ASCII 出现在限定段中时必须被拒绝，
+		// 防止 SQL 注入。
+		for _, fields := range [][]string{
+			{"pn.screen_name; DROP TABLE users"},
+			{"pn.screen_name OR 1=1"},
+			{"pn.screen_name, x"},
+			{"pn.screen_name/x"},
+			{".screen_name"},
+			{"pn."},
+			{"pn..name"},
+			{`pn.screen_name'`},
+			{`pn.name"`},
+			{`pn.screen_name' OR '1'='1`},
+			{"a.b.c"},
+			{"pn.name--"},
+			{"pn.name/*x*/"},
+			{"pn.名前"},
+			{"名前.name"},
+			{"pn .name"},
+			{"pn. name"},
+			{"`pn.screen_name`"},
+			{"(pn.screen_name)"},
+			{"union select"},
+			{"pn.screen_name;DROP"},
+		} {
+			condition, args := database.BuildSearchCondition(fields, "x")
+			assert.Empty(t, condition, "fields %v must be rejected", fields)
+			assert.Nil(t, args)
+		}
+	})
 }
 
 func TestQueryUsers(t *testing.T) {

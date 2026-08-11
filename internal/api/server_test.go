@@ -367,6 +367,62 @@ func TestGracefulShutdownBoundsMutationAndStartupDrains(t *testing.T) {
 	}
 }
 
+func TestGracefulShutdownSharesSingleDeadlineAcrossPhases(t *testing.T) {
+	// 判别"共享单一截止"而非"每阶段独立超时串行累加"：两个阻塞 phase
+	// （mutation + bot startup）各自 > shutdownTimeout。共享截止总耗时
+	// ≈ shutdownTimeout；串行累加会 ≈ 2×shutdownTimeout。
+	startupDone := make(chan struct{})
+	const phaseTimeout = 200 * time.Millisecond
+	server := &Server{
+		shutdownDone:    make(chan struct{}),
+		startupDone:     startupDone, // botDone 的 <-startupDone 永久阻塞
+		shutdownTimeout: phaseTimeout,
+	}
+	server.activeMutations.Add(1) // mutation phase 永久阻塞
+	t.Cleanup(func() {
+		server.activeMutations.Done()
+		close(startupDone)
+	})
+
+	start := time.Now()
+	server.GracefulShutdown("shared-deadline-test")
+	elapsed := time.Since(start)
+
+	// 共享截止 ≈ 200ms；串行累加 ≈ 400ms。断言界取 1.6× 单阶段超时，
+	// 共享实现余量充足、串行实现必然失败。
+	if elapsed >= 320*time.Millisecond {
+		t.Fatalf("shutdown took %v; phases appear to consume independent timeouts instead of a shared deadline", elapsed)
+	}
+	select {
+	case <-server.shutdownDone:
+	default:
+		t.Fatal("shutdown completion was not published")
+	}
+}
+
+func TestGracefulShutdownIdleServerReturnsImmediately(t *testing.T) {
+	// 判别"空闲立即关、无固定睡眠"：空 server（无 mutation、无 bot、无
+	// queue/scheduler/http）的关停必须毫秒级返回；若回归引入固定 sleep
+	// （如 500ms），本测试失败。
+	server := &Server{
+		shutdownDone:    make(chan struct{}),
+		shutdownTimeout: 45 * time.Second,
+	}
+
+	start := time.Now()
+	server.GracefulShutdown("idle-test")
+	elapsed := time.Since(start)
+
+	if elapsed >= 200*time.Millisecond {
+		t.Fatalf("idle shutdown took %v; a fixed sleep was likely introduced", elapsed)
+	}
+	select {
+	case <-server.shutdownDone:
+	default:
+		t.Fatal("shutdown completion was not published")
+	}
+}
+
 func TestGracefulShutdownCancelsTasksBeforeWaitingForMutations(t *testing.T) {
 	eventBus := NewEventBus()
 	taskManager := NewTaskManager(eventBus)
@@ -796,12 +852,21 @@ func TestHandleHealth_DatabaseUnavailable(t *testing.T) {
 func TestFormatTaskMarkTime(t *testing.T) {
 	assert.Nil(t, formatTaskMarkTime(nil))
 
-	ts := time.Date(2026, 4, 30, 18, 30, 45, 0, time.Local)
+	ts := time.Date(2026, 4, 30, 18, 30, 45, 0, time.UTC)
 	got := formatTaskMarkTime(&ts)
 	if got == nil {
 		t.Fatal("expected formatted timestamp")
 	}
-	assert.Equal(t, "2026-04-30T18:30:45", *got)
+	// RFC3339 携带时区偏移：Z 输入保持 UTC，避免下游按服务器本地时区
+	// 二次解释导致标记时间偏移（UTC+8 主机会欠标记 8 小时）。
+	assert.Equal(t, "2026-04-30T18:30:45Z", *got)
+
+	local := time.Date(2026, 4, 30, 18, 30, 45, 0, time.FixedZone("CST", 8*3600))
+	gotLocal := formatTaskMarkTime(&local)
+	if gotLocal == nil {
+		t.Fatal("expected formatted timestamp")
+	}
+	assert.Equal(t, "2026-04-30T18:30:45+08:00", *gotLocal)
 }
 
 func TestServer_EnqueueTaskPassesTaskContextAndReporter(t *testing.T) {

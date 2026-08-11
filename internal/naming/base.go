@@ -23,6 +23,16 @@ func sanitizeNamePart(value string, maxLen int) string {
 	return strings.TrimSpace(sanitized)
 }
 
+// sanitizeTweetPart sanitizes tweet text while preserving trailing spaces and
+// dots that older versions wrote into already-downloaded filenames. Renaming
+// those files on upgrade would re-download every affected tweet.
+func sanitizeTweetPart(value string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	return strings.TrimPrefix(utils.WinFileNameWithMaxLenStable("x"+value, maxLen+1), "x")
+}
+
 func finalizeName(value string, maxLen int) string {
 	if maxLen <= 0 {
 		return ""
@@ -98,4 +108,14 @@ func normalizeLogLabel(value string, maxLen int) string {
 		value = truncateUTF8(value, maxLen)
 	}
 	return value
+}
+
+// guardReservedFileName prefixes a file name that is exactly a Windows reserved
+// device name (for example CON, CON.txt, COM1). Tweet media names always carry
+// the tweet-id suffix, so this is defense in depth rather than a rename vector.
+func guardReservedFileName(name string) string {
+	if utils.IsWindowsReservedFileName(name) {
+		return "_" + name
+	}
+	return name
 }

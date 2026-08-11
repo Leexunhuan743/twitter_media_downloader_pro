@@ -96,13 +96,16 @@ func TestProxyURLFieldNormalizesAndValidates(t *testing.T) {
 		assert.NoError(t, field.Setter(conf, "socks5://127.0.0.1:7890"))
 		assert.Equal(t, "socks5://127.0.0.1:7890", conf.ProxyURL)
 
+		assert.NoError(t, field.Setter(conf, "socks5h://127.0.0.1:7890"))
+		assert.Equal(t, "socks5h://127.0.0.1:7890", conf.ProxyURL)
+
 		err := field.Setter(conf, "127.0.0.1:7897")
 		assert.EqualError(t, err, `invalid proxy URL "127.0.0.1:7897": missing scheme or host`)
-		assert.Equal(t, "socks5://127.0.0.1:7890", conf.ProxyURL)
+		assert.Equal(t, "socks5h://127.0.0.1:7890", conf.ProxyURL)
 
 		err = field.Setter(conf, "ftp://127.0.0.1:21")
 		assert.EqualError(t, err, `invalid proxy URL "ftp://127.0.0.1:21": unsupported scheme "ftp"`)
-		assert.Equal(t, "socks5://127.0.0.1:7890", conf.ProxyURL)
+		assert.Equal(t, "socks5h://127.0.0.1:7890", conf.ProxyURL)
 		return
 	}
 

@@ -8,8 +8,10 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// validIdent 允许的标识符：字母/数字/下划线，防止 SQL 注入。
-var validIdent = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+// validIdent 允许的标识符：字母/数字/下划线，可选单级点号限定的
+// "表.列" 形式（如 pn.screen_name）。两段都必须是合法标识符，
+// 防止 SQL 注入。
+var validIdent = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$`)
 
 // countTableIdent 验证表名（支持可选的 JOIN 子句，用于 COUNT 子查询）。
 // 此函数仅接受受信的字面量表名（来自同仓库 API 层），不可暴露给外部用户输入。

@@ -30,13 +30,9 @@ func MarkUsersAsDownloaded(ctx context.Context, client *resty.Client, db *sqlx.D
 		timestamp = nil
 		log.Infof("[download] Mark downloaded start mode=full lists=%d users=%d", len(lists), len(users))
 	} else {
-		loc, locErr := time.LoadLocation("Local")
-		if locErr != nil {
-			loc = time.UTC
-		}
-		parsedTime, err := time.ParseInLocation("2006-01-02T15:04:05", markTimeStr, loc)
+		parsedTime, err := parseMarkTime(markTimeStr)
 		if err != nil {
-			return nil, fmt.Errorf("invalid mark-time format '%s', expected: 2006-01-02T15:04:05 (example: 2024-01-15T10:30:00) or 'null' for full download: %v", markTimeStr, err)
+			return nil, err
 		}
 		timestamp = &parsedTime
 		log.Infof("[download] Mark downloaded start mode=timestamp timestamp=%s lists=%d users=%d", timestamp.Format(time.RFC3339), len(lists), len(users))
@@ -104,6 +100,28 @@ func MarkUsersAsDownloaded(ctx context.Context, client *resty.Client, db *sqlx.D
 
 	log.Infof("[download] Mark downloaded complete success=%d failed=%d", successCount, failCount)
 	return results, nil
+}
+
+// parseMarkTime parses a mark-time value. Values with a zone offset
+// (RFC3339, produced by the API path) are parsed as absolute instants;
+// values without a zone offset (CLI path, user-entered local wall clock)
+// are interpreted in the server's local timezone. The dual contract keeps
+// the CLI behavior unchanged while fixing the API path that previously
+// re-interpreted a UTC wall clock as local time.
+func parseMarkTime(markTimeStr string) (time.Time, error) {
+	parsedTime, err := time.Parse(time.RFC3339, markTimeStr)
+	if err == nil {
+		return parsedTime, nil
+	}
+	loc, locErr := time.LoadLocation("Local")
+	if locErr != nil {
+		loc = time.UTC
+	}
+	parsedTime, err = time.ParseInLocation("2006-01-02T15:04:05", markTimeStr, loc)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid mark-time format '%s', expected: 2006-01-02T15:04:05 (example: 2024-01-15T10:30:00) or RFC3339 (example: 2024-01-15T10:30:00Z) or 'null' for full download: %v", markTimeStr, err)
+	}
+	return parsedTime, nil
 }
 
 func markSingleUserWithInfo(db *sqlx.DB, user *twitter.User, dir string, timestamp *time.Time, maxLen int) (info MarkedUserInfo) {

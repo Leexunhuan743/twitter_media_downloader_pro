@@ -215,6 +215,21 @@ func (s *Server) handleDBUserDelete(w http.ResponseWriter, r *http.Request) {
 
 	cascade := s.countUserCascade(id)
 
+	// 先按实体生命周期（staged removal + journal）删除用户实体目录，
+	// 再删用户行；否则 DelUser 直删行会留下无 journal 的孤儿媒体目录。
+	entities, err := database.QueryUserEntities(s.db, "user_id = ?", []interface{}{id}, "", cascade.entityCount+1, 0)
+	if err != nil {
+		s.dbWriteError(w, err, "QueryUserEntities")
+		return
+	}
+	for i := range entities {
+		managed := entitypkg.NewUserEntityFromRecord(s.db, &entities[i])
+		if err := managed.Remove(); err != nil {
+			s.writeEntityMutationError(w, err, "Entity", "Entity directory already exists", "RemoveUserEntity")
+			return
+		}
+	}
+
 	if err := database.DelUser(s.db, id); err != nil {
 		s.dbWriteError(w, err, "DelUser")
 		return
@@ -344,6 +359,22 @@ func (s *Server) handleDBListDelete(w http.ResponseWriter, r *http.Request) {
 	lst, err := database.GetLst(s.db, id)
 	if !requireResource(lst, err, "List", func(c int, m string) { s.writeError(w, c, m) }) {
 		return
+	}
+
+	// 先按实体生命周期（staged removal + journal）删除列表实体目录；
+	// DelLst 的事务级联只删行，会留下无 journal 的孤儿媒体目录。
+	listEntityCount := s.countLstEntities(id)
+	listEntities, err := database.QueryLstEntities(s.db, "lst_id = ?", []interface{}{id}, "", listEntityCount+1, 0)
+	if err != nil {
+		s.dbWriteError(w, err, "QueryLstEntities")
+		return
+	}
+	for i := range listEntities {
+		managed := entitypkg.NewListEntityFromRecord(s.db, &listEntities[i])
+		if err := managed.Remove(); err != nil {
+			s.writeEntityMutationError(w, err, "List entity", "List entity directory already exists", "RemoveListEntity")
+			return
+		}
 	}
 
 	if err := database.DelLst(s.db, id); err != nil {
@@ -485,9 +516,18 @@ func (s *Server) handleDBUserEntityUpdate(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	metadataUpdated := req.MediaCount != nil || latestReleaseTime != nil
+
 	managedEntity := entitypkg.NewUserEntityFromRecord(s.db, entity)
 	if req.Name != nil {
 		if err := managedEntity.Rename(*req.Name); err != nil {
+			if metadataUpdated {
+				// 统计字段（media_count/latest_release_time）已先行提交；
+				// 明确告知客户端避免误判为全部未生效。重试是幂等的。
+				s.writeEntityMutationErrorWithDetail(w, err, "Entity", "Entity directory already exists",
+					"RenameUserEntity", "statistics were saved but the name change was rejected")
+				return
+			}
 			s.writeEntityMutationError(w, err, "Entity", "Entity directory already exists", "RenameUserEntity")
 			return
 		}
@@ -517,13 +557,28 @@ func (s *Server) handleDBUserEntityDelete(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) writeEntityMutationError(w http.ResponseWriter, err error, resource, pathConflictMessage, operation string) {
+	s.writeEntityMutationErrorWithDetail(w, err, resource, pathConflictMessage, operation, "")
+}
+
+// writeEntityMutationErrorWithDetail 与 writeEntityMutationError 相同，但允许
+// 附加一条用户安全的提示（例如"统计字段已保存但改名被拒绝"）。detail 只
+// 拼进 409 的用户文案，不包含原始错误。
+func (s *Server) writeEntityMutationErrorWithDetail(w http.ResponseWriter, err error, resource, pathConflictMessage, operation, detail string) {
 	switch {
 	case errors.Is(err, entitypkg.ErrNotFound), errors.Is(err, database.ErrEntityNotFound):
 		s.writeError(w, http.StatusNotFound, resource+" not found")
 	case errors.Is(err, entitypkg.ErrPathConflict):
-		s.writeErrorDetail(w, http.StatusConflict, pathConflictMessage, err.Error())
+		message := pathConflictMessage
+		if detail != "" {
+			message += "; " + detail
+		}
+		s.writeErrorDetail(w, http.StatusConflict, message, err.Error())
 	case errors.Is(err, entitypkg.ErrConcurrentUpdate):
-		s.writeErrorDetail(w, http.StatusConflict, resource+" changed concurrently", err.Error())
+		message := resource + " changed concurrently"
+		if detail != "" {
+			message += "; " + detail
+		}
+		s.writeErrorDetail(w, http.StatusConflict, message, err.Error())
 	default:
 		s.dbWriteError(w, err, operation)
 	}
@@ -1018,8 +1073,12 @@ func (s *Server) handleDBPreviousNames(w http.ResponseWriter, r *http.Request) {
 			[]string{"pn.screen_name", "pn.name", "u.screen_name"},
 			keyword,
 		)
-		whereConditions = append(whereConditions, cond)
-		args = append(args, searchArgs...)
+		// 纵深防御：BuildSearchCondition 对非法字段静默跳过，若字段列表
+		// 将来混入非法标识符，cond 为空时必须跳过拼接，避免悬空 AND。
+		if cond != "" {
+			whereConditions = append(whereConditions, cond)
+			args = append(args, searchArgs...)
+		}
 	}
 
 	// 基础条件：只统计有多条记录的用户（实际改过名的）

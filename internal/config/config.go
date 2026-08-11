@@ -229,7 +229,7 @@ func normalizeProxyURL(raw string) (string, error) {
 		return "", fmt.Errorf("invalid proxy URL %q: missing scheme or host", proxyURLForError(raw))
 	}
 	switch strings.ToLower(parsed.Scheme) {
-	case "http", "https", "socks5":
+	case "http", "https", "socks5", "socks5h":
 		return parsed.String(), nil
 	default:
 		return "", fmt.Errorf("invalid proxy URL %q: unsupported scheme %q", proxyURLForError(raw), parsed.Scheme)

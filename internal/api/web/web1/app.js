@@ -1786,7 +1786,7 @@ function getDBColumns(type) {
       { key: 'id', label: 'ID', sortable: true },
       { key: 'user_id', label: 'User ID', sortable: true },
       { key: 'name', label: 'Name', sortable: true },
-      { key: 'latest_release_time', label: 'Latest Release', sortable: true, render: i => escapeHtml(i.latest_release_time || '-') },
+      { key: 'latest_release_time', label: 'Latest Release', sortable: true, render: i => escapeHtml(i.latest_release_time ? formatDate(i.latest_release_time) : '-') },
       { key: 'media_count', label: 'Media Count', sortable: true, render: i => escapeHtml(i.media_count || '-') },
       { label: 'Actions', sortable: false, mobile: false, render: i => renderActionButtons(type, i) },
     ],
@@ -2303,7 +2303,7 @@ async function deleteDBItem(type, id) {
   const currentRows = store.state.dbData[type]?.data || [];
   const item = currentRows.find(row => String(row.id) === String(id));
   const label = item?.screen_name ? `@${item.screen_name}` : (item?.name || item?.id || id);
-	const mediaWarning = (type === 'entities' || type === 'listEntities') ? '\n对应媒体目录也会被永久删除。' : '';
+	const mediaWarning = (type === 'entities' || type === 'listEntities' || type === 'users' || type === 'lists') ? '\n对应媒体目录也会被永久删除。' : '';
 	if (!confirm(`确定删除 ${config.title || type} #${id}${label ? ` (${label})` : ''} 吗？\n此操作不可恢复。${mediaWarning}`)) return;
   try {
     await config.delete(id);

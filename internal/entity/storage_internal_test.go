@@ -74,6 +74,28 @@ func TestValidateNameRejectsWindowsIncompatibleNames(t *testing.T) {
 	}
 }
 
+func TestValidateNameRejectsStagedPrefixCaseVariants(t *testing.T) {
+	// Windows 文件系统大小写不敏感：保留前缀的大小写变体必须同样被拒绝，
+	// 否则可绕过内部前缀保护且对启动清扫不可见。
+	for _, name := range []string{
+		".tmd-remove-v1-abcdef1234567890-x",
+		".TMD-REMOVE-V1-ABCDEF1234567890-X",
+		".Tmd-Remove-V1-aBcDeF1234567890-x",
+		".tmd-remove-anything",
+		".TMD-REMOVE-anything",
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.ErrorIs(t, ValidateName(name), ErrInvalidName)
+		})
+	}
+
+	for _, name := range []string{"tmd-remove-x", ".tmd-remove", ".tmd_remove-x", "x.tmd-remove-1"} {
+		t.Run("allowed/"+name, func(t *testing.T) {
+			assert.NoError(t, ValidateName(name))
+		})
+	}
+}
+
 func TestCleanupStagedDirectories(t *testing.T) {
 	db := openStorageTestDB(t)
 	parentDir := t.TempDir()
@@ -249,6 +271,45 @@ func TestCleanupStagedDirectoriesRetainsUnjournaledStageWhenRecoveryTargetExists
 	assert.DirExists(t, stagedPath)
 }
 
+func TestCleanupStagedDirectoriesRetainsZeroCandidateStageWhenActiveDirIsMissing(t *testing.T) {
+	db := openStorageTestDB(t)
+	parentDir := t.TempDir()
+	// active 记录目录缺失（例如 Windows 归一化尾点/空格后生成的库迁移到
+	// 本平台，记录名与磁盘目录名不一致），且无 journal 的 versioned staged
+	// 哈希无匹配候选——恢复目标不明，绝不能当作已提交删除 RemoveAll 掉媒体。
+	seedStorageUserEntity(t, db, parentDir, "missing-active")
+	// 注意：不创建 missing-active 目录，模拟目录缺失。
+	stagedPath := filepath.Join(parentDir, strings.TrimSuffix(stagedDirectoryPattern(filepath.Join(parentDir, "other-name")), "*")+"fixture")
+	require.NoError(t, os.Mkdir(stagedPath, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(stagedPath, "media.jpg"), []byte("keep"), 0600))
+
+	cleanup, err := CleanupStagedDirectories(db)
+
+	assert.Error(t, err)
+	assert.Zero(t, cleanup.Removed)
+	assert.Zero(t, cleanup.Restored)
+	assert.DirExists(t, stagedPath)
+	assert.FileExists(t, filepath.Join(stagedPath, "media.jpg"))
+}
+
+func TestCleanupStagedDirectoriesRemovesZeroCandidateStageWhenAllActiveDirsExist(t *testing.T) {
+	db := openStorageTestDB(t)
+	parentDir := t.TempDir()
+	// 无 journal 的 versioned stage、哈希无匹配候选、且 parent 下所有 active
+	// 目录都存在——此时 stage 是已提交删除的残留，应被清理。
+	seedStorageUserEntity(t, db, parentDir, "active-user")
+	require.NoError(t, os.Mkdir(filepath.Join(parentDir, "active-user"), 0755))
+	stagedPath := filepath.Join(parentDir, strings.TrimSuffix(stagedDirectoryPattern(filepath.Join(parentDir, "removed-user")), "*")+"fixture")
+	require.NoError(t, os.Mkdir(stagedPath, 0755))
+
+	cleanup, err := CleanupStagedDirectories(db)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, cleanup.Removed)
+	assert.Zero(t, cleanup.Restored)
+	assert.NoDirExists(t, stagedPath)
+}
+
 func TestCleanupStagedDirectoriesRejectsMismatchedJournalHash(t *testing.T) {
 	db := openStorageTestDB(t)
 	parentDir := t.TempDir()
@@ -290,7 +351,75 @@ func TestCleanupStagedDirectoriesRemovesStaleJournal(t *testing.T) {
 	assert.Empty(t, journals)
 }
 
-func TestCleanupStagedDirectoriesRetainsAmbiguousVersionedStage(t *testing.T) {
+func TestCleanupStagedDirectoriesRestoresJournaledStageWithTrimmedOriginalPath(t *testing.T) {
+	// 反向变体：journal 的 OriginalPath 是裁剪名（"foo"，Windows 源删除
+	// 流程经 storedEntityPath 归一化），而 active 记录是原样尾点名
+	// （"foo."，Linux 扫描）。修复后按裁剪后 base 相等匹配并恢复到记录
+	// 可寻址的路径，而不是 RemoveAll 掉媒体。
+	db := openStorageTestDB(t)
+	parentDir := t.TempDir()
+	seedStorageUserEntity(t, db, parentDir, "foo.")
+	trimmedPath := filepath.Join(parentDir, "foo")
+	stagedPath := filepath.Join(parentDir, strings.TrimSuffix(stagedDirectoryPattern(trimmedPath), "*")+"fixture")
+	require.NoError(t, os.Mkdir(stagedPath, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(stagedPath, "media.jpg"), []byte("keep"), 0600))
+	require.NoError(t, database.CreateEntityRemovalJournal(db, database.EntityRemovalJournal{
+		StagedPath:   stagedPath,
+		OriginalPath: trimmedPath,
+	}))
+
+	cleanup, err := CleanupStagedDirectories(db)
+
+	require.NoError(t, err)
+	assert.Zero(t, cleanup.Removed)
+	assert.Equal(t, 1, cleanup.Restored)
+	// 恢复目标必须能被记录寻址：Windows 上是归一化后的裁剪名 "foo"，
+	// Linux 上是字面 "foo."（用 storedEntityPath 计算平台一致的期望）。
+	expectedPath, err := storedEntityPath(parentDir, "foo.")
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(expectedPath, "media.jpg"))
+	assert.NoDirExists(t, stagedPath)
+	journals, err := database.ListEntityRemovalJournals(db)
+	require.NoError(t, err)
+	assert.Empty(t, journals)
+}
+
+func TestCleanupStagedDirectoriesRestoresJournaledStageWithTrailingSuffix(t *testing.T) {
+	// journal 的 OriginalPath 带尾点（"foo."），active 记录同名——在 Windows
+	// 上记录被归一化为 "foo"（activePaths 键为裁剪名），直接匹配会落空；
+	// 修复后按裁剪变体匹配并恢复到与记录一致的目录名。
+	db := openStorageTestDB(t)
+	parentDir := t.TempDir()
+	seedStorageUserEntity(t, db, parentDir, "foo.")
+	originalPath := filepath.Join(parentDir, "foo.")
+	stagedPath := filepath.Join(parentDir, strings.TrimSuffix(stagedDirectoryPattern(originalPath), "*")+"fixture")
+	require.NoError(t, os.Mkdir(stagedPath, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(stagedPath, "media.jpg"), []byte("keep"), 0600))
+	require.NoError(t, database.CreateEntityRemovalJournal(db, database.EntityRemovalJournal{
+		StagedPath:   stagedPath,
+		OriginalPath: originalPath,
+	}))
+
+	cleanup, err := CleanupStagedDirectories(db)
+
+	require.NoError(t, err)
+	assert.Zero(t, cleanup.Removed)
+	assert.Equal(t, 1, cleanup.Restored)
+	// 恢复目标必须能被记录寻址：Windows 上是归一化后的裁剪名 "foo"，
+	// Linux 上是字面 "foo."（用 storedEntityPath 计算平台一致的期望）。
+	expectedPath, err := storedEntityPath(parentDir, "foo.")
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(expectedPath, "media.jpg"))
+	assert.NoDirExists(t, stagedPath)
+	journals, err := database.ListEntityRemovalJournals(db)
+	require.NoError(t, err)
+	assert.Empty(t, journals)
+}
+
+func TestCleanupStagedDirectoriesDeduplicatesSamePathCandidates(t *testing.T) {
+	// 两条记录（不同 user_id）同名同 parent——归一化后指向同一目录。
+	// 旧实现按 len(candidates)>1 判为歧义而永久保留；去重后应视为单一
+	// 恢复目标，把中断删除的目录还原（两记录共享同一目录，恢复合理）。
 	db := openStorageTestDB(t)
 	parentDir := t.TempDir()
 	seedStorageUserEntity(t, db, parentDir, "same-name")
@@ -298,13 +427,15 @@ func TestCleanupStagedDirectoriesRetainsAmbiguousVersionedStage(t *testing.T) {
 	require.NoError(t, database.CreateUserEntity(db, &database.UserEntity{UserId: 2, Name: "same-name", ParentDir: parentDir}))
 	stagedPath := filepath.Join(parentDir, strings.TrimSuffix(stagedDirectoryPattern(filepath.Join(parentDir, "same-name")), "*")+"fixture")
 	require.NoError(t, os.Mkdir(stagedPath, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(stagedPath, "media.jpg"), []byte("keep"), 0600))
 
 	cleanup, err := CleanupStagedDirectories(db)
 
-	assert.Error(t, err)
+	require.NoError(t, err)
 	assert.Zero(t, cleanup.Removed)
-	assert.Zero(t, cleanup.Restored)
-	assert.DirExists(t, stagedPath)
+	assert.Equal(t, 1, cleanup.Restored)
+	assert.FileExists(t, filepath.Join(parentDir, "same-name", "media.jpg"))
+	assert.NoDirExists(t, stagedPath)
 }
 
 func TestStagedDirectoryHashRoundTrip(t *testing.T) {

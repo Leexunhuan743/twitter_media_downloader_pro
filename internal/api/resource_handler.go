@@ -202,6 +202,16 @@ type userCascadeCount struct {
 	linkCount, entityCount, nameCount int
 }
 
+// countLstEntities 统计列表拥有的实体数（列表删除时逐个走实体生命周期）。
+func (s *Server) countLstEntities(id uint64) int {
+	var count int
+	if err := s.db.Get(&count, "SELECT COUNT(*) FROM lst_entities WHERE lst_id = ?", id); err != nil {
+		log.Warnf("[db] List entity count failed lst_id=%d error=%q", id, err.Error())
+		return 0
+	}
+	return count
+}
+
 // countUserCascade 统计删除用户时需要级联删除的记录数
 func (s *Server) countUserCascade(id uint64) userCascadeCount {
 	var c userCascadeCount

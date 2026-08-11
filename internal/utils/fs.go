@@ -74,6 +74,40 @@ func WinFileNameWithMaxLen(name string, maxLen int) string {
 	return strings.TrimRight(result, " .")
 }
 
+// WinFileNameWithMaxLenStable 与 WinFileNameWithMaxLen 相同，但保留输入的首尾
+// 空白与尾点（不做 TrimSpace/TrimRight(" .")）。tweet 媒体文件名在旧版本中
+// 不裁剪这些字符，升级后若裁剪会导致已下载文件被改名、触发重复下载；因此
+// tweet 文本路径必须使用本函数保持文件名稳定。控制字符仍被剔除：旧版本对
+// 含控制字符的文本在 Windows 上本就无法创建文件，不存在需要兼容的旧文件。
+func WinFileNameWithMaxLenStable(name string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	name = reURL.ReplaceAllString(name, "")
+	name = reWinNonSupport.ReplaceAllString(name, "")
+
+	var buffer bytes.Buffer
+	for _, ch := range name {
+		switch ch {
+		case '\r':
+			continue
+		case '\n':
+			ch = ' '
+		default:
+			if ('\x00' <= ch && ch < '\x20') || ch == '\x7f' {
+				continue
+			}
+		}
+
+		if buffer.Len()+utf8.RuneLen(ch) > maxLen {
+			break
+		}
+		buffer.WriteRune(ch)
+	}
+
+	return buffer.String()
+}
+
 func truncateUTF8(value string, maxLen int) string {
 	if len(value) <= maxLen {
 		return value
@@ -86,6 +120,13 @@ func truncateUTF8(value string, maxLen int) string {
 }
 
 func isWindowsReservedFileName(name string) bool {
+	return IsWindowsReservedFileName(name)
+}
+
+// IsWindowsReservedFileName reports whether name would collide with a Windows
+// reserved device name (CON, PRN, AUX, NUL, COM1-9, LPT1-9 and their typed
+// variants), including names with an extension such as "CON.txt".
+func IsWindowsReservedFileName(name string) bool {
 	stem, _, _ := strings.Cut(name, ".")
 	stem = strings.ToUpper(strings.TrimRight(stem, " "))
 	switch stem {

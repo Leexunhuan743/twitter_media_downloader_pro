@@ -75,6 +75,8 @@ func UpdateUserEntityNameIfCurrent(db *sqlx.DB, id int, currentName, newName str
 
 // UpdateUserEntityMetadata atomically updates only the optional statistics
 // supplied by the caller. A nil pointer leaves that column unchanged.
+// Timestamps are normalized to UTC so the stored TEXT order matches the
+// instant order (see NormalizeLegacyTimestamps).
 func UpdateUserEntityMetadata(db *sqlx.DB, id int, mediaCount *int32, latestReleaseTime *sql.NullTime) error {
 	setClauses := make([]string, 0, 2)
 	args := make([]interface{}, 0, 3)
@@ -83,8 +85,12 @@ func UpdateUserEntityMetadata(db *sqlx.DB, id int, mediaCount *int32, latestRele
 		args = append(args, *mediaCount)
 	}
 	if latestReleaseTime != nil {
+		normalized := *latestReleaseTime
+		if normalized.Valid {
+			normalized.Time = normalized.Time.UTC()
+		}
 		setClauses = append(setClauses, "latest_release_time=?")
-		args = append(args, *latestReleaseTime)
+		args = append(args, normalized)
 	}
 	if len(setClauses) == 0 {
 		return nil
@@ -118,6 +124,9 @@ func UpdateUserEntityMediCount(db *sqlx.DB, eid int, count int) error {
 }
 
 func UpdateUserEntityTweetStat(db *sqlx.DB, eid int, baseline time.Time, count int) error {
+	// Normalize to UTC so the stored TEXT comparison in the CASE WHEN clauses
+	// follows instant order even when older rows carry a zone offset.
+	baseline = baseline.UTC()
 	stmt := `UPDATE user_entities
 SET latest_release_time=CASE
 		WHEN latest_release_time IS NULL OR latest_release_time < ? THEN ?
@@ -140,6 +149,8 @@ WHERE id=?`
 }
 
 func SetUserEntityLatestReleaseTime(db *sqlx.DB, id int, t time.Time) error {
+	// Store in UTC so the TEXT order matches the instant order.
+	t = t.UTC()
 	stmt := `UPDATE user_entities SET latest_release_time=? WHERE id=?`
 	result, err := db.Exec(stmt, t, id)
 	if err != nil {

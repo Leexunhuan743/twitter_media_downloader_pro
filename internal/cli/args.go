@@ -219,8 +219,13 @@ func validateMarkTime(markTime string) error {
 	if strings.EqualFold(markTime, "null") || strings.EqualFold(markTime, "nil") {
 		return nil
 	}
+	// 无时区格式按本地墙钟解释（CLI 契约）；RFC3339（带时区）同样接受，
+	// 与 API 路径的服务端解析保持一致。
+	if _, err := time.Parse(time.RFC3339, markTime); err == nil {
+		return nil
+	}
 	if _, err := time.ParseInLocation("2006-01-02T15:04:05", markTime, time.Local); err != nil {
-		return fmt.Errorf("invalid mark-time format %q, expected 2006-01-02T15:04:05 or null", markTime)
+		return fmt.Errorf("invalid mark-time format %q, expected 2006-01-02T15:04:05, RFC3339 (e.g. 2024-01-15T10:30:00Z) or null", markTime)
 	}
 	return nil
 }

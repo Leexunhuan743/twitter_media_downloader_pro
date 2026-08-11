@@ -444,6 +444,77 @@ func TestWinFileNameWithMaxLen(t *testing.T) {
 	}
 }
 
+func TestWinFileNameWithMaxLenStable(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		maxLen   int
+		expected string
+	}{
+		{
+			name:     "short text unchanged",
+			input:    "hello",
+			maxLen:   10,
+			expected: "hello",
+		},
+		{
+			name:     "trailing dot preserved",
+			input:    "Hello world.",
+			maxLen:   158,
+			expected: "Hello world.",
+		},
+		{
+			name:     "trailing spaces preserved",
+			input:    "Hello world. ",
+			maxLen:   158,
+			expected: "Hello world. ",
+		},
+		{
+			name:     "leading spaces preserved",
+			input:    " hello",
+			maxLen:   158,
+			expected: " hello",
+		},
+		{
+			name:     "control characters removed",
+			input:    "a\tb\x01c",
+			maxLen:   158,
+			expected: "abc",
+		},
+		{
+			name:     "newline becomes space",
+			input:    "line1\nline2",
+			maxLen:   158,
+			expected: "line1 line2",
+		},
+		{
+			name:     "url stripped",
+			input:    "see https://t.co/abc123 now",
+			maxLen:   158,
+			expected: "see  now",
+		},
+		{
+			name:     "invalid characters removed",
+			input:    `a/b\c:d*e?f"g<h>i|j`,
+			maxLen:   158,
+			expected: "abcdefghij",
+		},
+		{
+			name:     "truncated at byte budget",
+			input:    "very long text that must be cut",
+			maxLen:   8,
+			expected: "very lon",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := WinFileNameWithMaxLenStable(tt.input, tt.maxLen)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
 func TestSafeDirName(t *testing.T) {
 	tests := []struct {
 		input    string

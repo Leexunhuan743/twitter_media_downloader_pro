@@ -53,6 +53,7 @@ type Scheduler struct {
 	started        bool
 	firstStart     bool
 	hasEverStarted bool
+	stopRequested  bool
 	OnStatusChange ScheduleStatusChangeFunc
 }
 
@@ -121,6 +122,13 @@ func (sc *Scheduler) Start() {
 	sc.lifecycleMu.Lock()
 	defer sc.lifecycleMu.Unlock()
 
+	if sc.stopRequested {
+		// 关停已在启动前触发（Server.Start 与 GracefulShutdown 并发窗口）：
+		// 不再启动任何循环，避免 Stop 的 no-op 之后调度器无人收尾。
+		log.Debug("[scheduler] Start skipped reason=stop_requested")
+		return
+	}
+
 	activeCount, started := sc.startLocked(true)
 	if !started {
 		return
@@ -158,6 +166,7 @@ func (sc *Scheduler) startLocked(skipIfRunning bool) (int, bool) {
 func (sc *Scheduler) stopLocked() bool {
 	log.Debug("[scheduler] Stop lock begin")
 	sc.mu.Lock()
+	sc.stopRequested = true
 	if !sc.started {
 		sc.mu.Unlock()
 		return false

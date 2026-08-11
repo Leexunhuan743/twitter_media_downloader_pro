@@ -66,6 +66,18 @@ func (ue *UserEntity) Create(name string) error {
 	if err != nil {
 		return err
 	}
+	// 无论目录是否本次新建都要检查归属：他人记录可能因归一化（遗留
+	// 尾点/尾空格）或大小写变体映射到同一路径，且其目录当前缺失——
+	// 此时新建目录会让两个实体记录共享同一目录（媒体混写）。
+	owned, ownerErr := entityDirectoryOwnedByAnother(ue.db, ue.record.ParentDir, path, "user", ue.record.UserId)
+	if ownerErr != nil {
+		return fmt.Errorf("create %s: %w", ue.description(), ownerErr)
+	}
+	if owned {
+		// 目录归属冲突：若本次新建了目录，回滚移除，避免残留空目录。
+		// 包 ErrPathConflict 使 API 层映射为 409（与目标已存在的冲突一致）。
+		return change.rollback(fmt.Errorf("%w: create %s: directory %q already belongs to another entity", ErrPathConflict, ue.description(), path))
+	}
 
 	oldName := ue.record.Name
 	oldID := ue.record.Id
@@ -140,6 +152,22 @@ func (ue *UserEntity) Rename(name string) error {
 	}
 
 	oldName := ue.record.Name
+	// 新名归一化后（遗留尾点/空格、大小写变体）若已被其他实体的记录
+	// 占用，拒绝改名——否则两个实体记录会指向同一目录（媒体混写）。
+	// 目标目录已存在时 renameEntityDirectory 的 ErrPathConflict 也会拒绝，
+	// 此检查覆盖目标目录缺失但记录存在的窗口。
+	targetPath, targetErr := entityPath(ue.record.ParentDir, name)
+	if targetErr != nil {
+		return fmt.Errorf("rename %s: %w", ue.description(), targetErr)
+	}
+	owned, ownerErr := entityDirectoryOwnedByAnother(ue.db, ue.record.ParentDir, targetPath, "user", ue.record.UserId)
+	if ownerErr != nil {
+		return fmt.Errorf("rename %s: %w", ue.description(), ownerErr)
+	}
+	if owned {
+		return fmt.Errorf("%w: rename %s: target directory %q already belongs to another entity", ErrPathConflict, ue.description(), targetPath)
+	}
+
 	change, err := renameEntityDirectory(ue.record.ParentDir, oldName, name)
 	if err != nil {
 		return err
@@ -214,6 +242,8 @@ func (ue *UserEntity) SetLatestReleaseTime(t time.Time) error {
 	if ue.db == nil {
 		return fmt.Errorf("set latest release time for %s: database is nil", ue.description())
 	}
+	// 与 DB 层一致：存储与内存记录都归一为 UTC，避免文本序与时刻序分叉。
+	t = t.UTC()
 	err := database.SetUserEntityLatestReleaseTime(ue.db, int(ue.record.Id.Int32), t)
 	if err == nil {
 		ue.record.LatestReleaseTime.Time = t
