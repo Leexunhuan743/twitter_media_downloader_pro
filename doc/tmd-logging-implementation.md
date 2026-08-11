@@ -1,6 +1,6 @@
 # TMDP 日志系统实现文档
 
-> 基于当前代码审计后的日志实现说明。最后校准：2026-08-04。
+> 基于当前代码审计后的日志实现说明。最后校准：2026-08-11（client.log 经 SanitizingLogger 整块脱敏 + OnRequestLog/OnResponseLog 头/体预脱敏 + `SetDebugBodyLimit(256KB)`；无 scheme 的 `user:pass@host` 与空格值/未闭合引号敏感字段值现均被掩码）。
 
 本文档描述 TMDP 当前日志栈、日志输出约定、Web UI 消费路径、Bot 告警路径，以及维护日志时需要遵守的实现规则。它以真实代码为准。
 

@@ -32,7 +32,7 @@ Twitter clients and the database are initialized once and injected downward.
 
 The CLI parser validates user-facing download flags before any service call is made.
 
-`[[internal/cli/args.go#ParseArgs]]` defines download targets (`-user`, `-list`, `-foll`), profile targets, JSON import paths, and behavior flags. Screen names are normalized and deduplicated; list IDs must be positive and stay within `MaxNumericID`; `-mark-time` accepts `2006-01-02T15:04:05`, `null`, or `nil`.
+`[[internal/cli/args.go#ParseArgs]]` defines download targets (`-user`, `-list`, `-foll`), profile targets, JSON import paths, and behavior flags. Screen names are normalized and deduplicated; list IDs must be positive and stay within `MaxNumericID`; `-mark-time` accepts a zone-less `2006-01-02T15:04:05` wall clock (interpreted in the server's local timezone, matching CLI semantics), RFC3339 with an offset (absolute instant, produced by the API path), `null`, or `nil`.
 
 Behavior flags map into [[service-layer#Download Options]]: `-auto-follow`, `-follow-members`, `-no-retry`, and `-noprofile`.
 

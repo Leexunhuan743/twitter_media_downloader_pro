@@ -16,7 +16,7 @@ Command-capable providers receive `TaskManager`, `EventBus`, `LogHub`, and `serv
 
 Each provider implements `internal/bot.Bot` with an idempotent `Stop`, but command support, ownership, and transport differ by package.
 
-Discord registers its declared global slash commands with one bulk-overwrite request, which bounds registration to one HTTP operation and removes stale commands no longer declared by TMD.
+Discord registers its declared global slash commands with one bulk-overwrite request, which bounds registration to one HTTP operation and removes stale commands no longer declared by TMD. Gateway establishment is bounded by an overall startup deadline that interrupts the underlying connections (never `session.Close`, which would deadlock behind discordgo's session lock while a stalled `Open` is running), so a gateway that stalls after the handshake cannot hang provider startup; the server's bounded bot-start wait then ensures already-started bots still receive `Stop` during shutdown.
 
 | Provider | Package | Transport | Commands | Notification Scope | Notes |
 |----------|---------|-----------|----------|--------------------|-------|

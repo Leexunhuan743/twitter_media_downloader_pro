@@ -53,5 +53,6 @@ A background goroutine checks the schedule periodically and triggers downloads.
 - Creates a task → enqueues to [[task-management|DownloadQueue]] → normal task flow
 - Tracks: run state, consecutive failure count, next execution time
 - API endpoints to CRUD schedules, validate expressions, trigger immediately
+- Once a stop has been requested, `Start` refuses to launch loops (TOCTOU guard against shutdown racing startup, so a stop that arrived before start cannot leave an unmanaged scheduler running)
 
 Scheduler logs use [[logging#Peripheral Logs]] for start/stop/reload and trigger outcomes. User-visible trigger logs include schedule type, target, name, and `task_id`; stale generation details remain debug/warn diagnostics.

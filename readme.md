@@ -139,7 +139,7 @@ tmdp-windows-amd64.exe
 | ct0                  | Twitter Cookie 中的 ct0           | 无（必填）               | `x1y2z3...`             |
 | max download routine | 最大并发下载数（范围 1-100）               | `min(100, CPU×10)`¹ | `35`                    |
 | max file name len    | 最大文件名长度（50-245）                 | `158`               | `158`                   |
-| proxy_url           | 代理服务器 URL（支持 http/https/socks5） | 空（使用 HTTP_PROXY/HTTPS_PROXY 环境变量代理；均未设置则直连） | `http://127.0.0.1:7890` |
+| proxy_url           | 代理服务器 URL（支持 http/https/socks5/socks5h） | 空（使用 HTTP_PROXY/HTTPS_PROXY 环境变量代理；均未设置则直连） | `http://127.0.0.1:7890` |
 | api_key             | 可选：API Key 认证（设置后开启 HTTP 认证，至少 8 字符） | 空（不启用）                | `your-api-key`         |
 
 > ¹ `max download routine` 默认值为 `min(100, runtime.GOMAXPROCS(0)*10)`，即 CPU 核数的 10 倍且不超过 100。
@@ -1432,7 +1432,7 @@ media:2
 proxy_url: http://127.0.0.1:7890
 ```
 
-支持的协议：`http://`、`https://`、`socks5://`
+支持的协议：`http://`、`https://`、`socks5://`、`socks5h://`
 
 **方式二：环境变量设置**
 

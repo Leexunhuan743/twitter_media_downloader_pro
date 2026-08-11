@@ -40,7 +40,7 @@ The Resty client log mirrors the main log's full-detail policy while redacting c
 
 Secrets must never be written to logs in full.
 
-Use `[[internal/logging/sanitize.go#MaskSecret]]`, `[[internal/logging/sanitize.go#RedactSensitiveText]]`, `[[internal/logging/sanitize.go#SanitizeHeaders]]`, or `[[internal/logging/sanitize.go#SanitizeURL]]` before logging tokens, cookies, passwords, API/client secrets, JWTs, Authorization values, URL user information, or sensitive query/fragment values. Fingerprints are stable and idempotent, allowing correlation without retaining plaintext. URL sanitation is fail-closed: an invalid URL is replaced by one fingerprint, while an unparseable query is replaced by a `malformed_query` fingerprint instead of preserving partially parsed or raw input.
+Use `[[internal/logging/sanitize.go#MaskSecret]]`, `[[internal/logging/sanitize.go#RedactSensitiveText]]`, `[[internal/logging/sanitize.go#SanitizeHeaders]]`, or `[[internal/logging/sanitize.go#SanitizeURL]]` before logging tokens, cookies, passwords, API/client secrets, JWTs, Authorization values, URL user information, or sensitive query/fragment values. Fingerprints are stable and idempotent, allowing correlation without retaining plaintext. URL sanitation is fail-closed: an invalid URL is replaced by one fingerprint, while an unparseable query is replaced by a `malformed_query` fingerprint instead of preserving partially parsed or raw input. Scheme-less `user:pass@host` values (parsed by `net/url` as scheme:opaque with a nil `User`) are masked in free text, query values, and direct `SanitizeURL` calls; sensitive field values spanning spaces or unterminated quotes are masked in full rather than truncated.
 
 ## HTTP Access Logs
 
