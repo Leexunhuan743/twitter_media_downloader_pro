@@ -30,6 +30,7 @@ import (
 	"github.com/unkmonster/tmd/internal/consolelog"
 	"github.com/unkmonster/tmd/internal/database"
 	"github.com/unkmonster/tmd/internal/downloading"
+	"github.com/unkmonster/tmd/internal/entity"
 	"github.com/unkmonster/tmd/internal/path"
 	"github.com/unkmonster/tmd/internal/service"
 	"github.com/unkmonster/tmd/internal/twitter"
@@ -38,7 +39,7 @@ import (
 
 func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
 	formatter := logging.NewTextFormatter()
-	formatter.ForceColors = true // 终端彩色；文件端由 LumberjackHook 剥离 ANSI
+	configureTerminalColors(formatter)
 	log.SetFormatter(formatter)
 
 	if dbg {
@@ -53,6 +54,12 @@ func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
 		log.SetOutput(os.Stderr)
 	}
 	log.AddHook(logging.NewLumberjackHook(logFile))
+}
+
+func configureTerminalColors(formatter *log.TextFormatter) {
+	noColor := os.Getenv("NO_COLOR") != ""
+	formatter.ForceColors = !noColor
+	formatter.DisableColors = noColor
 }
 
 func main() {
@@ -307,10 +314,31 @@ func initializeClients(
 	loginOpts twitter.LoginOptions,
 	enableRequestCounting bool,
 ) (*resty.Client, []*resty.Client, *path.StorePath, *sqlx.DB, error) {
+	pathHelper, err := path.NewStorePath(conf.RootPath)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("[startup] store directory create failed root=%q: %w", logging.Path(conf.RootPath), err)
+	}
+	db, err := database.Connect(pathHelper.DB)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("[db] connect failed path=%q: %w", logging.Path(pathHelper.DB), err)
+	}
+	log.Infof("[db] Connected path=%q", logging.Path(pathHelper.DB))
+	cleanup, cleanupErr := entity.CleanupStagedDirectories(db, pathHelper.Root, pathHelper.Users)
+	if cleanupErr != nil {
+		log.Warnf("[startup] Staged entity directory cleanup incomplete error=%q", cleanupErr.Error())
+	}
+	if cleanup.Restored > 0 || cleanup.Removed > 0 {
+		log.Infof("[startup] Reconciled staged entity directories restored=%d removed=%d", cleanup.Restored, cleanup.Removed)
+	}
+
 	// 登录主账户
 	client, screenName, err := twitter.LoginWithOptions(ctx, conf.Cookie.AuthToken, conf.Cookie.Ct0, loginOpts)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("[startup] login failed: %w", err)
+		startupErr := fmt.Errorf("[startup] login failed: %w", err)
+		if closeErr := db.Close(); closeErr != nil {
+			startupErr = errors.Join(startupErr, fmt.Errorf("[db] close after startup failure: %w", closeErr))
+		}
+		return nil, nil, nil, nil, startupErr
 	}
 	twitter.EnableRateLimit(client)
 	if enableRequestCounting {
@@ -333,18 +361,6 @@ func initializeClients(
 
 	batchOpts := twitter.BatchLoginOptions{Debug: enableRequestCounting}
 	additional := twitter.BatchLogin(ctx, batchOpts, twitterCookies, screenName)
-
-	// 初始化路径和数据库
-	pathHelper, err := path.NewStorePath(conf.RootPath)
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("[startup] store directory create failed root=%q: %w", logging.Path(conf.RootPath), err)
-	}
-
-	db, err := database.Connect(pathHelper.DB)
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("[db] connect failed path=%q: %w", logging.Path(pathHelper.DB), err)
-	}
-	log.Infof("[db] Connected path=%q", logging.Path(pathHelper.DB))
 
 	return client, additional, pathHelper, db, nil
 }

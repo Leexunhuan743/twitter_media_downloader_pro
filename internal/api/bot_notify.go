@@ -6,8 +6,11 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/consolelog"
 )
+
+const botLogResubscribeDelay = 100 * time.Millisecond
 
 // RunBotEventLoop 启动事件订阅协程：监听 EventBus，筛选 "tasks" 事件并回调。
 // 所有 bot 平台的 handleEvents() 均替换为此函数。
@@ -40,26 +43,42 @@ func RunBotLogLoop(lh *consolelog.Hub, stopCh <-chan struct{}, wg *sync.WaitGrou
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ch, unsub := lh.Subscribe()
-		defer unsub()
 		var lastLog time.Time
 		for {
+			ch, unsubscribe := lh.Subscribe()
+			closedUnexpectedly := false
+			for !closedUnexpectedly {
+				select {
+				case <-stopCh:
+					unsubscribe()
+					return
+				case line, ok := <-ch:
+					if !ok {
+						closedUnexpectedly = true
+						continue
+					}
+					if !isBotAlertLogLine(line) {
+						continue
+					}
+					now := time.Now()
+					if now.Sub(lastLog) < time.Second {
+						continue
+					}
+					lastLog = now
+					fn(line)
+				}
+			}
+			unsubscribe()
+			if lh.Closed() {
+				return
+			}
+			log.Warn("[bot] Log alert subscription overflowed; resubscribing")
+			timer := time.NewTimer(botLogResubscribeDelay)
 			select {
 			case <-stopCh:
+				timer.Stop()
 				return
-			case line, ok := <-ch:
-				if !ok {
-					return
-				}
-				if !isBotAlertLogLine(line) {
-					continue
-				}
-				now := time.Now()
-				if now.Sub(lastLog) < time.Second {
-					continue
-				}
-				lastLog = now
-				fn(line)
+			case <-timer.C:
 			}
 		}
 	}()

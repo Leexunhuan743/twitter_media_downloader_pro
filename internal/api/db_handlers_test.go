@@ -1281,7 +1281,32 @@ func TestHandleDBUserEntityUpdate_ValidatesBeforeRename(t *testing.T) {
 	assert.Equal(t, "Original Name", updated.Name)
 }
 
-func TestHandleDBUserEntityUpdateDoesNotRenameBeforeMetadataWrite(t *testing.T) {
+func TestHandleDBUserEntityUpdateRejectsWindowsIncompatibleNames(t *testing.T) {
+	for _, name := range []string{"foo:", "CON", "con.txt"} {
+		t.Run(name, func(t *testing.T) {
+			server, db := createTestServer(t)
+			defer db.Close()
+			require.NoError(t, database.CreateUser(db, &database.User{Id: 1, ScreenName: "entity_test", Name: "Entity Test", IsAccessible: true}))
+			parentDir := t.TempDir()
+			record := &database.UserEntity{UserId: 1, Name: "Original Name", ParentDir: parentDir}
+			require.NoError(t, database.CreateUserEntity(db, record))
+			require.NoError(t, os.Mkdir(filepath.Join(parentDir, record.Name), 0755))
+			body, err := json.Marshal(map[string]string{"name": name})
+			require.NoError(t, err)
+			req := httptest.NewRequest(http.MethodPatch, "/api/v1/db/user-entities/1", bytes.NewReader(body))
+			req.SetPathValue("id", strconv.Itoa(int(record.Id.Int32)))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+
+			server.handleDBUserEntityUpdate(rr, req)
+
+			assert.Equal(t, http.StatusBadRequest, rr.Code)
+			assert.DirExists(t, filepath.Join(parentDir, "Original Name"))
+		})
+	}
+}
+
+func TestHandleDBUserEntityUpdateSeparatesMetadataFromRename(t *testing.T) {
 	server, db := createTestServer(t)
 	defer db.Close()
 	require.NoError(t, database.CreateUser(db, &database.User{Id: 1, ScreenName: "entity_test", Name: "Entity Test", IsAccessible: true}))
@@ -1289,7 +1314,14 @@ func TestHandleDBUserEntityUpdateDoesNotRenameBeforeMetadataWrite(t *testing.T) 
 	record := &database.UserEntity{UserId: 1, Name: "Original Name", ParentDir: parentDir}
 	require.NoError(t, database.CreateUserEntity(db, record))
 	require.NoError(t, os.Mkdir(filepath.Join(parentDir, record.Name), 0755))
-	_, triggerErr := db.Exec(`CREATE TRIGGER reject_media_count BEFORE UPDATE OF media_count ON user_entities BEGIN SELECT RAISE(FAIL, 'media update rejected'); END;`)
+	_, triggerErr := db.Exec(`
+		CREATE TRIGGER reject_combined_entity_update
+		BEFORE UPDATE ON user_entities
+		WHEN NEW.name <> OLD.name AND NEW.media_count IS NOT OLD.media_count
+		BEGIN
+			SELECT RAISE(FAIL, 'name and metadata must be updated separately');
+		END;
+	`)
 	require.NoError(t, triggerErr)
 
 	body := bytes.NewBufferString(`{"name":"New Entity Name","media_count":10}`)
@@ -1299,12 +1331,13 @@ func TestHandleDBUserEntityUpdateDoesNotRenameBeforeMetadataWrite(t *testing.T) 
 	rr := httptest.NewRecorder()
 	server.handleDBUserEntityUpdate(rr, req)
 
-	assert.Equal(t, http.StatusInternalServerError, rr.Code)
-	assert.DirExists(t, filepath.Join(parentDir, "Original Name"))
-	assert.NoDirExists(t, filepath.Join(parentDir, "New Entity Name"))
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.NoDirExists(t, filepath.Join(parentDir, "Original Name"))
+	assert.DirExists(t, filepath.Join(parentDir, "New Entity Name"))
 	stored, err := database.GetUserEntity(db, int(record.Id.Int32))
 	require.NoError(t, err)
-	assert.Equal(t, "Original Name", stored.Name)
+	assert.Equal(t, "New Entity Name", stored.Name)
+	assert.Equal(t, int32(10), stored.MediaCount.Int32)
 }
 
 func TestHandleDBListEntityUpdate_PartialFields(t *testing.T) {

@@ -6,11 +6,11 @@ TMDP logs should read as a coherent operational timeline while remaining safe to
 
 The logging stack fans one application log stream out to local files, console capture, Web UI APIs, and bot alert loops.
 
-`main.go` initializes logrus with a text formatter, starts `consolelog.Hub` capture, and installs `[[internal/logging/lumberjack_hook.go#LumberjackHook]]` for rotated file writes. Both rotated files (`tmd2.log` and `client.log`) are created through the shared `[[internal/logging/rotation.go#NewRotatingWriter]]` factory (2 MB / 2 backups / 14 days / gzip), and the formatter base configuration is shared via `[[internal/logging/rotation.go#NewTextFormatter]]` with per-sink overrides (`ForceColors` for the terminal-facing main logger, `DisableQuote` for Resty's multiline blocks). REST and SSE log consumers read from the in-memory hub; `client.log` is a separate Resty client log written by `[[internal/cli/executor.go#SetClientLogger]]`.
+`main.go` initializes logrus with a text formatter, starts `consolelog.Hub` capture, and installs `[[internal/logging/lumberjack_hook.go#LumberjackHook]]` for rotated file writes. Both rotated files (`tmd2.log` and `client.log`) are created through the shared `[[internal/logging/rotation.go#NewRotatingWriter]]` factory (2 MB / 2 backups / 14 days / gzip), and the formatter base configuration is shared via `[[internal/logging/rotation.go#NewTextFormatter]]`. The terminal-facing logger forces color through capture pipes unless `NO_COLOR` is non-empty, in which case both logrus and gookit/color emit plain text. Resty's multiline sink disables quoting. REST and SSE log consumers read from the in-memory hub; `client.log` remains a separate Resty client log written by `[[internal/cli/executor.go#SetClientLogger]]`.
 
 `main.go` defers `[[internal/consolelog/hub.go#StopCapture]]` after logger initialization and before rotated-writer cleanup, covering CLI completion, startup failure, and server shutdown. Capture shutdown restores only outputs still owned by that session, closes its pipes, and waits for its workers before the log writers are closed.
 
-Terminal-only ANSI color may be used for compact human scan points such as tweet title fields. File and Web UI sink boundaries use `[[internal/logging/sanitize.go#SanitizeLogText]]` to consume UTF-8 as complete runes, strip CSI/OSC/C1 escapes, then redact recognized credentials and unsafe controls. Web log filters and all UI themes use the current `INFO[...]` TextFormatter lines.
+Terminal-only ANSI color may be used for compact human scan points such as tweet title fields, but `NO_COLOR` is an explicit process-wide opt-out. File and Web UI sink boundaries use `[[internal/logging/sanitize.go#SanitizeLogText]]` to consume UTF-8 as complete runes, strip CSI/OSC/C1 escapes, then redact recognized credentials and unsafe controls. Web log filters and all UI themes use the current `INFO[...]` TextFormatter lines.
 
 Web1 renders the same TextFormatter lines as the CLI contract, adding display-only highlighting for timestamps, domain prefixes, and key=value fields. The raw log text remains the copy/export source.
 
@@ -34,7 +34,7 @@ Every user-visible log line starts with a domain prefix such as `[cli]`, `[api]`
 
 The Resty client log mirrors the main log's full-detail policy while redacting credentials before they reach disk.
 
-`[[internal/cli/executor.go#SetClientLogger]]` enables Resty debug (`SetDebug(true)`) and sets the dedicated logger to debug level, so `client.log` records every request and response (method, URL, status, duration, headers, body) regardless of the `-dbg` flag. `OnRequestLog`/`OnResponseLog` sanitize headers and bodies before composition; `[[internal/logging/sanitizing_logger.go#SanitizingLogger]]` then cleans the fully formatted block so request-target credentials are covered too. Body output is capped at 256 KB; Resty checks responses before JSON indentation and requests after request-body formatting, keeping the final block below the 2 MB lumberjack write limit. The media download client (`internal/downloader`) is not wired to `client.log`; its logs live in the main log.
+`[[internal/cli/executor.go#SetClientLogger]]` enables Resty debug (`SetDebug(true)`) and sets the dedicated logger to debug level, so `client.log` records every request and response (method, URL, status, duration, headers, body) regardless of the `-dbg` flag. `OnRequestLog`/`OnResponseLog` sanitize headers and bodies before composition; `[[internal/logging/sanitizing_logger.go#SanitizingLogger]]` then cleans the fully formatted block, including absolute URL userinfo and sensitive query values in Resty's request line. Body output is capped at 256 KB; Resty checks responses before JSON indentation and requests after request-body formatting, keeping the final block below the 2 MB lumberjack write limit. The media download client (`internal/downloader`) is not wired to `client.log`; its logs live in the main log.
 
 ## Sensitive Data
 
@@ -104,7 +104,7 @@ Scheduler logs use `[scheduler]` for lifecycle, reload, manual trigger, schedule
 
 JSON import logs use `[jsonfile]` for third-party files and `[jsonfolder]` for `.loongtweet` folders. File and folder summaries report tweet/media counts, failed tweet counts, and `dur` through logrus rather than direct console printing.
 
-Bot alert loops treat current `ERRO[...]`/`FATA[...]` TextFormatter lines as alert-worthy, keeping provider alerts aligned with terminal and Web UI output.
+Bot alert loops treat current `ERRO[...]`/`FATA[...]` TextFormatter lines as alert-worthy, keeping provider alerts aligned with terminal and Web UI output. If a slow provider subscription overflows and the Hub removes it, the loop emits a warning and resubscribes after a short backoff; a terminal Hub close or provider stop still exits the loop.
 
 ## Cleanup Phases
 

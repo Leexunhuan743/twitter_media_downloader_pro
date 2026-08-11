@@ -59,22 +59,6 @@ func GetUserEntity(db *sqlx.DB, id int) (*UserEntity, error) {
 	return handleGetResultWithContext(result, err, "failed to get user entity %d: %w", id)
 }
 
-func UpdateUserEntity(db *sqlx.DB, entity *UserEntity) error {
-	stmt := `UPDATE user_entities SET name=?, latest_release_time=?, media_count=? WHERE id=?`
-	result, err := db.Exec(stmt, entity.Name, entity.LatestReleaseTime, entity.MediaCount, entity.Id)
-	if err != nil {
-		return fmt.Errorf("failed to update user entity %d: %w", entity.Id.Int32, err)
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected for user entity %d: %w", entity.Id.Int32, err)
-	}
-	if rows == 0 {
-		return fmt.Errorf("no user entity found with id %d", entity.Id.Int32)
-	}
-	return nil
-}
-
 // UpdateUserEntityNameIfCurrent updates only the directory-backed name when
 // the caller's view is still current. A false result reports a stale write.
 func UpdateUserEntityNameIfCurrent(db *sqlx.DB, id int, currentName, newName string) (bool, error) {
@@ -116,17 +100,6 @@ func UpdateUserEntityMetadata(db *sqlx.DB, id int, mediaCount *int32, latestRele
 	}
 	if rows == 0 {
 		return fmt.Errorf("%w: user entity %d", ErrEntityNotFound, id)
-	}
-	return nil
-}
-
-// UpdateUserEntityFields 仅更新 name 和 media_count，不碰 latest_release_time，
-// 避免 PATCH 语义下因读取-写入窗口覆盖其他进程对该字段的修改（丢失更新）。
-func UpdateUserEntityFields(db *sqlx.DB, id int, name string, mediaCount sql.NullInt32) error {
-	stmt := `UPDATE user_entities SET name=?, media_count=? WHERE id=?`
-	_, err := db.Exec(stmt, name, mediaCount, id)
-	if err != nil {
-		return fmt.Errorf("failed to update user entity %d fields: %w", id, err)
 	}
 	return nil
 }

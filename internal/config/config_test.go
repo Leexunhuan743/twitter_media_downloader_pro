@@ -113,6 +113,7 @@ func TestNormalizeProxyURLDoesNotExposeCredentialsInErrors(t *testing.T) {
 	for _, raw := range []string{
 		"ftp://proxy-user:proxy-password@example.invalid:21",
 		"http://proxy-user:proxy-password@%zz",
+		"proxy-user:proxy-password@example.invalid:7897",
 	} {
 		_, err := normalizeProxyURL(raw)
 

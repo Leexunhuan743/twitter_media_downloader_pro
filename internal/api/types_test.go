@@ -1,11 +1,13 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/unkmonster/tmd/internal/database"
 )
 
 func TestUserDownloadTaskData(t *testing.T) {
@@ -383,14 +385,28 @@ func TestDBEntityItem(t *testing.T) {
 		ID:                "1",
 		UserID:            "123",
 		Name:              "entity_name",
-		LatestReleaseTime: "2024-01-01 12:00:00",
+		LatestReleaseTime: "2024-01-01T12:00:00Z",
 		ParentDir:         "/data",
 		MediaCount:        50,
 	}
 
 	bytes, err := json.Marshal(item)
 	assert.NoError(t, err)
-	assert.JSONEq(t, `{"id":"1","user_id":"123","name":"entity_name","latest_release_time":"2024-01-01 12:00:00","parent_dir":"/data","media_count":50}`, string(bytes))
+	assert.JSONEq(t, `{"id":"1","user_id":"123","name":"entity_name","latest_release_time":"2024-01-01T12:00:00Z","parent_dir":"/data","media_count":50}`, string(bytes))
+}
+
+func TestDBEntityToItemUsesUTCWithExplicitOffset(t *testing.T) {
+	location := time.FixedZone("UTC+8", 8*60*60)
+	entity := &database.UserEntity{
+		LatestReleaseTime: sql.NullTime{
+			Time:  time.Date(2026, time.August, 9, 20, 30, 0, 0, location),
+			Valid: true,
+		},
+	}
+
+	item := dbEntityToItem(entity)
+
+	assert.Equal(t, "2026-08-09T12:30:00Z", item.LatestReleaseTime)
 }
 
 func TestDBListEntityItem(t *testing.T) {

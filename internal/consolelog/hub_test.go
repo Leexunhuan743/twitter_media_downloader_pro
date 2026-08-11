@@ -50,14 +50,12 @@ func TestHubSubscribeReceivesNewLines(t *testing.T) {
 
 	hub.Add("live line")
 
-	assert.Eventually(t, func() bool {
-		select {
-		case got := <-ch:
-			return got == "live line"
-		default:
-			return false
-		}
-	}, 200*time.Millisecond, 10*time.Millisecond, "expected subscribed log line")
+	select {
+	case got := <-ch:
+		assert.Equal(t, "live line", got)
+	case <-time.After(time.Second):
+		t.Fatal("expected subscribed log line")
+	}
 }
 
 func TestHubSubscribeUnsubscribeClosesChannel(t *testing.T) {
@@ -66,14 +64,12 @@ func TestHubSubscribeUnsubscribeClosesChannel(t *testing.T) {
 
 	unsubscribe()
 
-	assert.Eventually(t, func() bool {
-		select {
-		case _, ok := <-ch:
-			return !ok
-		default:
-			return false
-		}
-	}, 200*time.Millisecond, 10*time.Millisecond, "expected unsubscribed log channel to be closed")
+	select {
+	case _, ok := <-ch:
+		assert.False(t, ok)
+	case <-time.After(time.Second):
+		t.Fatal("expected unsubscribed log channel to be closed")
+	}
 }
 
 func TestHubCloseIsTerminalAndRetainsSnapshot(t *testing.T) {
@@ -86,6 +82,7 @@ func TestHubCloseIsTerminalAndRetainsSnapshot(t *testing.T) {
 	afterClose, _ := hub.Subscribe()
 
 	assert.Equal(t, []string{"before close"}, hub.Snapshot())
+	assert.True(t, hub.Closed())
 	assert.ErrorIs(t, StartCapture(hub), ErrHubClosed)
 	for name, ch := range map[string]<-chan string{"active": active, "after close": afterClose} {
 		select {
@@ -138,11 +135,10 @@ func TestHubRemovesSlowSubscriberOnOverflow(t *testing.T) {
 		hub.Add("line")
 	}
 
-	assert.Eventually(t, func() bool {
-		hub.mu.Lock()
-		defer hub.mu.Unlock()
-		return len(hub.subscribers) == 0
-	}, 200*time.Millisecond, 10*time.Millisecond, "Slow log subscriber should be removed after queue overflow")
+	hub.mu.Lock()
+	remaining := len(hub.subscribers)
+	hub.mu.Unlock()
+	assert.Zero(t, remaining, "slow log subscriber should be removed after queue overflow")
 }
 
 func TestLogSubscriberConcurrentOverflowAndCloseCompletes(t *testing.T) {

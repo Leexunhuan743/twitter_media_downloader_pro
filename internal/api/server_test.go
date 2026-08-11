@@ -277,6 +277,23 @@ func TestShutdownMutationMiddleware(t *testing.T) {
 	})
 }
 
+func TestBuildHandlerAppliesShutdownGateBeforeAuthentication(t *testing.T) {
+	server := &Server{
+		config:       &config.Config{APIKey: "secret"},
+		shuttingDown: true,
+	}
+	handler := server.buildHandler()
+
+	writeResponse := httptest.NewRecorder()
+	handler.ServeHTTP(writeResponse, httptest.NewRequest(http.MethodPost, "/api/v1/schedules", nil))
+	assert.Equal(t, http.StatusServiceUnavailable, writeResponse.Code)
+	assert.Contains(t, writeResponse.Body.String(), "Server is shutting down")
+
+	readResponse := httptest.NewRecorder()
+	handler.ServeHTTP(readResponse, httptest.NewRequest(http.MethodGet, "/api/v1/schedules", nil))
+	assert.Equal(t, http.StatusUnauthorized, readResponse.Code)
+}
+
 func TestGracefulShutdownWaitsForAdmittedMutation(t *testing.T) {
 	server := &Server{shutdownDone: make(chan struct{})}
 	entered := make(chan struct{})
@@ -316,6 +333,105 @@ func TestGracefulShutdownWaitsForAdmittedMutation(t *testing.T) {
 	case <-shutdownReturned:
 	case <-time.After(time.Second):
 		t.Fatal("shutdown did not continue after the mutation finished")
+	}
+}
+
+func TestGracefulShutdownBoundsMutationAndStartupDrains(t *testing.T) {
+	startupDone := make(chan struct{})
+	server := &Server{
+		shutdownDone:    make(chan struct{}),
+		startupDone:     startupDone,
+		shutdownTimeout: 10 * time.Millisecond,
+	}
+	server.activeMutations.Add(1)
+	t.Cleanup(func() {
+		server.activeMutations.Done()
+		close(startupDone)
+	})
+
+	returned := make(chan struct{})
+	go func() {
+		server.GracefulShutdown("timeout-test")
+		close(returned)
+	}()
+
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown remained blocked after drain timeouts")
+	}
+	select {
+	case <-server.shutdownDone:
+	default:
+		t.Fatal("shutdown completion was not published")
+	}
+}
+
+func TestGracefulShutdownCancelsTasksBeforeWaitingForMutations(t *testing.T) {
+	eventBus := NewEventBus()
+	taskManager := NewTaskManager(eventBus)
+	task := taskManager.CreateTask(TaskTypeUserDownload, &UserDownloadTaskData{ScreenName: "alice"})
+	server := &Server{
+		shutdownDone:    make(chan struct{}),
+		shutdownTimeout: time.Second,
+		taskManager:     taskManager,
+		eventBus:        eventBus,
+	}
+	server.activeMutations.Add(1)
+
+	shutdownReturned := make(chan struct{})
+	go func() {
+		server.GracefulShutdown("ordering-test")
+		close(shutdownReturned)
+	}()
+
+	select {
+	case <-task.Ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("shutdown waited for the active mutation before cancelling tasks")
+	}
+	select {
+	case <-shutdownReturned:
+		t.Fatal("shutdown completed while the admitted mutation was still active")
+	default:
+	}
+
+	server.activeMutations.Done()
+	select {
+	case <-shutdownReturned:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not complete after the mutation drained")
+	}
+}
+
+func TestServerStartsBotsConcurrently(t *testing.T) {
+	first := &blockingStartBot{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		stopped: make(chan struct{}),
+	}
+	second := &blockingStartBot{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		stopped: make(chan struct{}),
+	}
+	server := &Server{bots: []bot.Bot{first, second}}
+	done := make(chan struct{})
+	go server.startBots(done)
+
+	for index, started := range []<-chan struct{}{first.started, second.started} {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatalf("bot %d did not start while another provider was blocked", index+1)
+		}
+	}
+	close(first.release)
+	close(second.release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("concurrent bot startup did not finish")
 	}
 }
 

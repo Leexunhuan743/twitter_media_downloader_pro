@@ -2303,7 +2303,8 @@ async function deleteDBItem(type, id) {
   const currentRows = store.state.dbData[type]?.data || [];
   const item = currentRows.find(row => String(row.id) === String(id));
   const label = item?.screen_name ? `@${item.screen_name}` : (item?.name || item?.id || id);
-  if (!confirm(`确定删除 ${config.title || type} #${id}${label ? ` (${label})` : ''} 吗？\n此操作不可恢复。`)) return;
+	const mediaWarning = (type === 'entities' || type === 'listEntities') ? '\n对应媒体目录也会被永久删除。' : '';
+	if (!confirm(`确定删除 ${config.title || type} #${id}${label ? ` (${label})` : ''} 吗？\n此操作不可恢复。${mediaWarning}`)) return;
   try {
     await config.delete(id);
     toast.show('删除成功');

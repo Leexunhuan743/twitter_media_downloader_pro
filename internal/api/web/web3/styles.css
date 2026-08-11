@@ -510,14 +510,23 @@ tbody tr:last-child td { border-bottom: none; }
   .form-row { grid-template-columns: 1fr; }
   .log-filter-bar { grid-template-columns: 1fr 1fr; }
   .log-stats { grid-column: 1 / -1; }
+  .btn, .tab, .icon-btn { min-height: 44px; }
+  .icon-btn { width: 44px; }
+  .nav-item, .checkbox-line, .toggle { min-height: 44px; }
+  .toggle { min-width: 44px; }
+  .btn.xs { min-width: 44px; min-height: 44px; }
+  input[type="text"], input[type="password"], input[type="number"], input[type="datetime-local"], input[type="file"], select { min-height: 44px; }
+  #tmd-theme-switcher .ts-btn, #tmd-theme-switcher .ts-opt { min-height: 44px !important; }
+  #tmd-theme-switcher .ts-opt { min-width: 44px !important; }
+  .toast-close { min-width: 44px; min-height: 44px; }
+}
+@media (min-width: 901px) and (max-width: 1220px) {
+  .log-filter-bar { grid-template-columns: 1fr 1fr; }
+  .log-stats { grid-column: 1 / -1; }
 }
 @media (max-width: 560px) {
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
   .page-header .page-actions { width: 100%; justify-content: flex-end; }
-  .btn, .tab, .icon-btn { min-height: 44px; }
-  .icon-btn { width: 44px; }
-  .nav-item { min-height: 44px; }
-  .checkbox-line { min-height: 44px; }
   .log-filter-bar { grid-template-columns: 1fr; }
   .log-stats { grid-column: 1; }
   .filter-field, .log-filter-bar > .btn { width: 100%; }
@@ -526,5 +535,4 @@ tbody tr:last-child td { border-bottom: none; }
   .flex.gap-2 { flex-wrap: wrap; }
   .toast-container { left: 16px; right: 16px; }
   .toast { min-width: 0; max-width: none; }
-  .btn.xs { min-width: 36px; min-height: 36px; }
 }

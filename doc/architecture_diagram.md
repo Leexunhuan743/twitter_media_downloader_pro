@@ -81,16 +81,17 @@
 │    业务编排层        │ │  API 客户端   │ │  数据持久化           │
 │                     │ │              │ │                      │
 │  • BatchDownload    │ │ • GraphQL    │ │ • SQLite (WAL 模式)   │
-│  • TweetDownload    │ │   endpoint   │ │ • 6 张表              │
+│  • TweetDownload    │ │   endpoint   │ │ • 7 张表              │
 │  • Retry / Dumper   │ │ • 多账号     │ │   users / lsts       │
 │  • ListSync / Entity│ │   分流       │ │   user_entities      │
 │  • MarkDownloaded   │ │ • 限流管理   │ │   lst_entities       │
 │                     │ │ • Bearer     │ │   user_links         │
 │  ┌───────────────┐  │ │   Token      │ │   user_previous_names│
-│  │profile 子包   │  │ │              │ │                      │
-│  │头像/横幅/简介  │  │ │              │ │ • 迁移 / 事务 / 查询  │
-│  │版本备份       │  │ │              │ │ • latest_release_time │
-│  └───────────────┘  │ │              │ │   增量下载依据        │
+│  │profile 子包   │  │ │              │ │   entity_removal_    │
+│  │头像/横幅/简介  │  │ │              │ │   journal            │
+│  │版本备份       │  │ │              │ │ • 迁移 / 事务 / 查询  │
+│  └───────────────┘  │ │              │ │ • latest_release_time │
+│                     │ │              │ │   增量下载依据        │
 └──────────┬──────────┘ └──────────────┘ └──────────────────────┘
            │
            ▼

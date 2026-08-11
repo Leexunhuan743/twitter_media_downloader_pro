@@ -226,6 +226,13 @@ func (h *Hub) Snapshot() []string {
 	return lines
 }
 
+// Closed reports whether the Hub has entered its terminal state.
+func (h *Hub) Closed() bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.closed
+}
+
 // Close transitions the Hub to a terminal state, closes its subscribers, and
 // stops capture only when this Hub owns the active session. Retained lines
 // remain available through Snapshot.

@@ -63,6 +63,10 @@ data/
 *.migrating
 *.replacing
 
+# === Python Cache ===
+__pycache__/
+*.py[cod]
+
 # === OS Generated Files ===
 .DS_Store
 Desktop.ini
@@ -80,6 +84,7 @@ json示例/
 # === Misc ===
 todo.md
 .review/
+.audit-tmp/
 .codegraph/
 .reasonix/
 .claude/

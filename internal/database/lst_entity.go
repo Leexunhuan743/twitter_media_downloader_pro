@@ -22,8 +22,16 @@ func CreateLstEntity(db *sqlx.DB, entity *LstEntity) error {
 }
 
 func DelLstEntity(db *sqlx.DB, id int) error {
-	stmt := `DELETE FROM lst_entities WHERE id=?`
-	result, err := db.Exec(stmt, id)
+	tx, err := db.Beginx()
+	if err != nil {
+		return fmt.Errorf("failed to begin list entity %d delete: %w", id, err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM user_links WHERE parent_lst_entity_id=?`, id); err != nil {
+		return fmt.Errorf("failed to delete links for list entity %d: %w", id, err)
+	}
+	result, err := tx.Exec(`DELETE FROM lst_entities WHERE id=?`, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete list entity %d: %w", id, err)
 	}
@@ -33,6 +41,9 @@ func DelLstEntity(db *sqlx.DB, id int) error {
 	}
 	if rows == 0 {
 		return fmt.Errorf("%w: list entity %d", ErrEntityNotFound, id)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit list entity %d delete: %w", id, err)
 	}
 	return nil
 }
@@ -61,25 +72,6 @@ func LocateLstEntity(db *sqlx.DB, lid int64, parentDir string) (*LstEntity, erro
 	result := &LstEntity{}
 	err = db.Get(result, stmt, lid, parentDir)
 	return handleGetResultWithContext(result, err, "failed to locate list entity for list %d in %q: %w", lid, parentDir)
-}
-
-func UpdateLstEntity(db *sqlx.DB, entity *LstEntity) error {
-	if !entity.Id.Valid {
-		return fmt.Errorf("cannot update list entity with invalid (zero) id")
-	}
-	stmt := `UPDATE lst_entities SET name=? WHERE id=?`
-	result, err := db.Exec(stmt, entity.Name, entity.Id.Int32)
-	if err != nil {
-		return fmt.Errorf("failed to update list entity %d: %w", entity.Id.Int32, err)
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected for list entity %d: %w", entity.Id.Int32, err)
-	}
-	if rows == 0 {
-		return fmt.Errorf("no list entity found with id %d", entity.Id.Int32)
-	}
-	return nil
 }
 
 // UpdateLstEntityNameIfCurrent updates the name only when the caller's view is

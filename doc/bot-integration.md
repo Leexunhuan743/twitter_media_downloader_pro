@@ -64,7 +64,7 @@ func (s *Server) InitBot(bots []bot.Bot) {
 }
 ```
 
-Server 在 `Start()` 中遍历 `s.bots` 依次调用 `b.Start()`，在 `GracefulShutdown()` 中遍历调用 `b.Stop()`。
+Server 在 `Start()` 中并行调用各个 `b.Start()`，Bot 外部网络初始化不会阻塞核心 HTTP 监听。`GracefulShutdown()` 先取消任务，再让已尝试启动的 Bot 在完成启动收口后并行执行 `b.Stop()`；整个关停流程与队列、调度器和 HTTP 共享 45 秒总截止时间。
 
 ### 消息流程
 

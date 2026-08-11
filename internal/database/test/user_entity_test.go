@@ -183,58 +183,6 @@ func TestGetUserEntity(t *testing.T) {
 	})
 }
 
-func TestUpdateUserEntity(t *testing.T) {
-	db := setupUserEntityTestDB(t)
-	defer db.Close()
-
-	tmpDir := t.TempDir()
-	entity := &database.UserEntity{
-		UserId:    1,
-		Name:      "original",
-		ParentDir: tmpDir,
-	}
-	err := database.CreateUserEntity(db, entity)
-	require.NoError(t, err)
-
-	t.Run("update_name", func(t *testing.T) {
-		entity.Name = "updated"
-		err := database.UpdateUserEntity(db, entity)
-		assert.NoError(t, err)
-
-		retrieved, _ := database.GetUserEntity(db, int(entity.Id.Int32))
-		assert.Equal(t, "updated", retrieved.Name)
-	})
-
-	t.Run("update_latest_release_time", func(t *testing.T) {
-		now := time.Now()
-		entity.LatestReleaseTime = sql.NullTime{Time: now, Valid: true}
-		err := database.UpdateUserEntity(db, entity)
-		assert.NoError(t, err)
-
-		retrieved, _ := database.GetUserEntity(db, int(entity.Id.Int32))
-		assert.True(t, retrieved.LatestReleaseTime.Valid)
-		assert.WithinDuration(t, now, retrieved.LatestReleaseTime.Time, time.Second)
-	})
-
-	t.Run("update_media_count", func(t *testing.T) {
-		entity.MediaCount = sql.NullInt32{Int32: 100, Valid: true}
-		err := database.UpdateUserEntity(db, entity)
-		assert.NoError(t, err)
-
-		retrieved, _ := database.GetUserEntity(db, int(entity.Id.Int32))
-		assert.Equal(t, int32(100), retrieved.MediaCount.Int32)
-	})
-
-	t.Run("update_nonexistent_entity", func(t *testing.T) {
-		nonexistent := &database.UserEntity{
-			Id:   sql.NullInt32{Int32: 99999, Valid: true},
-			Name: "ghost",
-		}
-		err := database.UpdateUserEntity(db, nonexistent)
-		assert.EqualError(t, err, "no user entity found with id 99999")
-	})
-}
-
 func TestUpdateUserEntityNameIfCurrent(t *testing.T) {
 	db := setupUserEntityTestDB(t)
 	defer db.Close()

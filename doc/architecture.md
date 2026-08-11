@@ -43,7 +43,7 @@ internal/service
 │  - user/tweet/list/timeline  │  │  - model/query/helpers                        │
 │  - batch_login.go: 多账号     │  │  - user/lst/user_entity/lst_entity            │
 │                              │  │  - user_link/user_sync                        │
-│                              │  │  - parent_dir_migration/path_validation       │
+│                              │  │  - path_validation                            │
 │                              │  │  - tx/manager                                 │
 └──────────┬───────────────────┘  └────────────────────────┬──────────────────────┘
            │                                               │
@@ -327,6 +327,5 @@ docker.yml（Docker Publish）:
 
 | 工具 | 位置 | 用途 |
 |------|------|------|
-| **tmd-db-migrate** | `tools/tmd-db-migrate/` | 跨平台数据库路径迁移，当下载目录从 Windows 迁移到 Linux 等场景时重写 `foo.db` 中的 `parent_dir` 路径。详见 [foo.db 跨平台迁移说明](foo.db%20跨平台迁移说明.md) |
+| **tmd-db-migrate** | `tools/tmd-db-migrate.py` | 跨平台数据库路径迁移，当下载目录从 Windows 迁移到 Linux 等场景时重写 `foo.db` 中的 `parent_dir` 路径。详见 [foo.db 跨平台迁移说明](foo.db%20跨平台迁移说明.md) |
 | **convert_db_to_legacy.py** | `tools/convert_db_to_legacy.py` | 将新格式数据库转换为旧格式的辅助脚本 |
-

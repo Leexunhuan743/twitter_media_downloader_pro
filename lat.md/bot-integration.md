@@ -4,17 +4,19 @@ TMDP can attach optional bot providers to server mode for remote commands and ta
 
 ## Runtime Attachment
 
-Bots are created only in server mode after `bot_config.yaml` is loaded from the app root and before `Server.Start` begins listening.
+Bots are created only in server mode before `Server.Start`; provider network initialization then runs concurrently without delaying the core HTTP listener.
 
 `main.go` checks each provider config for its required credential fields, constructs enabled bots with server-owned services, and passes them into `server.InitBot`. Feishu also registers its HTTP callback route before the server handler is built.
 
-When `bot_config.yaml` is absent, `[[internal/config/bot_config.go#WriteDefaultBotConfig]]` atomically writes the embedded commented template from `internal/config/default_bot_config.yaml` with `0600` permissions. Configuration owns this starter content while `main.go` retains Bot runtime attachment.
+When `bot_config.yaml` is absent, `[[internal/config/bot_config.go#WriteDefaultBotConfig]]` atomically writes the embedded commented template from `internal/config/default_bot_config.yaml`. It requests `0600` on POSIX; Windows inherits the user's app-directory ACL because Go file modes do not express Windows ACLs. Configuration owns this starter content while `main.go` retains Bot runtime attachment.
 
 Command-capable providers receive `TaskManager`, `EventBus`, `LogHub`, and `server.EnqueueTask`. Push-only providers receive `EventBus` and `LogHub`.
 
 ## Provider Matrix
 
 Each provider implements `internal/bot.Bot` with an idempotent `Stop`, but command support, ownership, and transport differ by package.
+
+Discord registers its declared global slash commands with one bulk-overwrite request, which bounds registration to one HTTP operation and removes stale commands no longer declared by TMD.
 
 | Provider | Package | Transport | Commands | Notification Scope | Notes |
 |----------|---------|-----------|----------|--------------------|-------|
@@ -80,7 +82,7 @@ Task and error notifications reuse server event streams rather than provider-spe
 
 `api.RunBotEventLoop` subscribes to `EventBus` and handles `tasks` events. Command providers keep a local task ownership map and only notify the chat/user/channel that started the task. Gotify and Pushover are broadcast providers, so they keep a local sent-task map to avoid repeating terminal-task notifications on later task snapshots.
 
-`api.RunBotLogLoop` subscribes to `LogHub`, filters only `ERRO` and `FATA` log lines, and rate-limits alerts to at most one line per second per provider loop. It is an error-alert path, not a full live log stream.
+`api.RunBotLogLoop` subscribes to `LogHub`, filters only `ERRO` and `FATA` log lines, and rate-limits alerts to at most one line per second per provider loop. If Hub overflow removes a slow subscription, the loop warns and resubscribes after a short backoff; provider stop or terminal Hub close exits it. It is an error-alert path, not a full live log stream.
 
 `api.FormatTaskResult` formats completed or failed task summaries with status, task ID, main downloaded/failed counts when available, and the task error when present.
 
@@ -92,11 +94,13 @@ Feishu is the only provider that needs an HTTP callback route registered in the 
 
 ## Shutdown
 
-Server graceful shutdown owns bot stopping after task cancellation, queue draining, and scheduler stop have started.
+Server graceful shutdown converges Bot providers without adding provider timeout windows serially.
+
+Task cancellation, queue drain, scheduler stop, HTTP shutdown, and Bot convergence share one deadline. Bot `Stop` calls wait for provider startup to finish and then run concurrently across providers.
 
 Each provider implements `Stop()` by closing its stop channel and waiting for provider goroutines. Discord also closes the Gateway session; WeChat cancels its login/run context; Telegram stops receiving updates after its goroutine exits.
 
-The server `shutdownOnce` prevents normal graceful shutdown from stopping a provider twice. Individual provider `Stop()` methods are not currently idempotent when called directly multiple times.
+The server `shutdownOnce` prevents the lifecycle from running twice, and each provider's own `stopOnce` keeps direct repeated `Stop()` calls idempotent.
 
 ## Local Validation Boundary
 

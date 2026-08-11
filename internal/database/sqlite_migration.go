@@ -243,6 +243,9 @@ func copyAllData(sourceDB *sqlx.DB, targetDB *sqlx.DB) error {
 	if err := copyUserLinks(sourceTx, tx); err != nil {
 		return err
 	}
+	if err := copyEntityRemovalJournals(sourceTx, tx); err != nil {
+		return err
+	}
 
 	if err := validateRowCounts(sourceTx, tx); err != nil {
 		return err
@@ -455,12 +458,44 @@ func copyUserLinks(sourceDB *sqlx.Tx, targetTx *sqlx.Tx) error {
 	return nil
 }
 
+func copyEntityRemovalJournals(sourceDB *sqlx.Tx, targetTx *sqlx.Tx) error {
+	exists, err := tableExists(sourceDB, "entity_removal_journal")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+
+	var journals []EntityRemovalJournal
+	if err := sourceDB.Select(&journals, `SELECT staged_path, original_path FROM entity_removal_journal ORDER BY staged_path`); err != nil {
+		return fmt.Errorf("failed to load entity removal journals for migration: %w", err)
+	}
+	for _, journal := range journals {
+		if _, err := targetTx.Exec(
+			`INSERT INTO entity_removal_journal(staged_path, original_path) VALUES(?, ?)`,
+			journal.StagedPath,
+			journal.OriginalPath,
+		); err != nil {
+			return fmt.Errorf("failed to insert entity removal journal %q during migration: %w", journal.StagedPath, err)
+		}
+	}
+	return nil
+}
+
 func validateRowCounts(sourceDB *sqlx.Tx, targetQueryer interface {
 	Get(dest interface{}, query string, args ...interface{}) error
 }) error {
-	tableNames := make([]string, 0, len(requiredSchema))
+	tableNames := make([]string, 0, len(requiredSchema)+1)
 	for tableName := range requiredSchema {
 		tableNames = append(tableNames, tableName)
+	}
+	journalExists, err := tableExists(sourceDB, "entity_removal_journal")
+	if err != nil {
+		return err
+	}
+	if journalExists {
+		tableNames = append(tableNames, "entity_removal_journal")
 	}
 	sort.Strings(tableNames)
 

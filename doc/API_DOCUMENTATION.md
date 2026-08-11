@@ -1995,7 +1995,7 @@ GET /api/v1/db/user-entities
         "id": "1",
         "user_id": "44196397",
         "name": "Elon Musk(elonmusk)",
-        "latest_release_time": "2024-01-15 10:30:00",
+        "latest_release_time": "2024-01-15T10:30:00Z",
         "parent_dir": "users",
         "media_count": 150
       }
@@ -2729,9 +2729,10 @@ POST /api/v1/server/shutdown
 
 **说明：**
 
-- 服务器将在 500ms 后开始优雅关闭
-- 所有运行中的任务将被取消
-- HTTP 服务器有 30 秒超时完成进行中的请求
+- 响应写入后立即进入优雅关闭，不额外等待固定延迟
+- 新的写请求返回 503，所有运行中的任务立即收到取消信号
+- 已准入请求、下载队列、调度器、Bot 和 HTTP Server 并行收敛，共享一个 45 秒总截止时间
+- 任务 SSE 在写出 `server_shutdown` 后主动断开
 - 数据库连接将被关闭
 
 ***
@@ -3655,7 +3656,7 @@ GET /api/v1/db/user-entities?page=1&pageSize=20&q=elonmusk
         "id": "1",
         "user_id": "44196397",
         "name": "Elon Musk(elonmusk)",
-        "latest_release_time": "2024-01-15 10:30:00",
+        "latest_release_time": "2024-01-15T10:30:00Z",
         "parent_dir": "users",
         "media_count": 150
       }
@@ -3685,7 +3686,7 @@ GET /api/v1/db/user-entities/1
     "id": "1",
     "user_id": "44196397",
     "name": "Elon Musk(elonmusk)",
-    "latest_release_time": "2024-01-15 10:30:00",
+    "latest_release_time": "2024-01-15T10:30:00Z",
     "parent_dir": "users",
     "media_count": 150
   }
@@ -3714,7 +3715,7 @@ Content-Type: application/json
 | `media_count` | int32 | 否 | 媒体文件数量 |
 | `latest_release_time` | string | 否 | RFC 3339 时间；空字符串清除该值 |
 
-**注意：** `parent_dir` 字段不允许修改，请求中包含该字段将返回 400 错误。修改 `name` 会移动 `parent_dir` 下对应目录；统计字段先以字段级更新提交，目录改名最后执行。目标目录已被其他路径占用或发生并发改名时返回 409，记录在操作期间被删除时返回 404。
+**注意：** `parent_dir` 字段不允许修改，请求中包含该字段将返回 400 错误。修改 `name` 会移动 `parent_dir` 下对应目录；统计字段先以字段级更新提交，目录改名最后执行。同进程同实体操作会串行；目标目录已被其他路径占用或进程外写入导致陈旧更新时返回 409，记录在操作期间被删除时返回 404。响应中的 `latest_release_time` 始终是 UTC RFC3339。
 
 **响应：**
 
@@ -3725,7 +3726,7 @@ Content-Type: application/json
     "id": "1",
     "user_id": "44196397",
     "name": "Updated Entity Name",
-    "latest_release_time": "2024-01-15 10:30:00",
+    "latest_release_time": "2024-01-15T10:30:00Z",
     "parent_dir": "users",
     "media_count": 200
   }
@@ -3834,7 +3835,7 @@ Content-Type: application/json
 |------|------|------|------|
 | `name` | string | 否 | 实体名称 |
 
-**注意：** `parent_dir` 字段不允许修改，请求中包含该字段将返回 400 错误。修改 `name` 会移动 `parent_dir` 下对应目录；目标目录冲突或发生并发改名时返回 409，记录在操作期间被删除时返回 404。
+**注意：** `parent_dir` 字段不允许修改，请求中包含该字段将返回 400 错误。修改 `name` 会移动 `parent_dir` 下对应目录；同进程同实体操作会串行，目标目录冲突或进程外陈旧写入返回 409，记录在操作期间被删除时返回 404。
 
 **响应：**
 

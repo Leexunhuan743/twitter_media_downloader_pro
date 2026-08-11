@@ -454,29 +454,7 @@ type Entity interface {
 
 ### 用户实体重命名 (`internal/entity/user.go:63`)
 
-```go
-func (ue *UserEntity) Rename(title string) error {
-    if !ue.created {
-        return fmt.Errorf("user entity [%s:%d] was not created", ue.record.ParentDir, ue.record.UserId)
-    }
-    old, _ := ue.Path()
-    newPath := filepath.Join(filepath.Dir(old), title)
-
-    // 使用系统调用重命名文件夹
-    err := os.Rename(old, newPath)
-    if os.IsNotExist(err) {
-        // 边界情况：原文件夹被手动删除，创建新文件夹
-        err = os.Mkdir(newPath, 0755)
-    }
-    if err != nil && !os.IsExist(err) {
-        return err
-    }
-
-    // 更新数据库记录
-    ue.record.Name = title
-    return database.UpdateUserEntity(ue.db, ue.record)
-}
-```
+`UserEntity.Rename` 现在先校验新名称，按实体锁串行操作并刷新数据库记录，再暂存目录改名。数据库通过 `UpdateUserEntityNameIfCurrent` 做名称级 CAS；写入失败、记录消失或陈旧写入都会回滚文件系统变更。
 
 ---
 

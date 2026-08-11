@@ -119,8 +119,28 @@ func TestDelLstEntity(t *testing.T) {
 	})
 
 	t.Run("delete_nonexistent_entity", func(t *testing.T) {
-		err := database.DelLstEntity(db, 99999)
+		_, err := db.Exec(`INSERT INTO user_links(user_id, name, parent_lst_entity_id) VALUES(1, 'orphan', 99999)`)
+		require.NoError(t, err)
+		err = database.DelLstEntity(db, 99999)
 		assert.ErrorIs(t, err, database.ErrEntityNotFound)
+		var count int
+		require.NoError(t, db.Get(&count, `SELECT COUNT(*) FROM user_links WHERE parent_lst_entity_id=99999`))
+		assert.Equal(t, 1, count, "failed delete should roll back link cleanup")
+	})
+
+	t.Run("delete_entity_removes_user_links", func(t *testing.T) {
+		user := &database.User{Id: 42, ScreenName: "linked-user", Name: "Linked User", IsAccessible: true}
+		require.NoError(t, database.CreateUser(db, user))
+		entity := &database.LstEntity{LstId: 1, Name: "linked-list", ParentDir: t.TempDir()}
+		require.NoError(t, database.CreateLstEntity(db, entity))
+		link := &database.UserLink{UserId: user.Id, Name: user.ScreenName, ParentLstEntityId: entity.Id.Int32}
+		require.NoError(t, database.CreateUserLink(db, link))
+
+		require.NoError(t, database.DelLstEntity(db, int(entity.Id.Int32)))
+
+		var count int
+		require.NoError(t, db.Get(&count, `SELECT COUNT(*) FROM user_links WHERE parent_lst_entity_id=?`, entity.Id.Int32))
+		assert.Zero(t, count)
 	})
 }
 
@@ -190,38 +210,6 @@ func TestLocateLstEntity(t *testing.T) {
 		retrieved, err := database.LocateLstEntity(db, 1, ".")
 		assert.NoError(t, err)
 		assert.Nil(t, retrieved)
-	})
-}
-
-func TestUpdateLstEntity(t *testing.T) {
-	db := setupLstEntityTestDB(t)
-	defer db.Close()
-
-	tmpDir := t.TempDir()
-	entity := &database.LstEntity{
-		LstId:     1,
-		Name:      "original",
-		ParentDir: tmpDir,
-	}
-	err := database.CreateLstEntity(db, entity)
-	require.NoError(t, err)
-
-	t.Run("update_name", func(t *testing.T) {
-		entity.Name = "updated"
-		err := database.UpdateLstEntity(db, entity)
-		assert.NoError(t, err)
-
-		retrieved, _ := database.GetLstEntity(db, int(entity.Id.Int32))
-		assert.Equal(t, "updated", retrieved.Name)
-	})
-
-	t.Run("update_nonexistent_entity", func(t *testing.T) {
-		nonexistent := &database.LstEntity{
-			Id:   sql.NullInt32{Int32: 99999, Valid: true},
-			Name: "ghost",
-		}
-		err := database.UpdateLstEntity(db, nonexistent)
-		assert.EqualError(t, err, "no list entity found with id 99999")
 	})
 }
 
@@ -302,9 +290,10 @@ func TestLstEntity_CRUD(t *testing.T) {
 		assert.NotNil(t, located)
 		assert.Equal(t, "lifecycle", located.Name)
 
-		entity.Name = "updated"
-		err = database.UpdateLstEntity(db, entity)
+		updated, err := database.UpdateLstEntityNameIfCurrent(db, int(entity.Id.Int32), entity.Name, "updated")
 		require.NoError(t, err)
+		require.True(t, updated)
+		entity.Name = "updated"
 
 		retrieved, _ = database.GetLstEntity(db, int(entity.Id.Int32))
 		assert.Equal(t, "updated", retrieved.Name)

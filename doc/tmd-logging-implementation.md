@@ -108,7 +108,7 @@ cliLogWriter := logging.NewRotatingWriter(filepath.Join(appRootPath, "client.log
 ```go
 func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
     formatter := logging.NewTextFormatter()
-    formatter.ForceColors = true // 终端彩色；文件端由 LumberjackHook 剥离 ANSI
+    configureTerminalColors(formatter) // 默认终端彩色；NO_COLOR 存在时输出纯文本
     log.SetFormatter(formatter)
 
     if dbg {
@@ -128,7 +128,7 @@ func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
 
 关键点：
 
-- formatter 由 `logging.NewTextFormatter()`（`internal/logging/rotation.go:24-33`）构造：`FullTimestamp`、`DisableSorting`、`PadLevelText: false`；主日志终端端覆盖 `ForceColors = true`（文件端由 LumberjackHook 剥离 ANSI），HTTP client 日志端覆盖 `DisableQuote = true`。
+- formatter 由 `logging.NewTextFormatter()`（`internal/logging/rotation.go`）构造：`FullTimestamp`、`DisableSorting`、`PadLevelText: false`；主日志终端默认覆盖 `ForceColors = true`，但在 `NO_COLOR` 非空时改为 `DisableColors = true`（文件端始终由 LumberjackHook 剥离 ANSI），HTTP client 日志端覆盖 `DisableQuote = true`。
 - `consolelog.StartCapture()` 替换 `os.Stdout` 和 `os.Stderr` 为 pipe writer。
 - `capturePipe()` 把内容写回原始终端，同时逐行写入 Hub。
 - logrus 输出指向当前 `os.Stderr`，所以终端和 Web UI 都能看到同一条日志。

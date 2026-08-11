@@ -243,3 +243,22 @@ func TestEventBusClose(t *testing.T) {
 	// Close is idempotent
 	bus.Close()
 }
+
+func TestEventBusCloseIsTerminal(t *testing.T) {
+	bus := NewEventBus()
+	bus.Close()
+	bus.Close()
+
+	ch, replay, unsubscribe := bus.SubscribeWithReplay(0)
+	defer unsubscribe()
+	assert.Empty(t, replay)
+	select {
+	case _, ok := <-ch:
+		assert.False(t, ok, "subscription after Close should be closed")
+	case <-time.After(time.Second):
+		t.Fatal("subscription after Close remained open")
+	}
+
+	bus.Publish("tasks", []string{"late"})
+	assert.Equal(t, uint64(0), bus.nextEventID)
+}

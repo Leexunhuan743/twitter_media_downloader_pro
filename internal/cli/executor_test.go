@@ -584,15 +584,16 @@ func TestSetClientLogger_RedactsURLAndBodies(t *testing.T) {
 	var buf bytes.Buffer
 	SetClientLogger(client, &buf)
 
+	target := strings.Replace(server.URL, "://", "://url-user:url-password@", 1)
 	resp, err := client.R().
 		SetHeader("Content-Type", "application/json").
 		SetBody(`{"password":"request-secret"}`).
-		Post(server.URL + "/session?token=query-secret")
+		Post(target + "/session?token=query-secret")
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode())
 
 	out := buf.String()
-	for _, secret := range []string{"query-secret", "request-secret", "response-secret"} {
+	for _, secret := range []string{"query-secret", "request-secret", "response-secret", "url-user", "url-password"} {
 		assert.NotContains(t, out, secret)
 	}
 	assert.Contains(t, out, "[redacted:")

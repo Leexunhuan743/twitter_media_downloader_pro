@@ -25,6 +25,10 @@ import (
 	"github.com/unkmonster/tmd/internal/service"
 )
 
+const (
+	defaultShutdownDrainTimeout = 45 * time.Second
+)
+
 type Server struct {
 	client            *resty.Client
 	additionalClients []*resty.Client
@@ -44,6 +48,7 @@ type Server struct {
 	startupDone       chan struct{}
 	startedBots       []bot.Bot
 	activeMutations   sync.WaitGroup
+	shutdownTimeout   time.Duration
 	shutdownOnce      sync.Once
 	shutdownDone      chan struct{}
 	schedulesMu       sync.Mutex
@@ -85,6 +90,7 @@ func NewServerWithConsoleLogHub(client *resty.Client, additionalClients []*resty
 			attempts: make(map[string]*rateLimitEntry),
 			stopCh:   make(chan struct{}),
 		},
+		shutdownTimeout: defaultShutdownDrainTimeout,
 	}
 
 	// 配置副本：使 service.Dependencies 持有独立的 Config 副本，
@@ -260,13 +266,13 @@ func (s *Server) buildHandler() http.Handler {
 	}
 
 	var handler http.Handler = mux
-	handler = s.shutdownMutationMiddleware(handler)
-
 	// authMiddleware 在 CORS 内层：OPTIONS 预检请求由 CORS 直接处理，不经过 auth。
 	// 当 api_key 为空时 authMiddleware 直接放行，不改变现有行为。
 	handler = s.authMiddleware(handler)
+	// 关停闸门在认证外层，使所有新写请求在关停期间一致获得 503。
+	handler = s.shutdownMutationMiddleware(handler)
 
-	// 注意中间件的包裹顺序：最外层是 Logging，里面一层是 CORS，最里面是 Mux + Auth。
+	// 注意中间件的包裹顺序：最外层是 Logging，里面一层是 CORS，再往内是关停闸门 + Auth + Mux。
 	// 这样 Logging 就能记录到所有请求，包括那些被 CORS 拦截的 OPTIONS 预检请求。
 	handler = cors.New(cors.Options{
 		AllowedOrigins: []string{"*"},
@@ -341,15 +347,6 @@ func (s *Server) Start(port int) error {
 	s.startedBots = nil
 	s.lifecycleMu.Unlock()
 
-	startupFinished := false
-	finishStartup := func() {
-		if !startupFinished {
-			close(startupDone)
-			startupFinished = true
-		}
-	}
-	defer finishStartup()
-
 	log.Infof("[server] API server starting addr=%s", addr)
 	blue := color.FgLightBlue.Render
 	log.Infof("[server] Visit url=%s", blue("http://localhost"+addr+"/"))
@@ -367,22 +364,31 @@ func (s *Server) Start(port int) error {
 		}
 	}
 
+	// Bot providers are optional adapters. Start them concurrently in the
+	// background so a slow external service cannot delay the core HTTP API.
+	go s.startBots(startupDone)
+	return httpServer.ListenAndServe()
+}
+
+func (s *Server) startBots(done chan<- struct{}) {
+	defer close(done)
+
+	var starts sync.WaitGroup
 	for _, b := range s.bots {
 		if !s.beginBotStart(b) {
-			return http.ErrServerClosed
+			break
 		}
-		if err := b.Start(); err != nil {
-			log.Errorf("[bot] Start failed provider=%s error=%q", b.Name(), err.Error())
-		} else {
+		starts.Add(1)
+		go func(b bot.Bot) {
+			defer starts.Done()
+			if err := b.Start(); err != nil {
+				log.Errorf("[bot] Start failed provider=%s error=%q", b.Name(), err.Error())
+				return
+			}
 			log.Infof("[bot] Started provider=%s", b.Name())
-		}
-		if s.isShuttingDown() {
-			return http.ErrServerClosed
-		}
+		}(b)
 	}
-
-	finishStartup()
-	return httpServer.ListenAndServe()
+	starts.Wait()
 }
 
 func (s *Server) isShuttingDown() bool {
@@ -442,11 +448,7 @@ func (s *Server) handleServerShutdown(w http.ResponseWriter, _ *http.Request) {
 	}))
 
 	log.Info("[server] Shutdown requested source=api")
-
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		s.GracefulShutdown("shutdown")
-	}()
+	go s.GracefulShutdown("shutdown")
 }
 
 func (s *Server) WaitForShutdown() {
@@ -455,65 +457,91 @@ func (s *Server) WaitForShutdown() {
 
 func (s *Server) GracefulShutdown(reason string) {
 	s.shutdownOnce.Do(func() {
+		shutdownTimeout := durationOrDefault(s.shutdownTimeout, defaultShutdownDrainTimeout)
+		deadline := time.Now().Add(shutdownTimeout)
+
 		s.lifecycleMu.Lock()
 		s.shuttingDown = true
 		httpServer := s.httpServer
 		startupDone := s.startupDone
 		s.lifecycleMu.Unlock()
-		s.activeMutations.Wait()
-		if startupDone != nil {
-			<-startupDone
-		}
 
 		if s.eventBus != nil {
 			s.eventBus.PublishServerShutdown("服务器正在关闭: " + reason)
-			time.Sleep(100 * time.Millisecond)
 		}
 
-		log.Infof("[server] Graceful shutdown started reason=%q", reason)
+		log.Infof("[server] Graceful shutdown started reason=%q timeout=%s", reason, shutdownTimeout)
 
 		if s.taskManager != nil {
 			s.taskManager.CancelAllTasks()
 			s.taskManager.Close()
 			log.Info("[server] Running tasks cancelled")
 		}
+
+		mutationDone := waitGroupDone(&s.activeMutations)
+		queueDone := completedSignal()
 		if s.downloadQueue != nil {
-			s.downloadQueue.CloseAndWait(15 * time.Second)
+			queueDone = runShutdownPhase(func() {
+				s.downloadQueue.CloseAndWait(boundedRemaining(deadline))
+			})
 		}
 
+		schedulerDone := completedSignal()
 		if sched := s.getScheduler(); sched != nil {
-			sched.Stop()
+			schedulerDone = runShutdownPhase(sched.Stop)
 		}
 
-		s.lifecycleMu.Lock()
-		startedBots := append([]bot.Bot(nil), s.startedBots...)
-		s.lifecycleMu.Unlock()
-		for _, b := range startedBots {
-			b.Stop()
-			log.Infof("[bot] Stopped provider=%s", b.Name())
+		botDone := runShutdownPhase(func() {
+			if startupDone != nil {
+				<-startupDone
+			}
+			s.stopStartedBots()
+		})
+
+		httpDone := completedSignal()
+		if httpServer != nil {
+			httpDone = runShutdownPhase(func() {
+				shutdownCtx, shutdownCancel := context.WithDeadline(context.Background(), deadline)
+				defer shutdownCancel()
+
+				if err := httpServer.Shutdown(shutdownCtx); err != nil {
+					log.Warnf("[server] HTTP shutdown failed error=%q", err.Error())
+					if closeErr := httpServer.Close(); closeErr != nil && closeErr != http.ErrServerClosed {
+						log.Warnf("[server] HTTP force close failed error=%q", closeErr.Error())
+					}
+					return
+				}
+				log.Info("[server] HTTP server stopped")
+			})
 		}
 
-		// Close SSE connections so httpServer.Shutdown() doesn't wait 30s for them.
-		if s.eventBus != nil {
-			s.eventBus.Close()
-		}
+		// Log streams have no shutdown event, so close them immediately. Task SSE
+		// streams exit themselves after flushing the server_shutdown event.
 		if s.logHub != nil {
 			s.logHub.Close()
 		}
-
 		if s.authRateLimit != nil {
 			s.authRateLimit.Stop()
 		}
 
-		if httpServer != nil {
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer shutdownCancel()
-
-			if err := httpServer.Shutdown(shutdownCtx); err != nil {
-				log.Warnf("[server] HTTP shutdown failed error=%q", err.Error())
-			} else {
-				log.Info("[server] HTTP server stopped")
+		phases := []struct {
+			name string
+			done <-chan struct{}
+		}{
+			{name: "active mutations", done: mutationDone},
+			{name: "download queue", done: queueDone},
+			{name: "scheduler", done: schedulerDone},
+			{name: "bot startup and stop", done: botDone},
+			{name: "HTTP server", done: httpDone},
+		}
+		for _, phase := range phases {
+			if !waitChannelUntil(phase.done, deadline) {
+				log.Warnf("[server] Shutdown phase timed out phase=%q timeout=%s", phase.name, shutdownTimeout)
 			}
+		}
+
+		if s.eventBus != nil {
+			s.eventBus.Close()
 		}
 
 		if s.db != nil {
@@ -524,10 +552,85 @@ func (s *Server) GracefulShutdown(reason string) {
 			}
 		}
 
-		time.Sleep(100 * time.Millisecond)
 		log.Info("[server] Shutdown complete")
 		close(s.shutdownDone)
 	})
+}
+
+func (s *Server) stopStartedBots() {
+	s.lifecycleMu.Lock()
+	startedBots := append([]bot.Bot(nil), s.startedBots...)
+	s.lifecycleMu.Unlock()
+
+	var stops sync.WaitGroup
+	for _, b := range startedBots {
+		stops.Add(1)
+		go func(b bot.Bot) {
+			defer stops.Done()
+			b.Stop()
+			log.Infof("[bot] Stopped provider=%s", b.Name())
+		}(b)
+	}
+	stops.Wait()
+}
+
+func durationOrDefault(value, fallback time.Duration) time.Duration {
+	if value > 0 {
+		return value
+	}
+	return fallback
+}
+
+func waitGroupDone(group *sync.WaitGroup) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		group.Wait()
+		close(done)
+	}()
+	return done
+}
+
+func completedSignal() <-chan struct{} {
+	done := make(chan struct{})
+	close(done)
+	return done
+}
+
+func runShutdownPhase(fn func()) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn()
+	}()
+	return done
+}
+
+func boundedRemaining(deadline time.Time) time.Duration {
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return time.Nanosecond
+	}
+	return remaining
+}
+
+func waitChannelUntil(done <-chan struct{}, deadline time.Time) bool {
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 func (s *Server) handleScheduleStatusChange(running bool, statuses []scheduler.ScheduleStatus) {

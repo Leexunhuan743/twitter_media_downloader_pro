@@ -1,11 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -163,6 +165,36 @@ func TestHandleSSETasks_EventBusPush(t *testing.T) {
 	assert.Contains(t, body, "test done")
 }
 
+func TestHandleSSETasksFlushesShutdownEventBeforeReturning(t *testing.T) {
+	eventBus := NewEventBus()
+	server := &Server{
+		taskManager: NewTaskManager(eventBus),
+		eventBus:    eventBus,
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sse/tasks", nil)
+	writer := newObservedSSEWriter()
+	done := make(chan struct{})
+	go func() {
+		server.handleSSETasks(writer, req)
+		close(done)
+	}()
+
+	// setupSSE and the initial task snapshot each flush once. Waiting for both
+	// gives a synchronization point after the handler has subscribed.
+	writer.waitForFlushes(t, 2)
+	eventBus.PublishServerShutdown("test shutdown")
+	writer.waitForFlushes(t, 1)
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("SSE handler did not exit after flushing server_shutdown")
+	}
+	body := writer.String()
+	assert.Contains(t, body, "event: server_shutdown")
+	assert.Contains(t, body, "test shutdown")
+}
+
 func TestHandleSSETasks_ReplaysMissedNotifications(t *testing.T) {
 	eventBus := NewEventBus()
 	server := &Server{
@@ -291,4 +323,47 @@ func (m *sseMockResponseWriter) Write(b []byte) (int, error) {
 
 func (m *sseMockResponseWriter) WriteHeader(code int) {
 	m.statusCode = code
+}
+
+type observedSSEWriter struct {
+	mu      sync.Mutex
+	headers http.Header
+	body    bytes.Buffer
+	flushes chan struct{}
+}
+
+func newObservedSSEWriter() *observedSSEWriter {
+	return &observedSSEWriter{
+		headers: make(http.Header),
+		flushes: make(chan struct{}, 8),
+	}
+}
+
+func (w *observedSSEWriter) Header() http.Header { return w.headers }
+
+func (w *observedSSEWriter) Write(value []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.body.Write(value)
+}
+
+func (w *observedSSEWriter) WriteHeader(int) {}
+
+func (w *observedSSEWriter) Flush() { w.flushes <- struct{}{} }
+
+func (w *observedSSEWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.body.String()
+}
+
+func (w *observedSSEWriter) waitForFlushes(t *testing.T, count int) {
+	t.Helper()
+	for i := 0; i < count; i++ {
+		select {
+		case <-w.flushes:
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for SSE flush %d of %d", i+1, count)
+		}
+	}
 }

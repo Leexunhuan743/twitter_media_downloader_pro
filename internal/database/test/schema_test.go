@@ -29,6 +29,7 @@ func TestCreateTables(t *testing.T) {
 		"lst_entities",
 		"user_entities",
 		"user_links",
+		"entity_removal_journal",
 	}
 
 	for _, table := range tables {
@@ -131,6 +132,21 @@ func TestCreateTables_UserLinksSchema(t *testing.T) {
 		err := db.Get(&count, "SELECT COUNT(*) FROM pragma_table_info('user_links') WHERE name=?", col)
 		require.NoError(t, err)
 		assert.Equal(t, 1, count, "column %s should exist in user_links table", col)
+	}
+}
+
+func TestCreateTables_EntityRemovalJournalSchema(t *testing.T) {
+	db := setupSchemaTestDB(t)
+	defer db.Close()
+
+	database.CreateTables(db)
+
+	columns := []string{"staged_path", "original_path", "created_at"}
+	for _, col := range columns {
+		var count int
+		err := db.Get(&count, "SELECT COUNT(*) FROM pragma_table_info('entity_removal_journal') WHERE name=?", col)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count, "column %s should exist in entity_removal_journal table", col)
 	}
 }
 

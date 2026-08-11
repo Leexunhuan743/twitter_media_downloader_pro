@@ -438,8 +438,8 @@ func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
 | 新增 `SetUsersAccessible` | 无 | 新增（批量） | 新功能 |
 | 新增 `MarkUserInaccessible` | 无 | 新增 | 新功能 |
 | `CreateUserEntity` | 相同 | 使用 `normalizeEntityParentDir` 标准化路径 | **精进** |
-| `UpdateUserEntity` | 简单更新 | 新增 `RowsAffected` 检查 | **精进** |
-| 新增 `UpdateUserEntityFields` | 无 | 新增（PATCH 语义） | 新功能 |
+| 实体名称更新 | 全行覆盖 | `UpdateUserEntityNameIfCurrent` 名称级 CAS | **精进**：不覆盖并发统计字段 |
+| 实体统计更新 | 全行覆盖 | `UpdateUserEntityMetadata` 按请求字段原子更新 | **精进**：避免丢失更新 |
 | `UpdateUserEntityTweetStat` | 简单 SET | 使用 `CASE WHEN` 条件更新 | **精进**：防止数据倒退 |
 | 新增 `ClearUserEntityLatestReleaseTime` | 无 | 新增 | 新功能 |
 | `CreateUserLink` | 简单插入 | 使用 `INSERT OR IGNORE` + 事务 | **精进**：防止重复 |

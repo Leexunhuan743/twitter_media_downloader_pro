@@ -97,18 +97,18 @@ func (le *ListEntity) Remove() error {
 	if err != nil {
 		return fmt.Errorf("remove %s: %w", le.description(), err)
 	}
-	staged, err := stageEntityDirectoryRemoval(path)
+	staged, err := stageEntityDirectoryRemoval(le.db, path)
 	if err != nil {
 		return err
 	}
 	if err := database.DelLstEntity(le.db, int(le.record.Id.Int32)); err != nil {
-		return staged.rollback(fmt.Errorf("delete %s database record: %w", le.description(), err))
+		return staged.rollback(le.db, fmt.Errorf("delete %s database record: %w", le.description(), err))
 	}
 
 	le.created = false
 	le.record.Id.Valid = false
 	le.record.Id.Int32 = 0
-	return staged.commit()
+	return staged.commit(le.db)
 }
 
 func (le *ListEntity) Rename(name string) error {
@@ -164,6 +164,9 @@ func (le *ListEntity) Rename(name string) error {
 func (le *ListEntity) Path() (string, error) {
 	if err := le.requireRecord(); err != nil {
 		return "", err
+	}
+	if le.created {
+		return storedEntityPath(le.record.ParentDir, le.record.Name)
 	}
 	return entityPath(le.record.ParentDir, le.record.Name)
 }

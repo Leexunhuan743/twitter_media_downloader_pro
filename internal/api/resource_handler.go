@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 
@@ -157,7 +158,7 @@ func dbEntityToItem(e *database.UserEntity) DBEntityItem {
 		MediaCount: nullInt32(e.MediaCount),
 	}
 	if e.LatestReleaseTime.Valid {
-		item.LatestReleaseTime = e.LatestReleaseTime.Time.Format("2006-01-02 15:04:05")
+		item.LatestReleaseTime = e.LatestReleaseTime.Time.UTC().Format(time.RFC3339)
 	}
 	return item
 }

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gookit/color"
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/downloader"
 	"github.com/unkmonster/tmd/internal/logging"
@@ -107,6 +108,14 @@ func TestTweetMediaSummaryFields_OmitsCleanSuccessCounts(t *testing.T) {
 }
 
 func TestTweetMediaSummaryFields_HighlightsIncompleteDownload(t *testing.T) {
+	oldEnable := color.Enable
+	oldLevel := color.ForceSetColorLevel(color.Level16)
+	color.Enable = true
+	t.Cleanup(func() {
+		color.Enable = oldEnable
+		color.ForceSetColorLevel(oldLevel)
+	})
+
 	got := tweetMediaSummaryFields(1, 1, 1, 3)
 	if !strings.Contains(got, "\x1b[") {
 		t.Fatalf("incomplete summary should color result fields, got: %q", got)
@@ -114,6 +123,20 @@ func TestTweetMediaSummaryFields_HighlightsIncompleteDownload(t *testing.T) {
 	stripped := logging.StripANSI(got)
 	if stripped != "succeeded=1 failed=1 skipped=1 total=3" {
 		t.Fatalf("stripped summary = %q", stripped)
+	}
+}
+
+func TestTweetMediaSummaryFields_RespectsDisabledColor(t *testing.T) {
+	oldEnable := color.Disable()
+	t.Cleanup(func() { color.Enable = oldEnable })
+
+	got := tweetMediaSummaryFields(1, 1, 1, 3)
+
+	if strings.Contains(got, "\x1b[") {
+		t.Fatalf("disabled color should produce plain summary fields, got: %q", got)
+	}
+	if got != "succeeded=1 failed=1 skipped=1 total=3" {
+		t.Fatalf("summary = %q", got)
 	}
 }
 

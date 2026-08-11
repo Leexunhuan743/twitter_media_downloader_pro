@@ -20,7 +20,7 @@ func NewRotatingWriter(path string) *lumberjack.Logger {
 
 // NewTextFormatter 返回 logrus 文本格式化的共享基础配置。
 // 调用方可按输出端需求覆盖差异字段：
-//   - 主日志终端输出：ForceColors = true（文件端由 LumberjackHook 剥离 ANSI）
+//   - 主日志终端输出：默认 ForceColors，NO_COLOR 存在时 DisableColors
 //   - HTTP 客户端日志：DisableQuote = true（resty 多行请求/响应文本不做转义）
 func NewTextFormatter() *log.TextFormatter {
 	return &log.TextFormatter{

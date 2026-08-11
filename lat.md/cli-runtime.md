@@ -26,7 +26,7 @@ Proxy setup is centralized in startup: `proxy_url` from config sets both `HTTP_P
 
 Twitter clients and the database are initialized once and injected downward.
 
-`[[main.go#initializeClients]]` logs in the master Twitter client, enables rate limiting, loads `additional_cookies.yaml`, initializes the download store path, and opens the SQLite database. Initialization failures are returned as errors instead of terminating the process. CLI mode closes the DB directly; server mode delegates cleanup to graceful shutdown.
+`[[main.go#initializeClients]]` initializes the download store path and opens SQLite before network login, so staged deletions are reconciled even when Twitter is unavailable. It scans configured, active, and journal-recorded parent directories, restoring interrupted active removals and cleaning committed removals, then logs in the master client, enables rate limiting, and loads `additional_cookies.yaml`. Login failure closes the database before returning. CLI mode closes the DB directly; server mode delegates cleanup to graceful shutdown.
 
 ## CLI Argument Model
 

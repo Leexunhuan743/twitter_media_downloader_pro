@@ -172,6 +172,7 @@ type EventBus struct {
 	subscribers   map[*eventSubscriber]struct{}
 	nextEventID   uint64
 	replayHistory []SSEEvent
+	closed        bool
 }
 
 func NewEventBus() *EventBus {
@@ -185,6 +186,10 @@ func NewEventBus() *EventBus {
 func (b *EventBus) Close() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.closed {
+		return
+	}
+	b.closed = true
 	for sub := range b.subscribers {
 		sub.close()
 	}
@@ -199,6 +204,11 @@ func (b *EventBus) Subscribe() (<-chan SSEEvent, func()) {
 func (b *EventBus) SubscribeWithReplay(lastEventID uint64) (<-chan SSEEvent, []SSEEvent, func()) {
 	sub := newEventSubscriber()
 	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		sub.close()
+		return sub.ch, nil, func() {}
+	}
 	replay := b.copyReplayAfterLocked(lastEventID)
 	b.subscribers[sub] = struct{}{}
 	b.mu.Unlock()
@@ -240,6 +250,10 @@ func (b *EventBus) Publish(event string, data interface{}) {
 	}
 
 	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return
+	}
 	b.nextEventID++
 	evt := SSEEvent{ID: b.nextEventID, Event: event, Data: data, Raw: raw}
 	if isReplayableSSEEvent(event) {

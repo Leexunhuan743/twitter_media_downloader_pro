@@ -98,18 +98,18 @@ func (ue *UserEntity) Remove() error {
 	if err != nil {
 		return fmt.Errorf("remove %s: %w", ue.description(), err)
 	}
-	staged, err := stageEntityDirectoryRemoval(path)
+	staged, err := stageEntityDirectoryRemoval(ue.db, path)
 	if err != nil {
 		return err
 	}
 	if err := database.DelUserEntity(ue.db, uint32(ue.record.Id.Int32)); err != nil {
-		return staged.rollback(fmt.Errorf("delete %s database record: %w", ue.description(), err))
+		return staged.rollback(ue.db, fmt.Errorf("delete %s database record: %w", ue.description(), err))
 	}
 
 	ue.created = false
 	ue.record.Id.Valid = false
 	ue.record.Id.Int32 = 0
-	return staged.commit()
+	return staged.commit(ue.db)
 }
 
 func (ue *UserEntity) Rename(name string) error {
@@ -165,6 +165,9 @@ func (ue *UserEntity) Rename(name string) error {
 func (ue *UserEntity) Path() (string, error) {
 	if err := ue.requireRecord(); err != nil {
 		return "", err
+	}
+	if ue.created {
+		return storedEntityPath(ue.record.ParentDir, ue.record.Name)
 	}
 	return entityPath(ue.record.ParentDir, ue.record.Name)
 }

@@ -238,7 +238,12 @@ func normalizeProxyURL(raw string) (string, error) {
 
 func proxyURLForError(raw string) string {
 	if strings.Contains(raw, "@") {
-		return logging.SanitizeURL(raw)
+		candidate := raw
+		const placeholderScheme = "proxy://"
+		if !strings.Contains(candidate, "://") {
+			candidate = placeholderScheme + candidate
+		}
+		return strings.TrimPrefix(logging.SanitizeURL(candidate), placeholderScheme)
 	}
 	return logging.RedactSensitiveText(raw)
 }

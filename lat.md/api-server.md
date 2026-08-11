@@ -132,6 +132,8 @@ web2 covers the same backend surface with a lighter UI: a dashboard landing page
 
 ```
 internal/api/web/
+├── shared/
+│   └── datetime.js # UTC/local editor conversion
 ├── web1/          # Classic theme
 │   ├── index.html
 │   ├── app.js     (~260KB)
@@ -153,11 +155,17 @@ internal/api/web/
 - **Security** — validates target directory exists and contains index.html
 - **Shared backend** — all three themes call same REST API + EventSource SSE
 
+### Shared Date-Time Contract
+
+Web2 and Web3 edit database instants in local browser controls without changing the stored moment.
+
+`/static/shared/datetime.js` exposes `TMDDateTime.toDateTimeLocal` and `TMDDateTime.toRFC3339`. It converts UTC RFC3339 values to local wall-clock input values and converts edits back to UTC; invalid values fail closed as empty strings. [[internal/api/frontend_datetime_test.go#TestFrontendDateTimeRoundTrip]] executes the shipped JavaScript under positive and negative UTC offsets, while [[internal/api/frontend_datetime_test.go#TestSharedFrontendDateTimeAssetIsEmbedded]] verifies the shared asset is embedded.
+
 ## Web3 Console Theme
 
 Web3 is a zero-build dark glass operations console that preserves the shared REST and SSE contracts while providing its own hash-routed presentation layer.
 
-The theme uses neutral dark page surfaces, restrained translucent panels, one brand accent, and semantic success, warning, error, and information colors. Desktop keeps a fixed navigation rail; mobile moves it into an off-canvas menu and keeps every interactive row at a touch-safe height.
+The theme uses neutral dark page surfaces, restrained translucent panels, one brand accent, and semantic success, warning, error, and information colors. Desktop keeps a fixed navigation rail; at 900px and below, mobile/tablet layouts move it into an off-canvas menu and keep primary controls, compact actions, form fields, theme options, and labeled toggles at least 44px high. The Logs filter grid uses two columns from 901px through 1220px so the rail cannot force horizontal overflow.
 
 [[internal/api/web/web3/app.js#enhanceThemeSwitcher]] moves the server-injected theme switcher into the sidebar so it no longer obscures health state or mobile content. The Tasks, Data, and Settings segmented controls use tablist, tab, and tabpanel relationships with arrow-key navigation.
 
@@ -165,7 +173,7 @@ The theme uses neutral dark page surfaces, restrained translucent panels, one br
 
 Web3 assets must keep responsive background continuity, themed native controls, explicit form labels, keyboard-visible focus, and readable long log lines across desktop and mobile layouts.
 
-[[internal/api/web3_frontend_test.go#TestWeb3ThemePresentationContract]] locks the static contract for mobile surface continuity, 44px touch controls, tab semantics, labels, local SVG icons, and wrapped log output. Browser acceptance additionally covers Dashboard, Tasks, Data, Settings, and Logs at representative desktop and mobile widths.
+[[internal/api/web3_frontend_test.go#TestWeb3ThemePresentationContract]] locks the static contract for mobile surface continuity, verifies 44px touch rules inside the full 900px mobile breakpoint without a narrower small-button override, and covers the mid-width Logs grid, tab semantics, labels, local SVG icons, and wrapped log output. `tools/web3-e2e/01-responsive-logs.js` is the browser geometry check for 901, 1000, 1216, and 390 CSS-pixel viewports against the isolated read-only mock server.
 
 ## Web1 Console Architecture
 
@@ -266,10 +274,10 @@ Three independent rebuild functions (`rebuildConfigPanel` / `rebuildCookiesPanel
 
 ## Graceful Shutdown
 
-Handles SIGINT/SIGTERM: coordinates any in-progress component startup, drains DownloadQueue (15s max), waits for active tasks, closes DB, then exits.
+Handles SIGINT/SIGTERM and API shutdown without adding fixed sleeps or serial timeout penalties to the normal lifecycle.
 
 [[signal.go#notifyOnShutdownSignal]] claims only the first signal, restores default handling so a second signal can force termination during a slow drain, and waits for an in-flight shutdown callback before releasing caller-owned resources.
 
-Server construction returns dependency errors to `[[main.go#runServer]]`. Once construction succeeds, `runServer` invokes idempotent graceful shutdown and explicitly waits for `shutdownDone` on listener closure, so partially started schedulers, bots, background cleanup loops, and database resources are released before the process exits. Queue/task completion is synchronized by `CloseAndWait`; shutdown does not rely on a fixed sleep to approximate task exit. Shutdown atomically closes mutation admission, returns 503 for new POST, PUT, PATCH, and DELETE requests, and drains already admitted mutations before stopping resources; scheduler or configuration writes therefore cannot restart resources during teardown, while reads may finish normally.
+Server construction returns dependency errors to `[[main.go#runServer]]`. Once construction succeeds, `runServer` invokes idempotent graceful shutdown and explicitly waits for `shutdownDone` on listener closure, so partially started schedulers, bots, background cleanup loops, and database resources are released before the process exits. Shutdown first closes mutation admission outside authentication and cancels tasks, then starts queue, scheduler, Bot, and HTTP convergence concurrently. All phases share one 45-second deadline instead of consuming independent timeout windows; an idle server therefore closes immediately while admitted work receives only the time it actually needs. Task SSE handlers flush `server_shutdown` and return, while log streams close directly.
 
-[[internal/api/server.go#Server#Start]] is a one-shot lifecycle boundary coordinated with shutdown: a start after shutdown returns `http.ErrServerClosed`, a duplicate start returns an error, and cleanup waits for the admitted startup phase before stopping only bots whose `Start` was attempted. The lifecycle mutex protects state transitions but is never held while scheduler or bot code runs. Telegram bounds its synchronous `GetMe` initialization to 15 seconds, then removes the global client timeout so 60-second update polling remains valid. `runServer` completes bot initialization before registering shutdown signals.
+[[internal/api/server.go#Server#Start]] is a one-shot lifecycle boundary coordinated with shutdown: a start after shutdown returns `http.ErrServerClosed`, a duplicate start returns an error, and cleanup stops only bots whose `Start` was attempted. The core HTTP listener is not held behind optional external providers; Bot starts run concurrently after lifecycle state is installed. The lifecycle mutex protects state transitions but is never held while scheduler or Bot code runs. Telegram bounds synchronous `GetMe` initialization to 15 seconds. Discord bounds Gateway establishment and command registration, then restores long-lived connection settings. Shutdown signals are registered before `Server.Start` enters its blocking listener.

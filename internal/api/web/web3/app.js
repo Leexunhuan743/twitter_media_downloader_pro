@@ -11,7 +11,6 @@ const throttle = (fn, ms) => { let last = 0, t; return (...a) => { const now = D
 const fmtDur = (a, b) => { const ms = new Date(b) - new Date(a); if (isNaN(ms) || ms < 0) return ''; const s = Math.floor(ms / 1000); if (s < 60) return s + 's'; const m = Math.floor(s / 60); return m + 'm ' + (s % 60) + 's'; };
 const relTime = (t) => { if (!t) return '-'; const d = new Date(t); if (isNaN(d.getTime())) return '-'; const s = (Date.now() - d.getTime()) / 1000; if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + 'm ago'; if (s < 86400) return Math.floor(s / 3600) + 'h ago'; return Math.floor(s / 86400) + 'd ago'; };
 const stripAnsi = (s) => String(s ?? '').replace(/\x1b\[[0-9;]*m/g, '');
-const toRFC3339 = (v) => { if (!v) return ''; const t = new Date(v); return isNaN(t.getTime()) ? '' : t.toISOString().replace(/\.\d{3}Z$/, 'Z'); };
 const ICON_PATHS = {
   alert: '<path d="M10.3 3.3 2.1 17.2A2 2 0 0 0 3.8 20h16.4a2 2 0 0 0 1.7-2.8L13.7 3.3a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
@@ -654,7 +653,7 @@ async function submitTaskForm(type, action = 'download') {
   if (busyLocked) return;
   buttons.forEach(b => { b.disabled = true; });
   const tsRaw = document.getElementById('tf-marktime')?.value || '';
-  const ts = tsRaw ? toRFC3339(tsRaw) : undefined;
+  const ts = tsRaw ? TMDDateTime.toRFC3339(tsRaw) : undefined;
   try {
     if (action === 'profile') {
       if (type === 'user') {
@@ -868,7 +867,7 @@ const DB_STAT_LABELS = {
 const DB_EDIT_FIELDS = {
   'users': [{ key: 'screen_name', label: 'Screen Name' }, { key: 'name', label: 'Name' }],
   'lists': [{ key: 'name', label: 'Name' }],
-  'user-entities': [{ key: 'name', label: 'Name' }, { key: 'media_count', label: 'Media Count', numeric: true }, { key: 'latest_release_time', label: 'Latest Release Time' }],
+  'user-entities': [{ key: 'name', label: 'Name' }, { key: 'media_count', label: 'Media Count', numeric: true }, { key: 'latest_release_time', label: 'Latest Release Time', dateTime: true }],
   'list-entities': [{ key: 'name', label: 'Name' }],
   'user-links': [{ key: 'name', label: 'Name' }],
 };
@@ -1062,7 +1061,11 @@ async function openDBEdit(tab, id) {
       <div class="modal-header"><h2>Edit ${esc(DB_TABS.find(t => t.id === tab).label)}</h2><button class="icon-btn" onclick="closeModal()" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
       <div class="modal-body">
         <div class="form-group"><label>ID</label><span class="mono">${esc(id)}</span></div>
-        ${fields.map(f => `<div class="form-group"><label>${esc(f.label)}</label><input type="${f.numeric ? 'number' : 'text'}" id="dbEditField-${f.key}" value="${esc(item[f.key] == null ? '' : String(item[f.key]))}"></div>`).join('')}
+        ${fields.map(f => {
+          const type = f.numeric ? 'number' : (f.dateTime ? 'datetime-local' : 'text');
+          const value = f.dateTime ? TMDDateTime.toDateTimeLocal(item[f.key]) : (item[f.key] == null ? '' : String(item[f.key]));
+          return `<div class="form-group"><label>${esc(f.label)}</label><input type="${type}" id="dbEditField-${f.key}" value="${esc(value)}"></div>`;
+        }).join('')}
         ${tab === 'user-entities' && item.parent_dir ? `<div class="form-group"><label>Parent Dir (read-only)</label><span class="mono text-sm">${esc(item.parent_dir)}</span></div>` : ''}
       </div>
       <div class="modal-footer">
@@ -1081,24 +1084,16 @@ async function dbSaveEdit(tab, id) {
     else if (f.key === 'latest_release_time') {
       const v = el.value.trim();
       if (v === '') data[f.key] = '';
-      else {
-        // GET 返回 "2006-01-02 15:04:05"（本地无时区）；按本地时区补偏移输出 RFC3339，避免 toISOString 的 UTC 漂移
-        const t = new Date(v);
-        if (isNaN(t.getTime())) data[f.key] = undefined;
-        else {
-          const off = -t.getTimezoneOffset();
-          const pad2 = (n) => String(n).padStart(2, '0');
-          data[f.key] = t.getFullYear() + '-' + pad2(t.getMonth() + 1) + '-' + pad2(t.getDate()) + 'T' + pad2(t.getHours()) + ':' + pad2(t.getMinutes()) + ':' + pad2(t.getSeconds())
-            + (off >= 0 ? '+' : '-') + pad2(Math.floor(Math.abs(off) / 60)) + ':' + pad2(Math.abs(off) % 60);
-        }
-      }
+      else data[f.key] = TMDDateTime.toRFC3339(v) || undefined;
     } else data[f.key] = el.value;
   }
   closeModal();
   try { await updaters[tab](id, data); toast('Saved', 'ok'); dbLoad(); } catch (e) { toast(e.message, 'err'); }
 }
 async function dbDelete(tab, id) {
-  if (!confirm('Delete record ' + id + '?')) return;
+  const removesMedia = tab === 'user-entities' || tab === 'list-entities';
+  const warning = removesMedia ? '\nThis also permanently deletes the media directory.' : '';
+  if (!confirm('Delete record ' + id + '?' + warning)) return;
   const dels = { 'users': ENDPOINTS.dbUserDelete, 'lists': ENDPOINTS.dbListDelete, 'user-entities': ENDPOINTS.dbUserEntityDelete, 'list-entities': ENDPOINTS.dbListEntityDelete, 'user-links': ENDPOINTS.dbUserLinkDelete };
   try { await dels[tab](id); toast('Deleted', 'ok'); dbLoad(); } catch (e) { toast(e.message, 'err'); }
 }
@@ -1645,8 +1640,8 @@ function logApplyFilters() {
   logState.level = document.getElementById('logLevel').value;
   logState.domain = document.getElementById('logDomain').value;
   logState.q = document.getElementById('logQ').value.trim();
-  logState.startTime = toRFC3339(document.getElementById('logStart').value);
-  logState.endTime = toRFC3339(document.getElementById('logEnd').value);
+  logState.startTime = TMDDateTime.toRFC3339(document.getElementById('logStart').value);
+  logState.endTime = TMDDateTime.toRFC3339(document.getElementById('logEnd').value);
   logState.page = 1;
   logState.gen++;
   disconnectLogSSE();

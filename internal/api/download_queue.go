@@ -101,10 +101,13 @@ func (q *DownloadQueue) CloseAndWait(timeout time.Duration) {
 		return
 	}
 
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	select {
 	case <-q.workerDone:
-	case <-time.After(timeout):
+	case <-timer.C:
 		log.Warnf("[download-queue] Worker exit timeout timeout=%s", timeout)
+		return
 	}
 
 	detachedDone := make(chan struct{})
@@ -114,7 +117,7 @@ func (q *DownloadQueue) CloseAndWait(timeout time.Duration) {
 	}()
 	select {
 	case <-detachedDone:
-	case <-time.After(timeout):
+	case <-timer.C:
 		log.Warnf("[download-queue] Detached runs active timeout=%s", timeout)
 	}
 }

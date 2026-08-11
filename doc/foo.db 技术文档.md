@@ -96,6 +96,7 @@ func Connect(path string) (*sqlx.DB, error) {
 | `lst_entities`        | 列表下载实体记录       | `id` | 无                                                                  |
 | `user_entities`       | 用户下载实体记录       | `id` | `user_id` → `users.id`                                             |
 | `user_links`          | 用户与列表的关联       | `id` | `user_id` → `users.id`, `parent_lst_entity_id` → `lst_entities.id` |
+| `entity_removal_journal` | 实体目录删除恢复日志 | `staged_path` | 无                                                             |
 
 ### 2.2 详细表结构
 
@@ -217,6 +218,21 @@ CREATE TABLE IF NOT EXISTS user_links (
 
 **用途**: 当用户属于多个列表时，通过符号链接在列表中创建用户目录的引用。
 
+#### 2.2.7 entity_removal_journal 表
+
+记录已移动到同级暂存目录、但尚未完成收口的实体目录删除。该内部表只保存崩溃恢复证据，不属于 Web 数据控制台公开的六张业务表。
+
+```sql
+CREATE TABLE IF NOT EXISTS entity_removal_journal (
+    staged_path VARCHAR NOT NULL,              -- 版本化暂存目录的绝对路径
+    original_path VARCHAR NOT NULL,            -- 删除前实体目录的绝对路径
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (staged_path)
+);
+```
+
+**恢复规则**: 实体记录仍存在时将暂存目录恢复到 `original_path`；实体记录已经删除时清理暂存目录；无法证明归属的旧暂存目录保留并记录告警。
+
 ***
 
 ## 3. 索引设计
@@ -319,6 +335,12 @@ erDiagram
         int user_id FK
         string name
         int parent_lst_entity_id FK
+    }
+
+    entity_removal_journal {
+        string staged_path PK
+        string original_path
+        datetime created_at
     }
 ```
 
@@ -718,7 +740,9 @@ SELECT
 UNION ALL
 SELECT 'user_entities', COUNT(*) FROM user_entities
 UNION ALL
-SELECT 'user_links', COUNT(*) FROM user_links;
+SELECT 'user_links', COUNT(*) FROM user_links
+UNION ALL
+SELECT 'entity_removal_journal', COUNT(*) FROM entity_removal_journal;
 ```
 
 ### 10.4 常见问题排查
@@ -880,6 +904,13 @@ CREATE TABLE IF NOT EXISTS user_links (
     FOREIGN KEY(parent_lst_entity_id) REFERENCES lst_entities (id)
 );
 
+CREATE TABLE IF NOT EXISTS entity_removal_journal (
+    staged_path VARCHAR NOT NULL,
+    original_path VARCHAR NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (staged_path)
+);
+
 CREATE INDEX IF NOT EXISTS idx_user_links_user_id ON user_links (user_id);
 
 -- 索引
@@ -907,6 +938,7 @@ CREATE INDEX IF NOT EXISTS idx_user_previous_names_user_id ON user_previous_name
 | `internal/database/user_entity.go` | 用户实体 CRUD 操作 |
 | `internal/database/lst_entity.go` | 列表实体 CRUD 操作 |
 | `internal/database/user_link.go` | 用户链接 CRUD 操作 |
+| `internal/database/entity_removal_journal.go` | 实体目录删除恢复日志 |
 | `internal/database/connect.go`   | 数据库连接与迁移  |
 | `internal/database/helpers.go`   | 辅助查询函数    |
 | `internal/database/user_sync.go` | 用户同步操作    |

@@ -20,6 +20,7 @@
 
 - `user_entities.parent_dir`
 - `lst_entities.parent_dir`
+- `entity_removal_journal.staged_path` / `original_path`（存在未完成目录删除时）
 
 历史数据里这些字段通常是绝对路径，例如：
 
@@ -41,35 +42,31 @@ F:\twitter_dl
 - 已有下载记录和当前磁盘目录脱节
 - 后续查询、同步、目录定位可能异常
 
-这个工具只做一件事：把 `parent_dir` 从旧根目录重写到新根目录。
+这个工具只做一件事：把实体存储路径从旧根目录重写到新根目录。
 
 ## 2. 工具位置
 
-命令入口：
+命令入口与核心实现：
 
-- [tools/tmd-db-migrate/main.go](tools/tmd-db-migrate/main.go)
-
-核心实现：
-
-- [internal/database/parent_dir_migration.go](internal/database/parent_dir_migration.go)
+- [tools/tmd-db-migrate.py](../tools/tmd-db-migrate.py)
 
 ## 3. 工具行为
 
 工具执行时会：
 
-1. 打开目标 `foo.db`
-2. 扫描 `user_entities.parent_dir` 和 `lst_entities.parent_dir`
+1. 以只读方式预演，或在正式迁移时先取得 SQLite 写锁
+2. 扫描 `user_entities.parent_dir`、`lst_entities.parent_dir` 和可选的删除恢复日志路径
 3. 找出所有以 `from-root` 开头的绝对路径
 4. 重写为 `to-root`
 5. 在正式写入前检查是否会撞上唯一约束
-6. 正式写入前备份 `foo.db`
+6. 正式写入前使用 SQLite Backup API 生成一致性快照
+7. 在一个事务内以“旧值仍匹配”为条件提交更新，拒绝覆盖并发变化
 
 备份行为：
 
-- 备份主文件：`foo.db.backup.YYYYMMDD_HHMMSS`
-- 如果存在，也会一并备份：
-  - `foo.db-wal`
-  - `foo.db-shm`
+- 备份文件：`foo.db.backup.YYYYMMDD_HHMMSS_ffffff`
+- 备份是包含已提交 WAL 内容的单一 SQLite 一致性快照，不需要配套复制 `-wal` 或 `-shm`
+- 备份路径以独占方式创建，不会覆盖同名旧备份
 
 正式迁移完成后，程序不会另外生成一个新的正式 `foo.db`。它会直接原地更新 `--db` 指向的那个数据库文件，备份文件也放在同一目录下。
 
@@ -99,13 +96,13 @@ F:\twitter_dl
 先预演：
 
 ```bash
-go run ./tools/tmd-db-migrate --db "F:\twitter_dl\.data\foo.db" --from-root "F:\twitter_dl" --to-root "/data" --dry-run
+python ./tools/tmd-db-migrate.py --db "F:\twitter_dl\.data\foo.db" --from-root "F:\twitter_dl" --to-root "/data" --dry-run
 ```
 
 正式迁移：
 
 ```bash
-go run ./tools/tmd-db-migrate --db "F:\twitter_dl\.data\foo.db" --from-root "F:\twitter_dl" --to-root "/data"
+python ./tools/tmd-db-migrate.py --db "F:\twitter_dl\.data\foo.db" --from-root "F:\twitter_dl" --to-root "/data"
 ```
 
 命令参数：
@@ -134,7 +131,8 @@ go run ./tools/tmd-db-migrate --db "F:\twitter_dl\.data\foo.db" --from-root "F:\
 dry_run=false
 user_entities: 12/25 updated
 lst_entities: 2/4 updated
-backup=F:\twitter_dl\.data\foo.db.backup.20260509_224500
+entity_removal_journal: 0/0 updated
+backup=F:\twitter_dl\.data\foo.db.backup.20260509_224500_123456
 samples:
 - user_entities id=1: "F:\\twitter_dl\\users" -> "/data/users"
 - lst_entities id=3: "F:\\twitter_dl" -> "/data"
@@ -145,6 +143,7 @@ samples:
 - `updated/total` 表示该表总记录数中有多少条被改写
 - `backup` 表示正式迁移前生成的备份文件
 - `samples` 只展示部分样例，便于快速确认方向是否正确
+- `--dry-run` 使用只读 SQLite 连接，不切换 journal mode、不 checkpoint，也不创建备份
 
 ## 7. 迁移前建议
 
@@ -170,6 +169,7 @@ samples:
 推荐校验方式：
 
 ```bash
+python -m unittest -v tools/test_tmd_db_migrate.py
 go test ./...
 ```
 
@@ -197,7 +197,7 @@ go test ./...
 
 ## 10. 当前边界
 
-当前工具只处理 `parent_dir` 的根目录改写，不处理：
+当前工具只处理实体父目录和删除恢复日志中绝对路径的根目录改写，不处理：
 
 - schema 升级
 - `is_accessible` 等历史 migration

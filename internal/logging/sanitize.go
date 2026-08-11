@@ -47,6 +47,7 @@ var (
 	}
 	bearerTokenRegex  = regexp.MustCompile(`(?i)\bBearer[ \t]+[^\s,;&"']+`)
 	namedSecretRegex  = regexp.MustCompile(`(?i)(["']?)\b(` + sensitiveFieldPattern() + `)(["']?)([ \t]*[:=][ \t]*)(Bearer[ \t]+[^\s,;&"']+|Basic[ \t]+[^\s,;&"']+|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&"']+)`)
+	absoluteURLRegex  = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s<>"']+`)
 	maskedSecretRegex = regexp.MustCompile(`^\[redacted:[0-9a-f]{8,64}\]$`)
 )
 
@@ -157,6 +158,7 @@ func MaskSecret(value string) string {
 
 // RedactSensitiveText removes common credential forms from free-form text.
 func RedactSensitiveText(text string) string {
+	text = absoluteURLRegex.ReplaceAllStringFunc(text, SanitizeURL)
 	text = namedSecretRegex.ReplaceAllStringFunc(text, func(match string) string {
 		parts := namedSecretRegex.FindStringSubmatch(match)
 		if len(parts) != 6 || !isSensitiveFieldName(parts[2]) {

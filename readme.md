@@ -916,9 +916,9 @@ Server 支持优雅关闭，确保所有资源正确释放：
 
 - **API 触发**：`POST /api/v1/server/shutdown`
 
-- **关闭顺序**：取消所有运行中的任务 → 等待下载队列 15 秒 → 停止调度器 → 停止 Bot → 关闭 SSE 与日志捕获器 → 关闭 HTTP Server（超时 30 秒） → 关闭数据库（日志文件写入器在进程退出时关闭）
+- **关闭协调**：立即拒绝新写请求并取消运行中任务，随后并行收敛已准入请求、下载队列、调度器、Bot 和 HTTP Server；任务 SSE 写出关停事件后主动退出，最后关闭数据库
 
-- **超时保护**：HTTP Server 关闭超时 30 秒，下载队列等待 15 秒
+- **超时保护**：所有关停阶段共享一个 45 秒总截止时间，不串行叠加多个超时窗口；空闲服务器不会因固定休眠被拖慢
 
 - **幂等性**：使用 `sync.Once` 确保关闭只执行一次
 
@@ -1411,6 +1411,7 @@ media:2
     │                                 # - lst_entities: 列表下载实体
     │                                 # - user_links: 用户链接关联
     │                                 # - user_previous_names: 用户历史名称（含 record_date）
+    │                                 # - entity_removal_journal: 实体目录删除崩溃恢复日志（内部）
     ├── errors.json                 # 失败推文记录
     └── json_errors.json            # JSON 导入失败的推文记录（-jsonfile/-jsonfolder）
 ```

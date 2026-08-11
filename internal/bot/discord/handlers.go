@@ -53,7 +53,7 @@ func (b *Bot) registerCommands() error {
 					Required:    false,
 				},
 			},
-	},
+		},
 		{
 			Name:        "status",
 			Description: "Check task status",
@@ -88,13 +88,8 @@ func (b *Bot) registerCommands() error {
 		},
 	}
 
-	for _, cmd := range commands {
-		_, err := b.session.ApplicationCommandCreate(b.session.State.User.ID, "", cmd)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err := b.session.ApplicationCommandBulkOverwrite(b.session.State.User.ID, "", commands)
+	return err
 }
 
 // handleInteraction 处理 slash command 交互

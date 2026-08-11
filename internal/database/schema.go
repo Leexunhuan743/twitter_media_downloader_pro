@@ -67,6 +67,13 @@ CREATE TABLE IF NOT EXISTS user_links (
 	FOREIGN KEY(user_id) REFERENCES users (id), 
 	FOREIGN KEY(parent_lst_entity_id) REFERENCES lst_entities (id)
 );
+
+CREATE TABLE IF NOT EXISTS entity_removal_journal (
+	staged_path VARCHAR NOT NULL,
+	original_path VARCHAR NOT NULL,
+	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (staged_path)
+);
 `
 
 const indexes = `
@@ -89,11 +96,10 @@ func CreateTables(db *sqlx.DB) {
 	db.MustExec(indexes)
 }
 
-
 // renameMigration 描述一条 ALTER TABLE RENAME COLUMN 迁移。
 type renameMigration struct {
-	table      string // 表名
-	newColumn  string // 目标列名（RENAME 之后的列名）
+	table     string // 表名
+	newColumn string // 目标列名（RENAME 之后的列名）
 }
 
 // MigrateDatabase keeps idempotent in-place schema upgrades for databases that

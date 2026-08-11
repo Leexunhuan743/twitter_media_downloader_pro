@@ -107,6 +107,9 @@ func (s *Server) handleSSETasks(w http.ResponseWriter, r *http.Request) {
 			if err := s.writeSSEEvent(w, flusher, evt); err != nil {
 				return
 			}
+			if evt.Event == "server_shutdown" {
+				return
+			}
 		case <-heartbeat.C:
 			if err := writeSSEFrame(w, flusher, func() error {
 				return writeSSEHeartbeat(w)

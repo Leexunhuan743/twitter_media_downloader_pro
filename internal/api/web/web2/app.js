@@ -1156,7 +1156,7 @@ async function doUserMark() {
   // 先读控件值再关弹窗（弹窗关闭后 DOM 已移除）
   const tsRaw = document.getElementById('dl-user-marktime').value || '';
   // datetime-local 值（2026-08-03T14:30）非 RFC3339，需转 ISO 再提交（后端 Timestamp 只接受 RFC3339）
-  const ts = tsRaw ? new Date(tsRaw).toISOString() : '';
+  const ts = TMDDateTime.toRFC3339(tsRaw);
   _actionBusy = true;
   closeModal();
   try { const r = await ENDPOINTS.userMark(name, ts || undefined); toast('Marked: ' + r.task_id, 'success'); }
@@ -1197,7 +1197,7 @@ async function doListMark() {
   // 先读控件值再关弹窗（弹窗关闭后 DOM 已移除）
   const tsRaw = document.getElementById('dl-list-marktime').value || '';
   // datetime-local 值非 RFC3339，需转 ISO 再提交
-  const ts = tsRaw ? new Date(tsRaw).toISOString() : '';
+  const ts = TMDDateTime.toRFC3339(tsRaw);
   _actionBusy = true;
   closeModal();
   try { const r = await ENDPOINTS.listMark(id, ts || undefined); toast('Marked: ' + r.task_id, 'success'); }
@@ -1230,7 +1230,7 @@ async function doFollowingMark() {
   // 先读控件值再关弹窗（弹窗关闭后 DOM 已移除）
   const tsRaw = document.getElementById('dl-foll-marktime').value || '';
   // datetime-local 值非 RFC3339，需转 ISO 再提交
-  const ts = tsRaw ? new Date(tsRaw).toISOString() : '';
+  const ts = TMDDateTime.toRFC3339(tsRaw);
   _actionBusy = true;
   closeModal();
   try { const r = await ENDPOINTS.userFollowingMark(name, ts || undefined); toast('Marked: ' + r.task_id, 'success'); }
@@ -1647,7 +1647,7 @@ async function renderDBEntities(content, page, search, ep, label, sort) {
     : `${sortableTh('ID', ep, 'id', sort)}${sortableTh('User ID', ep, 'user_id', sort)}${sortableTh('Name', ep, 'name', sort)}<th>Parent Entity</th><th>Actions</th>`;
 
   const rows = items.map(i => {
-    const actions = `<td><button class="btn btn-xs btn-ghost" onclick="viewEntityDetail('${ep}', '${jsEsc(i.id)}')">View</button> <button class="btn btn-xs btn-ghost" onclick="if(confirm('Delete entity ${jsEsc(i.id)}?')){deleteEntity('${ep}', '${jsEsc(i.id)}')}">Delete</button></td>`;
+    const actions = `<td><button class="btn btn-xs btn-ghost" onclick="viewEntityDetail('${ep}', '${jsEsc(i.id)}')">View</button> <button class="btn btn-xs btn-ghost" onclick="if(confirmEntityDelete('${ep}', '${jsEsc(i.name || i.id)}')){deleteEntity('${ep}', '${jsEsc(i.id)}')}">Delete</button></td>`;
     if (label === 'user_entities')
       return `<tr><td><span class="mono">${esc(i.id||'')}</span></td><td>${esc(i.user_id||'')}</td><td>${esc(i.name||'')}</td><td>${esc(i.parent_dir||'')}</td><td>${i.media_count||0}</td><td class="text-sm">${esc(i.latest_release_time||'')}</td>${actions}</tr>`;
     else if (label === 'list_entities')
@@ -1674,7 +1674,7 @@ const ENTITY_EDIT_FIELDS = {
   'user-entities': [
     { key: 'name', label: 'Name' },
     { key: 'media_count', label: 'Media Count', numeric: true },
-    { key: 'latest_release_time', label: 'Latest Release Time' }
+    { key: 'latest_release_time', label: 'Latest Release Time', dateTime: true }
   ],
   'list-entities': [
     { key: 'name', label: 'Name' }
@@ -1704,9 +1704,11 @@ async function viewEntityDetail(ep, id) {
       .map(([k, v]) =>
         `<div class="form-row"><div class="form-group"><label>${esc(k)}</label><code>${esc(v == null ? '-' : String(v))}</code></div></div>`
       ).join('');
-    const inputs = editFields.map(f =>
-      `<div class="form-group"><label>${esc(f.label)}</label><input type="${f.numeric ? 'number' : 'text'}" id="ent-edit-${esc(f.key)}" value="${esc(item[f.key] == null ? '' : String(item[f.key]))}"></div>`
-    ).join('');
+    const inputs = editFields.map(f => {
+      const type = f.numeric ? 'number' : (f.dateTime ? 'datetime-local' : 'text');
+      const value = f.dateTime ? TMDDateTime.toDateTimeLocal(item[f.key]) : (item[f.key] == null ? '' : String(item[f.key]));
+      return `<div class="form-group"><label>${esc(f.label)}</label><input type="${type}" id="ent-edit-${esc(f.key)}" value="${esc(value)}"></div>`;
+    }).join('');
     openModal(`
       <div class="modal-header"><h2>${labels[ep]}: ${esc(item.name || item.id)}</h2><button class="btn btn-ghost btn-sm" onclick="closeModal()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
       <div class="modal-body">
@@ -1716,7 +1718,7 @@ async function viewEntityDetail(ep, id) {
       <div class="modal-footer">
         <button class="btn btn-ghost" onclick="closeModal()">Close</button>
         <button class="btn btn-primary" onclick="saveEntityEdit('${ep}', '${jsEsc(id)}')">Save</button>
-        <button class="btn btn-danger" onclick="if(confirm('Delete ${labels[ep]} ${jsEsc(item.name || item.id)}?')){deleteEntity('${ep}', '${jsEsc(id)}').then(()=>closeModal())}">Delete</button>
+		<button class="btn btn-danger" onclick="if(confirmEntityDelete('${ep}', '${jsEsc(item.name || item.id)}')){deleteEntity('${ep}', '${jsEsc(id)}').then(()=>closeModal())}">Delete</button>
       </div>`);
   } catch(e) { toast(e.message, 'error'); }
 }
@@ -1735,13 +1737,12 @@ async function saveEntityEdit(ep, id) {
     if (f.numeric) {
       data[f.key] = el.value === '' ? undefined : Number(el.value);
     } else if (f.key === 'latest_release_time') {
-      // GET 返回 "2006-01-02 15:04:05"（本地时区），PATCH 要求 RFC3339 且 Go 严格解析不接受毫秒
+	  // datetime-local 表示用户本地时间；提交时转为无毫秒的 UTC RFC3339。
       const v = el.value.trim();
       if (v === '') {
         data[f.key] = ''; // 空值 = 清除
       } else {
-        const t = new Date(v);
-        data[f.key] = isNaN(t.getTime()) ? undefined : t.toISOString().replace(/\.\d{3}Z$/, 'Z');
+        data[f.key] = TMDDateTime.toRFC3339(v) || undefined;
       }
     } else {
       data[f.key] = el.value;
@@ -1753,6 +1754,12 @@ async function saveEntityEdit(ep, id) {
     toast('Saved', 'success');
     loadDBTab(currentDBTab());
   } catch(e) { toast(e.message, 'error'); }
+}
+
+function confirmEntityDelete(ep, label) {
+  const removesMedia = ep === 'user-entities' || ep === 'list-entities';
+  const warning = removesMedia ? '\nThis also permanently deletes the media directory.' : '';
+  return confirm(`Delete ${label}?${warning}`);
 }
 
 async function deleteEntity(ep, id) {
@@ -2812,9 +2819,8 @@ function setLogTimeFilter() {
   const endEl = document.getElementById('log-end-time');
   const startRaw = startEl ? startEl.value : '';
   const endRaw = endEl ? endEl.value : '';
-  const toRFC3339 = (v) => { if (!v) return ''; const t = new Date(v); return isNaN(t.getTime()) ? '' : t.toISOString().replace(/\.\d{3}Z$/, 'Z'); };
-  _logStartTime = toRFC3339(startRaw);
-  _logEndTime = toRFC3339(endRaw);
+  _logStartTime = TMDDateTime.toRFC3339(startRaw);
+  _logEndTime = TMDDateTime.toRFC3339(endRaw);
   _logPage = 1;
   _logGen++; // 代际递增：丢弃在途 loadMore 旧响应
   disconnectLogSSE();

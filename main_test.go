@@ -8,11 +8,36 @@ import (
 	"path/filepath"
 	"testing"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/unkmonster/tmd/internal/config"
 )
+
+func TestConfigureTerminalColorsRespectsNoColor(t *testing.T) {
+	tests := []struct {
+		name          string
+		noColor       string
+		forceColors   bool
+		disableColors bool
+	}{
+		{name: "enabled by default", forceColors: true},
+		{name: "disabled by convention", noColor: "1", disableColors: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("NO_COLOR", tt.noColor)
+			formatter := &log.TextFormatter{}
+
+			configureTerminalColors(formatter)
+
+			assert.Equal(t, tt.forceColors, formatter.ForceColors)
+			assert.Equal(t, tt.disableColors, formatter.DisableColors)
+		})
+	}
+}
 
 func TestParseBootstrapArgs(t *testing.T) {
 	parsed, err := parseBootstrapArgs([]string{

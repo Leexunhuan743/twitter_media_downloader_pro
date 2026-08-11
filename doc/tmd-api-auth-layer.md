@@ -188,16 +188,17 @@ func (s *Server) buildHandler() http.Handler {
     // ... 注册所有路由 ...
 
     var handler http.Handler = mux
-    handler = s.authMiddleware(handler)        // ⑤ auth
-    handler = cors.New(...).Handler(handler)    // ④ CORS
-    handler = apiVersionMiddleware(handler)     // ③ API-Version
-    handler = loggingMiddleware(handler)        // ② 日志
-    handler = securityHeadersMiddleware(handler) // ① 安全头
+    handler = s.authMiddleware(handler)            // ⑥ auth
+    handler = s.shutdownMutationMiddleware(handler) // ⑤ 关停写请求闸门
+    handler = cors.New(...).Handler(handler)        // ④ CORS
+    handler = apiVersionMiddleware(handler)         // ③ API-Version
+    handler = loggingMiddleware(handler)            // ② 日志
+    handler = securityHeadersMiddleware(handler)    // ① 安全头
     return handler
 }
 ```
 
-注意包裹顺序：最外层（先执行）是 `securityHeadersMiddleware`，最内层是 `ServeMux`。
+注意包裹顺序：最外层（先执行）是 `securityHeadersMiddleware`，最内层是 `ServeMux`。关停写请求闸门在认证外层，因此关停期间未认证写请求也会一致返回 503。
 
 ### 认证中间件代码位置
 

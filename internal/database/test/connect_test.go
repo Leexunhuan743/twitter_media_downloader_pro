@@ -117,6 +117,14 @@ CREATE TABLE users (
 );
 `)
 	legacyDB.MustExec(`INSERT INTO users(id, screen_name, name, protected, friends_count) VALUES(1, 'legacyuser', 'Legacy User', 0, 10)`)
+	legacyDB.MustExec(`
+CREATE TABLE entity_removal_journal (
+	staged_path VARCHAR NOT NULL PRIMARY KEY,
+	original_path VARCHAR NOT NULL,
+	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`)
+	legacyDB.MustExec(`INSERT INTO entity_removal_journal(staged_path, original_path) VALUES('/data/.tmd-remove-v1-fixture', '/data/entity')`)
 	require.NoError(t, legacyDB.Close())
 
 	db, err := database.Connect(dbPath)
@@ -128,6 +136,11 @@ CREATE TABLE users (
 	require.NotNil(t, retrieved)
 	assert.Equal(t, "legacyuser", retrieved.ScreenName)
 	assert.True(t, retrieved.IsAccessible)
+	journals, err := database.ListEntityRemovalJournals(db)
+	require.NoError(t, err)
+	require.Len(t, journals, 1)
+	assert.Equal(t, "/data/.tmd-remove-v1-fixture", journals[0].StagedPath)
+	assert.Equal(t, "/data/entity", journals[0].OriginalPath)
 
 	backups, err := filepath.Glob(dbPath + ".backup.*")
 	require.NoError(t, err)

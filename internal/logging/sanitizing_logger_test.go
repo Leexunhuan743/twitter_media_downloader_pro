@@ -52,6 +52,17 @@ func TestSanitizingLoggerFormatsBeforeCleaning(t *testing.T) {
 	}
 }
 
+func TestSanitizingLoggerRedactsURLUserInfo(t *testing.T) {
+	captured := &capturedFormattedLog{}
+	logger := NewSanitizingLogger(captured)
+
+	logger.Debugf("GET %s", "https://url-user:url-password@example.invalid/media")
+
+	assert.NotContains(t, captured.message, "url-user")
+	assert.NotContains(t, captured.message, "url-password")
+	assert.Contains(t, captured.message, "redacted")
+}
+
 func TestSanitizingLoggerNilSinkIsNoOp(t *testing.T) {
 	assert.NotPanics(t, func() {
 		NewSanitizingLogger(nil).Debugf("token=secret")

@@ -3,6 +3,8 @@ package entity_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +21,7 @@ type entityFixture struct {
 	newEntity    func(*sqlx.DB, string) (entity.Entity, error)
 	seedParent   func(*sqlx.DB) error
 	deleteRecord func(*sqlx.DB, int) error
+	setName      func(*sqlx.DB, int, string) error
 }
 
 var entityFixtures = []entityFixture{
@@ -38,6 +41,10 @@ var entityFixtures = []entityFixture{
 		deleteRecord: func(db *sqlx.DB, id int) error {
 			return database.DelUserEntity(db, uint32(id))
 		},
+		setName: func(db *sqlx.DB, id int, name string) error {
+			_, err := db.Exec(`UPDATE user_entities SET name=? WHERE id=?`, name, id)
+			return err
+		},
 	},
 	{
 		name: "list",
@@ -49,6 +56,10 @@ var entityFixtures = []entityFixture{
 		},
 		deleteRecord: func(db *sqlx.DB, id int) error {
 			return database.DelLstEntity(db, id)
+		},
+		setName: func(db *sqlx.DB, id int, name string) error {
+			_, err := db.Exec(`UPDATE lst_entities SET name=? WHERE id=?`, name, id)
+			return err
 		},
 	},
 }
@@ -80,7 +91,12 @@ func TestConstructorsRejectNilDatabase(t *testing.T) {
 }
 
 func TestSyncRejectsUnsafeEntityNames(t *testing.T) {
-	unsafeNames := []string{"", ".", "..", "../escape", `child/name`, `child\name`, "windows.", "windows "}
+	unsafeNames := []string{
+		"", ".", "..", "../escape", `child/name`, `child\name`, "windows.", "windows ",
+		"windows:", "windows*", "windows?", `windows"`, "windows<", "windows>", "windows|",
+		"CON", "con.txt", "PRN", "AUX.log", "NUL", "COM1", "com9.txt", "LPT1", "lpt9.log",
+		".tmd-remove-reserved",
+	}
 
 	for _, fixture := range entityFixtures {
 		t.Run(fixture.name, func(t *testing.T) {
@@ -252,6 +268,99 @@ func TestRenameRefreshesStaleEntityBeforeMovingDirectory(t *testing.T) {
 			name, nameErr := stale.Name()
 			require.NoError(t, nameErr)
 			assert.Equal(t, "second", name)
+		})
+	}
+}
+
+func TestSyncMigratesLegacyNamesWithTrailingWindowsCharacters(t *testing.T) {
+	for _, fixture := range entityFixtures {
+		for _, legacyName := range []string{"legacy.", "legacy "} {
+			t.Run(fixture.name+"/"+legacyName, func(t *testing.T) {
+				db := openEntityTestDB(t)
+				parentDir := t.TempDir()
+				result := newFixtureEntity(t, fixture, db, parentDir)
+				require.NoError(t, result.Create("legacy-source"))
+				id, err := result.Id()
+				require.NoError(t, err)
+
+				legacyPath := filepath.Join(parentDir, legacyName)
+				addressablePath := legacyPath
+				if runtime.GOOS == "windows" {
+					addressablePath = filepath.Join(parentDir, strings.TrimRight(legacyName, " ."))
+				}
+				require.NoError(t, os.Rename(filepath.Join(parentDir, "legacy-source"), addressablePath))
+				require.NoError(t, os.WriteFile(filepath.Join(addressablePath, "marker.txt"), []byte("keep"), 0600))
+				require.NoError(t, fixture.setName(db, id, legacyName))
+
+				stored, err := fixture.newEntity(db, parentDir)
+				require.NoError(t, err)
+				path, err := stored.Path()
+				require.NoError(t, err)
+				assert.Equal(t, addressablePath, path)
+
+				require.NoError(t, entity.Sync(stored, "normalized"))
+
+				assert.NoDirExists(t, addressablePath)
+				assert.FileExists(t, filepath.Join(parentDir, "normalized", "marker.txt"))
+				name, err := stored.Name()
+				require.NoError(t, err)
+				assert.Equal(t, "normalized", name)
+			})
+		}
+	}
+}
+
+func TestRemoveHandlesLegacyStoredName(t *testing.T) {
+	for _, fixture := range entityFixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			db := openEntityTestDB(t)
+			parentDir := t.TempDir()
+			result := newFixtureEntity(t, fixture, db, parentDir)
+			require.NoError(t, result.Create("legacy-source"))
+			id, err := result.Id()
+			require.NoError(t, err)
+
+			legacyPath := filepath.Join(parentDir, "legacy.")
+			addressablePath := legacyPath
+			if runtime.GOOS == "windows" {
+				addressablePath = filepath.Join(parentDir, "legacy")
+			}
+			require.NoError(t, os.Rename(filepath.Join(parentDir, "legacy-source"), addressablePath))
+			require.NoError(t, fixture.setName(db, id, "legacy."))
+			stored, err := fixture.newEntity(db, parentDir)
+			require.NoError(t, err)
+
+			require.NoError(t, stored.Remove())
+
+			assert.False(t, stored.Recorded())
+			assert.NoDirExists(t, addressablePath)
+			journals, err := database.ListEntityRemovalJournals(db)
+			require.NoError(t, err)
+			assert.Empty(t, journals)
+			reloaded, err := fixture.newEntity(db, parentDir)
+			require.NoError(t, err)
+			assert.False(t, reloaded.Recorded())
+		})
+	}
+}
+
+func TestRenameRejectsUnsafeStoredName(t *testing.T) {
+	for _, fixture := range entityFixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			db := openEntityTestDB(t)
+			parentDir := t.TempDir()
+			result := newFixtureEntity(t, fixture, db, parentDir)
+			require.NoError(t, result.Create("safe-source"))
+			id, err := result.Id()
+			require.NoError(t, err)
+			require.NoError(t, fixture.setName(db, id, "../escape"))
+
+			err = result.Rename("normalized")
+
+			assert.ErrorIs(t, err, entity.ErrInvalidName)
+			assert.DirExists(t, filepath.Join(parentDir, "safe-source"))
+			assert.NoDirExists(t, filepath.Join(parentDir, "normalized"))
+			assert.NoDirExists(t, filepath.Join(filepath.Dir(parentDir), "escape"))
 		})
 	}
 }

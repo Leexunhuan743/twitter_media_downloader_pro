@@ -43,6 +43,13 @@ func readFrontendFile(name string) ([]byte, error) {
 	return webFS.ReadFile("web/" + frontendTheme + "/" + name)
 }
 
+func readSharedFrontendFile(name string) ([]byte, error) {
+	if devWebRoot != "" {
+		return os.ReadFile(filepath.Join(devWebRoot, "shared", name))
+	}
+	return webFS.ReadFile("web/shared/" + name)
+}
+
 func setFrontendTheme(theme string) bool {
 	themeMu.Lock()
 	defer themeMu.Unlock()
@@ -138,7 +145,13 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 
 	cleanPath = strings.TrimPrefix(cleanPath, "/")
 
-	data, err := readFrontendFile(cleanPath)
+	var data []byte
+	var err error
+	if strings.HasPrefix(cleanPath, "shared/") {
+		data, err = readSharedFrontendFile(strings.TrimPrefix(cleanPath, "shared/"))
+	} else {
+		data, err = readFrontendFile(cleanPath)
+	}
 	if err != nil {
 		http.NotFound(w, r)
 		return

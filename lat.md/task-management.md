@@ -46,7 +46,7 @@ Producer-consumer queue backed by `sync.Cond`. Ensures only one task runs per ta
 
 - **Target lock**: same scope+value (e.g. user "elonmusk") cannot run concurrently
 - **Detached mode**: cancelled tasks get 10s grace period, then continue as detached (no status updates)
-- **Shutdown**: waits up to 15s for all workers to finish
+- **Shutdown**: worker exit and detached runs share the server's remaining shutdown budget; the queue never restarts a full timeout for its second phase
 - **Worker loop**: single goroutine dequeues one task at a time
 
 ## EventBus / SSE
@@ -56,6 +56,7 @@ Publish/subscribe system for real-time event delivery to Web UI and bots.
 - Publish/subscribe pattern
 - **Coalesced events**: `tasks`, `schedules` — last value only, for polling
 - **Replayable events**: `notification`, `server_shutdown` — ring buffer (max 256), replayed on reconnect
+- **Terminal close**: `Close` is idempotent, closes existing subscribers, rejects late subscriptions with an already-closed channel, and ignores late publishes
 - **Pre-serialized**: shared JSON byte cache per event, all subscribers get the same blob
 - **Slow consumer protection**: queue > 4096 → auto-close subscriber
 - Heartbeat: 25s, write timeout: 10s
