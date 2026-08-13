@@ -143,6 +143,14 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// 已注册的 bot 回调精确路径免认证（Feishu 等第三方平台不带 TMD
+		// Bearer，回调自身用 verify_token/encrypt_key 校验事件）。只放行
+		// 实际注册的路径，不放行宽泛 /api/v1/bot/ 前缀。
+		if _, registered := s.botCallbackPaths[r.URL.Path]; registered {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// 读取当前配置中的 API Key
 		s.configMu.RLock()
 		apiKey := s.config.APIKey

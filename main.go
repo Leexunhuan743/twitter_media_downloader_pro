@@ -403,7 +403,7 @@ func runServer(conf *config.Config, appRootPath string, port int, loginOpts twit
 		}
 	}
 	server.InitBot(initBot(botConf, server))
-
+	server.SetBindAddress(conf.BindAddress)
 	stopSignals := notifyOnShutdownSignal(func(sig os.Signal) {
 		log.Warnf("[server] Signal caught signal=%s", sig)
 		server.GracefulShutdown("signal:" + sig.String())

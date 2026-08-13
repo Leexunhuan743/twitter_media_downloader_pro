@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -41,6 +42,7 @@ type Server struct {
 	downloadQueue     *DownloadQueue
 	logWriter         io.Closer
 	logHub            *consolelog.Hub
+	bindAddress       string
 	httpServer        *http.Server
 	lifecycleMu       sync.Mutex
 	started           bool
@@ -56,6 +58,7 @@ type Server struct {
 	scheduler         *scheduler.Scheduler
 	eventBus          *EventBus
 	botCallbacks      map[string]http.HandlerFunc
+	botCallbackPaths  map[string]struct{}
 	bots              []bot.Bot
 	authRateLimit     *authRateLimiter
 }
@@ -85,6 +88,7 @@ func NewServerWithConsoleLogHub(client *resty.Client, additionalClients []*resty
 		taskManager:       NewTaskManager(eventBus),
 		shutdownDone:      make(chan struct{}),
 		botCallbacks:      make(map[string]http.HandlerFunc),
+		botCallbackPaths:  make(map[string]struct{}),
 		eventBus:          eventBus,
 		authRateLimit: &authRateLimiter{
 			attempts: make(map[string]*rateLimitEntry),
@@ -139,8 +143,59 @@ func (s *Server) InitBot(bots []bot.Bot) {
 }
 
 // RegisterBotCallback 注册 bot 平台的 HTTP 回调路由。在 Start() 之前调用。
+// 同步登记公开路径：第三方平台回调（如 Feishu）不带 TMD Bearer，自身用
+// verify_token/encrypt_key 校验事件；启用 API Key 后这些精确路径必须免
+// TMD 认证。只放行实际注册的回调路径，不放行宽泛 /api/v1/bot/ 前缀。
 func (s *Server) RegisterBotCallback(pattern string, handler http.HandlerFunc) {
+	if s.botCallbacks == nil {
+		s.botCallbacks = make(map[string]http.HandlerFunc)
+	}
 	s.botCallbacks[pattern] = handler
+	// 回调注册先于 Start()（main.go InitBot → Start 顺序），此后只读，
+	// 无需加锁。authMiddleware 按精确路径放行已注册回调。
+	if s.botCallbackPaths == nil {
+		s.botCallbackPaths = make(map[string]struct{})
+	}
+	s.botCallbackPaths[pattern] = struct{}{}
+}
+
+// SetBindAddress 设置 Server 监听地址（Start 前调用）。空值表示监听所有
+// 网卡（保持 start-server.bat / Docker 兼容）；显式设置 loopback 可收紧默认
+// 安全边界。
+func (s *Server) SetBindAddress(addr string) {
+	s.bindAddress = addr
+}
+
+// serverListenAddr 构造 http.Server 的监听地址。
+func serverListenAddr(bindAddress string, port int) string {
+	if bindAddress == "" {
+		return fmt.Sprintf(":%d", port)
+	}
+	return net.JoinHostPort(bindAddress, strconv.Itoa(port))
+}
+
+// currentAPIKey 读取当前配置中的 API Key（空串表示未启用认证）。
+func (s *Server) currentAPIKey() string {
+	if s == nil || s.config == nil {
+		return ""
+	}
+	s.configMu.RLock()
+	defer s.configMu.RUnlock()
+	return s.config.APIKey
+}
+
+// shouldWarnUnsafeBind 判断是否需要提示不安全的绑定组合：监听非 loopback
+// 且未配置 API Key 时，任意同网段客户端可无认证访问删除/关停接口。
+func shouldWarnUnsafeBind(bindAddress, apiKey string) bool {
+	if apiKey != "" {
+		return false
+	}
+	switch bindAddress {
+	case "127.0.0.1", "::1", "localhost":
+		return false
+	default:
+		return true
+	}
 }
 
 // TaskManager 返回任务管理器（用于 bot 集成）
@@ -323,7 +378,7 @@ func getPrimaryIP() string {
 func (s *Server) Start(port int) error {
 	handler := s.buildHandler()
 
-	addr := fmt.Sprintf(":%d", port)
+	addr := serverListenAddr(s.bindAddress, port)
 	httpServer := &http.Server{
 		Addr:        addr,
 		Handler:     handler,
@@ -348,6 +403,9 @@ func (s *Server) Start(port int) error {
 	s.lifecycleMu.Unlock()
 
 	log.Infof("[server] API server starting addr=%s", addr)
+	if shouldWarnUnsafeBind(s.bindAddress, s.currentAPIKey()) {
+		log.Warnf("[server] Listening on a non-loopback address without an API key — any host on the local network can reach delete/shutdown endpoints. Set api_key or bind to 127.0.0.1.")
+	}
 	blue := color.FgLightBlue.Render
 	log.Infof("[server] Visit url=%s", blue("http://localhost"+addr+"/"))
 	if lanIP := getPrimaryIP(); lanIP != "" {

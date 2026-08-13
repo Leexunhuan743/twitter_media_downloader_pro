@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -28,9 +30,40 @@ func (s *Server) resolvePathID(w http.ResponseWriter, r *http.Request, paramName
 
 // ============ JSON 请求体解析 ============
 
-// decodeBody 解析 JSON 请求体，解析失败时自动写入 400 响应。
+// JSON 请求体大小上限：普通 JSON（配置、Cookie、调度条目、下载任务参数）
+// 统一 1MB——足够承载真实负载，同时防止恶意/误操作大 body 撑爆内存。
+// 上传接口（multipart 文件）与批量任务使用各自更大的显式上限。
+const defaultJSONBodyLimit = 1 << 20
+
+// rawContentBodyLimit 用于携带 raw YAML/批量内容字段的请求（conf.yaml、
+// schedules.yaml、cookies YAML、批量任务列表）：内容本身可能较大，但仍
+// 必须有界，防止无限写入磁盘。
+const rawContentBodyLimit = 16 << 20
+
+// limitJSONBody 为直接 json.NewDecoder 解码的 handler 套上统一大小上限，
+// 返回的 error 可通过 writeBodyTooLarge 判断是否为超限。
+func (s *Server) limitJSONBody(w http.ResponseWriter, r *http.Request, limit int64) {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+}
+
+// writeBodyTooLarge 在解码错误为超限时写入 413 并返回 true。
+func (s *Server) writeBodyTooLarge(w http.ResponseWriter, err error) bool {
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		s.writeError(w, http.StatusRequestEntityTooLarge, "Request body too large")
+		return true
+	}
+	return false
+}
+
+// decodeBody 解析 JSON 请求体，解析失败或超限时自动写入错误响应。
+// 超限返回 413，与上传接口的 MaxBytesReader 语义一致。
 func (s *Server) decodeBody(w http.ResponseWriter, r *http.Request, dest interface{}) bool {
+	s.limitJSONBody(w, r, defaultJSONBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
+		if s.writeBodyTooLarge(w, err) {
+			return false
+		}
 		log.Debugf("[api] Invalid request body path=%q error=%q", r.URL.Path, err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return false
@@ -203,26 +236,28 @@ type userCascadeCount struct {
 }
 
 // countLstEntities 统计列表拥有的实体数（列表删除时逐个走实体生命周期）。
-func (s *Server) countLstEntities(id uint64) int {
+// 计数失败返回 error：删除流程必须 fail-closed，不能返回 0 继续破坏性级联。
+func (s *Server) countLstEntities(id uint64) (int, error) {
 	var count int
 	if err := s.db.Get(&count, "SELECT COUNT(*) FROM lst_entities WHERE lst_id = ?", id); err != nil {
-		log.Warnf("[db] List entity count failed lst_id=%d error=%q", id, err.Error())
-		return 0
+		return 0, fmt.Errorf("count list entities for lst %d: %w", id, err)
 	}
-	return count
+	return count, nil
 }
 
-// countUserCascade 统计删除用户时需要级联删除的记录数
-func (s *Server) countUserCascade(id uint64) userCascadeCount {
+// countUserCascade 统计删除用户时需要级联删除的记录数。
+// 任一计数失败返回 error：删除流程必须 fail-closed，不能 Warn+0 继续——
+// 否则只删一条实体、DelUser 事务删剩余行，留下无 journal 孤儿媒体目录。
+func (s *Server) countUserCascade(id uint64) (userCascadeCount, error) {
 	var c userCascadeCount
 	if err := s.db.Get(&c.linkCount, "SELECT COUNT(*) FROM user_links WHERE user_id = ?", id); err != nil {
-		log.Warnf("[db] Cascade count failed table=user_links user_id=%d error=%q", id, err.Error())
+		return c, fmt.Errorf("count user links for user %d: %w", id, err)
 	}
 	if err := s.db.Get(&c.entityCount, "SELECT COUNT(*) FROM user_entities WHERE user_id = ?", id); err != nil {
-		log.Warnf("[db] Cascade count failed table=user_entities user_id=%d error=%q", id, err.Error())
+		return c, fmt.Errorf("count user entities for user %d: %w", id, err)
 	}
 	if err := s.db.Get(&c.nameCount, "SELECT COUNT(*) FROM user_previous_names WHERE user_id = ?", id); err != nil {
-		log.Warnf("[db] Cascade count failed table=user_previous_names user_id=%d error=%q", id, err.Error())
+		return c, fmt.Errorf("count user previous names for user %d: %w", id, err)
 	}
-	return c
+	return c, nil
 }

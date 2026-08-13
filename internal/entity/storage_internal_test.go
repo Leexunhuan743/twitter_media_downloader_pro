@@ -60,6 +60,7 @@ func TestValidateNameRejectsWindowsIncompatibleNames(t *testing.T) {
 		"bad:name", "bad*name", "bad?name", `bad"name`, "bad<name", "bad>name", "bad|name",
 		"CON", "con.txt", "CON .txt", "PRN", "AUX.log", "NUL", "COM1", "com9.txt", "COM1 .log",
 		"LPT1", "lpt9.log", "com\u00b9.txt", "LPT\u00b3.log",
+		"CLOCK$", "CONIN$", "CONOUT$",
 		"control\x1fname",
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -436,6 +437,47 @@ func TestCleanupStagedDirectoriesDeduplicatesSamePathCandidates(t *testing.T) {
 	assert.Equal(t, 1, cleanup.Restored)
 	assert.FileExists(t, filepath.Join(parentDir, "same-name", "media.jpg"))
 	assert.NoDirExists(t, stagedPath)
+}
+
+func TestCleanupStagedDirectoriesRetainsZeroCandidateStageWithCrossPlatformHash(t *testing.T) {
+	// H2 修复回归：跨平台 hash 失配（stage 在 Linux 用原样名 "foo." 创建，
+	// Windows 扫描时 active 记录归一化为 "foo"）导致零候选；若 active 目录
+	// 存在但 hash 不匹配，绝不能 RemoveAll 掉 staged 媒体——应保留。
+	db := openStorageTestDB(t)
+	parentDir := t.TempDir()
+	seedStorageUserEntity(t, db, parentDir, "foo.")
+	// active 目录存在（Windows 上尾点归一化为 "foo"）
+	require.NoError(t, os.Mkdir(filepath.Join(parentDir, "foo"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(parentDir, "foo", "active-media.jpg"), []byte("keep"), 0600))
+	// staged 目录：hash 基于原样名 "foo."（Linux 创建，无 journal）
+	stagedPath := filepath.Join(parentDir, strings.TrimSuffix(stagedDirectoryPattern(filepath.Join(parentDir, "foo.")), "*")+"fixture")
+	require.NoError(t, os.Mkdir(stagedPath, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(stagedPath, "staged-media.jpg"), []byte("keep"), 0600))
+
+	cleanup, err := CleanupStagedDirectories(db)
+
+	// 修复后：hash 归一化（TrimRight 尾点）使 stage 与 active 记录匹配，
+	// 恢复目标已存在 → retain（不删除）。修复前：零候选 RemoveAll 删媒体。
+	assert.Zero(t, cleanup.Removed, "staged media must not be removed while record is active")
+	assert.DirExists(t, stagedPath)
+	assert.FileExists(t, filepath.Join(stagedPath, "staged-media.jpg"))
+	assert.FileExists(t, filepath.Join(parentDir, "foo", "active-media.jpg"))
+	_ = err
+}
+
+func TestStagedDirectoryHashNormalizesTrailingDotsAndSpaces(t *testing.T) {
+	// hash 计算必须剥离尾点/尾空格：Windows 上 "foo." 与 "foo" 是同一
+	// 目录（storedEntityPath 归一化），stage 与扫描必须产生相同 hash，
+	// 否则跨平台恢复失配。
+	if got := stagedDirectoryNameHash("foo."); got != stagedDirectoryNameHash("foo") {
+		t.Errorf("hash(\"foo.\") = %s != hash(\"foo\") = %s", got, stagedDirectoryNameHash("foo"))
+	}
+	if got := stagedDirectoryNameHash("foo "); got != stagedDirectoryNameHash("foo") {
+		t.Errorf("hash(\"foo \") = %s != hash(\"foo\") = %s", got, stagedDirectoryNameHash("foo"))
+	}
+	if got := stagedDirectoryNameHash("foo.bar"); got == stagedDirectoryNameHash("foo") {
+		t.Errorf("interior dot must not be stripped")
+	}
 }
 
 func TestStagedDirectoryHashRoundTrip(t *testing.T) {

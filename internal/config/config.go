@@ -42,6 +42,7 @@ type Config struct {
 	MaxFileNameLen     int    `yaml:"max_file_name_len"`
 	ProxyURL           string `yaml:"proxy_url"`
 	APIKey             string `yaml:"api_key"`
+	BindAddress        string `yaml:"bind_address"`
 }
 type BotConfig struct {
 	Telegram *TelegramBotConfig `yaml:"telegram,omitempty"`
@@ -400,8 +401,8 @@ func NormalizeLoadedConf(conf *Config) error {
 
 	// 规范化 MaxFileNameLen：0 表示"使用默认值"；负数归零；低于下限或高于上限时截断
 	conf.MaxFileNameLen = normalizeInt(conf.MaxFileNameLen, 0, MinFileNameLen, MaxFileNameLen)
-
 	conf.APIKey = strings.TrimSpace(conf.APIKey)
+	conf.BindAddress = strings.TrimSpace(conf.BindAddress)
 
 	return nil
 }

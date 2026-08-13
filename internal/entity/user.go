@@ -71,7 +71,10 @@ func (ue *UserEntity) Create(name string) error {
 	// 此时新建目录会让两个实体记录共享同一目录（媒体混写）。
 	owned, ownerErr := entityDirectoryOwnedByAnother(ue.db, ue.record.ParentDir, path, "user", ue.record.UserId)
 	if ownerErr != nil {
-		return fmt.Errorf("create %s: %w", ue.description(), ownerErr)
+		// 归属检查查询失败（瞬时 SQLITE_BUSY/IO）：本次若新建了目录，
+		// 必须回滚移除，否则残留孤儿空目录且无自愈机制（启动清扫只
+		// 处理 .tmd-remove-* 前缀）。
+		return change.rollback(fmt.Errorf("create %s: %w", ue.description(), ownerErr))
 	}
 	if owned {
 		// 目录归属冲突：若本次新建了目录，回滚移除，避免残留空目录。

@@ -239,6 +239,63 @@ func TestSanitizeHeadersRedactsCredentials(t *testing.T) {
 	assert.Equal(t, "Bearer secret-bearer", h.Get("Authorization"))
 }
 
+func TestRedactSensitiveTextMasksBearerAcrossNewline(t *testing.T) {
+	// H6 修复回归：Bearer 令牌被换行续行拆开（多行日志、HTTP 头换行
+	// 包装）时，令牌本体必须同样被掩码，不能明文进日志。
+	cases := []string{
+		"Bearer\nSECRET123",
+		"Bearer\rSECRET123",
+		"Authorization: Bearer\nSECRET123",
+		"token=Bearer\nSECRET123",
+	}
+	for _, in := range cases {
+		t.Run(in, func(t *testing.T) {
+			got := RedactSensitiveText(in)
+
+			assert.NotContains(t, got, "SECRET123")
+			assert.Contains(t, got, "[redacted:")
+		})
+	}
+}
+
+func TestRedactSensitiveTextMasksTelegramBotTokenInPath(t *testing.T) {
+	// P1-4：Telegram token 位于 URL path（/bot<id>:<secret>/...），
+	// SanitizeURL 只处理 userinfo/query/fragment 会放行 path 型凭据。
+	// 必须在 URL 层识别 Telegram bot path 并掩码 token。
+	const token = "123456789:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+	cases := []string{
+		"https://api.telegram.org/bot" + token + "/getMe",
+		"https://api.telegram.org/file/bot" + token + "/photos/photo.jpg",
+		"failed to get me: Get \"https://api.telegram.org/bot" + token + "/getMe\": dial tcp: connection refused",
+	}
+	for _, in := range cases {
+		t.Run(in, func(t *testing.T) {
+			got := SanitizeLogText(in)
+
+			assert.NotContains(t, got, token)
+			// u.String() 将 [redacted:...] 的方括号 percent-encode（path 段
+			// 冒号不编码），输出形如 bot%5Bredacted:hex%5D。
+			assert.Contains(t, got, "%5Bredacted")
+			// 幂等：二次处理稳定，不二次改写指纹。
+			assert.Equal(t, got, SanitizeLogText(got))
+		})
+	}
+
+	// 非 Telegram URL 的 path 不得被误伤。
+	got := SanitizeLogText("https://api.telegram.org/bot-helper/groups")
+	assert.Equal(t, "https://api.telegram.org/bot-helper/groups", got)
+}
+
+func TestSanitizeURLMasksEncodedKeyCarryingSensitiveValue(t *testing.T) {
+	// Low#6：URL 编码的 '=' 混入键名时（"token%3DSECRET123"），ParseQuery
+	// 把整串解码为 key、value 为空——键本身携带敏感字段名与值，必须掩码。
+	got := SanitizeURL("https://example.com/?token%3DSECRET123&q=keep")
+
+	assert.NotContains(t, got, "SECRET123")
+	assert.Contains(t, got, "redacted")
+	assert.Contains(t, got, "q=keep")
+}
+
 func TestSanitizeHeadersHandlesNonCanonicalSensitiveNames(t *testing.T) {
 	h := http.Header{
 		"authorization": {"Bearer lower-secret"},

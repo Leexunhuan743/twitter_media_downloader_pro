@@ -79,6 +79,10 @@ func WinFileNameWithMaxLen(name string, maxLen int) string {
 // 不裁剪这些字符，升级后若裁剪会导致已下载文件被改名、触发重复下载；因此
 // tweet 文本路径必须使用本函数保持文件名稳定。控制字符仍被剔除：旧版本对
 // 含控制字符的文本在 Windows 上本就无法创建文件，不存在需要兼容的旧文件。
+// 注意平台差异：在 Linux/macOS 上控制字符是合法文件名，旧版本可能在升级前
+// 创建过含控制字符的文件（如 "a\x01b_123.jpg"）；升级后同一推文重新拉取会
+// 生成剔除控制字符的新名（"ab_123.jpg"），旧文件成为孤儿——仅一次性重复
+// 下载+残留，不损坏数据，且只在升级后重新拉取该推文时发生。
 func WinFileNameWithMaxLenStable(name string, maxLen int) string {
 	if maxLen <= 0 {
 		return ""

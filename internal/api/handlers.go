@@ -275,7 +275,11 @@ func (s *Server) handleSetTheme(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Theme string `json:"theme"`
 	}
+	s.limitJSONBody(w, r, defaultJSONBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if s.writeBodyTooLarge(w, err) {
+			return
+		}
 		log.Debugf("[theme] Invalid request body error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid JSON body")
 		return

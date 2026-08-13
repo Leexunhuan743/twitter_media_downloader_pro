@@ -50,6 +50,7 @@ A background goroutine checks the schedule periodically and triggers downloads.
 
 - Background goroutine with periodic ticker
 - On schedule match → calls `DownloadFunc` (bound to `server.scheduledDownload`)
+- `scheduledDownload` normalizes the entry into standard `TaskType` + `TaskData`, adds `EntryID` at task creation, then uses the shared task admission path. It never constructs a `DownloadService` closure itself; `buildTaskRunFunc` is the sole service mapper.
 - Creates a task → enqueues to [[task-management|DownloadQueue]] → normal task flow
 - Tracks: run state, consecutive failure count, next execution time
 - API endpoints to CRUD schedules, validate expressions, trigger immediately

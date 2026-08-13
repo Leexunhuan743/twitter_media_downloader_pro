@@ -28,7 +28,10 @@ func Connect(path string) (*sqlx.DB, error) {
 
 	configureSQLiteConnection(db)
 
-	CreateTables(db)
+	if err := CreateTables(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to initialize tables at %q: %w", path, err)
+	}
 	if err := MigrateDatabase(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to migrate database at %q: %w", path, err)

@@ -17,7 +17,7 @@ Optional bearer-token authentication layer. When the API key is empty, auth is d
 - Configured via `conf.yaml` → `api_key` field or `TMD_API_KEY` env var
 - Empty key → auth disabled (backward compatible)
 - `Authorization: Bearer <token>` header (primary), `?token=` query param fallback for SSE
-- Public whitelist: health check, theme config, Web UI pages, static files
+- Public whitelist: health check, theme config, Web UI pages, static files, and exactly the bot callback paths registered via `[[internal/api/server.go#RegisterBotCallback]]` (third-party platforms carry no TMD Bearer and self-verify with `verify_token`/`encrypt_key`; the whitelist is exact-path, never a broad `/api/v1/bot/` prefix)
 - 401 response body is always `{"success":false,"error":"unauthorized"}` + `WWW-Authenticate: Bearer`
 - Failure details for clients are exposed via `X-Token-Type` (`missing`, `invalid`, or `expired`) rather than the JSON error field
 
@@ -27,9 +27,19 @@ JWT-based authentication endpoints. Only available when `api_key` is configured.
 
 ```
 POST /api/v1/auth/login    # Login with API key, returns JWT token
-POST /api/v1/auth/refresh  # Refresh JWT token before expiry
+POST /api/v1/auth/refresh  # Refresh JWT token; expired tokens accepted only within 24h of issuance
 GET  /api/v1/auth/check    # Check current JWT validity
 ```
+
+Refresh 链受 `jwtMaxRefreshAge`（24 小时，按 IssuedAt 计）限制：持续续期的会话保持有效，但签发超过该窗口的过期令牌（如被盗后无限续期）被拒绝，`X-Token-Type=too-old`。这使轮换 `api_key` 成为吊销泄漏会话的有效手段。
+
+## Userscript Remote API Access
+
+The download-button userscript can target any API host configured through its menu, including LAN servers, while TMD authentication remains a separate server-side control.
+
+- `GM_xmlhttpRequest` uses `@connect *` because userscript metadata is static but the API address is user-configurable.
+- The wildcard grants outbound request eligibility to the userscript; it does not publish the TMD server or bypass its API key.
+- Remote deployments should keep the server restricted to trusted networks and configure an API key.
 
 Web1 treats `401` as an auth boundary instead of a page-local load error. `X-Token-Type=expired` allows one JWT refresh attempt; invalid or missing tokens go straight to the auth dialog. Final auth failure clears cached JWT state and opens the dialog with a readable status message.
 
@@ -114,7 +124,7 @@ GET      /api/v1/db/user-previous-names
 GET      /api/v1/db/stats
 ```
 
-Entity mutations validate the complete request before mutation. User metadata fields update atomically before an optional name change; name changes move the matching storage directory through the shared [[database#Database#Entity Storage Lifecycle]]. Target/name races return `409 Conflict`, rows deleted during the operation return `404 Not Found`, and `parent_dir` remains immutable. When a name change fails after statistics were already saved, the 409 response's `error` message states that the statistics were saved but the name change was rejected (retry is idempotent). Deleting a user/list entity also deletes its directory through staged removal with rollback on database failure; deleting a user or list cascades through its entities first, so their media directories are removed through the same staged lifecycle instead of being orphaned. The global previous-names search (`?q=`) matches screen name and display name fields (including the joined current user name); Web3's Previous Names tab uses the `user-previous-names` path, and Web2's stats cards read the backend `lsts` key.
+Entity mutations validate the complete request before mutation. User metadata fields update atomically before an optional name change; name changes move the matching storage directory through the shared [[database#Database#Entity Storage Lifecycle]]. Target/name races return `409 Conflict`, rows deleted during the operation return `404 Not Found`, and `parent_dir` remains immutable. When a name change fails after statistics were already saved, the 409 response's `error` message states that the statistics were saved but the name change was rejected (retry is idempotent). Deleting a user/list entity also deletes its directory through staged removal with rollback on database failure; deleting a user or list cascades through its entities first (query-until-empty, not relying on a pre-count), so their media directories are never orphaned — a cascade-count failure rejects the whole delete with 500 rather than degrading to a destructive partial cascade. JSON request bodies are bounded (`defaultJSONBodyLimit` 1 MiB for ordinary JSON, `rawContentBodyLimit` 16 MiB for raw YAML/batch payloads) and return `413` when exceeded; uploads keep their own larger limits. The server binds `0.0.0.0` by default for start-server.bat/Docker compatibility, accepts an explicit `bind_address` config value, and emits a warning when a non-loopback bind has no API key. The global previous-names search (`?q=`) matches screen name and display name fields (including the joined current user name); Web3's Previous Names tab uses the `user-previous-names` path, and Web2's stats cards read the backend `lsts` key.
 
 ## Web UI
 

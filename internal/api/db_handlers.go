@@ -17,6 +17,10 @@ import (
 
 // ============ 排序字段白名单 ============
 
+// entityDeleteBatchSize 是级联删除时每轮查询实体数（query-until-empty
+// 循环的批大小，避免 count+1 守卫的并发竞态）。
+const entityDeleteBatchSize = 100
+
 var userSortFields = map[string]string{
 	"id":            "id",
 	"screen_name":   "screen_name",
@@ -213,20 +217,34 @@ func (s *Server) handleDBUserDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cascade := s.countUserCascade(id)
+	// 级联计数失败必须拒绝整个删除（fail-closed）：若返回 0 继续，则只删
+	// 一条实体、DelUser 事务删剩余行，留下无 journal 的孤儿媒体目录。
+	cascade, err := s.countUserCascade(id)
+	if err != nil {
+		s.dbWriteError(w, err, "CountUserCascade")
+		return
+	}
 
 	// 先按实体生命周期（staged removal + journal）删除用户实体目录，
 	// 再删用户行；否则 DelUser 直删行会留下无 journal 的孤儿媒体目录。
-	entities, err := database.QueryUserEntities(s.db, "user_id = ?", []interface{}{id}, "", cascade.entityCount+1, 0)
-	if err != nil {
-		s.dbWriteError(w, err, "QueryUserEntities")
-		return
-	}
-	for i := range entities {
-		managed := entitypkg.NewUserEntityFromRecord(s.db, &entities[i])
-		if err := managed.Remove(); err != nil {
-			s.writeEntityMutationError(w, err, "Entity", "Entity directory already exists", "RemoveUserEntity")
+	// 循环查询直到无剩余实体：不依赖 count 精度（并发新建实体可能超过
+	// count+1 守卫），确保全部实体走 staged removal 而不是被 DelUser
+	// 事务直接删行。
+	for {
+		entities, err := database.QueryUserEntities(s.db, "user_id = ?", []interface{}{id}, "", entityDeleteBatchSize, 0)
+		if err != nil {
+			s.dbWriteError(w, err, "QueryUserEntities")
 			return
+		}
+		if len(entities) == 0 {
+			break
+		}
+		for i := range entities {
+			managed := entitypkg.NewUserEntityFromRecord(s.db, &entities[i])
+			if err := managed.Remove(); err != nil {
+				s.writeEntityMutationError(w, err, "Entity", "Entity directory already exists", "RemoveUserEntity")
+				return
+			}
 		}
 	}
 
@@ -363,17 +381,23 @@ func (s *Server) handleDBListDelete(w http.ResponseWriter, r *http.Request) {
 
 	// 先按实体生命周期（staged removal + journal）删除列表实体目录；
 	// DelLst 的事务级联只删行，会留下无 journal 的孤儿媒体目录。
-	listEntityCount := s.countLstEntities(id)
-	listEntities, err := database.QueryLstEntities(s.db, "lst_id = ?", []interface{}{id}, "", listEntityCount+1, 0)
-	if err != nil {
-		s.dbWriteError(w, err, "QueryLstEntities")
-		return
-	}
-	for i := range listEntities {
-		managed := entitypkg.NewListEntityFromRecord(s.db, &listEntities[i])
-		if err := managed.Remove(); err != nil {
-			s.writeEntityMutationError(w, err, "List entity", "List entity directory already exists", "RemoveListEntity")
+	// 循环查询直到无剩余实体：不依赖 count 精度，确保全部实体走
+	// staged removal 而不是被 DelLst 事务直接删行。
+	for {
+		listEntities, err := database.QueryLstEntities(s.db, "lst_id = ?", []interface{}{id}, "", entityDeleteBatchSize, 0)
+		if err != nil {
+			s.dbWriteError(w, err, "QueryLstEntities")
 			return
+		}
+		if len(listEntities) == 0 {
+			break
+		}
+		for i := range listEntities {
+			managed := entitypkg.NewListEntityFromRecord(s.db, &listEntities[i])
+			if err := managed.Remove(); err != nil {
+				s.writeEntityMutationError(w, err, "List entity", "List entity directory already exists", "RemoveListEntity")
+				return
+			}
 		}
 	}
 

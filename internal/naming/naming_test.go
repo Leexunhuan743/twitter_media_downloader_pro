@@ -692,27 +692,38 @@ func TestExtReserveLen(t *testing.T) {
 
 func TestTweetNaming_Concurrent(t *testing.T) {
 	tn := NewTweetNaming("test tweet", 12345, "testuser", testMaxFileNameLen)
+	// 串行基线：命名对象构造后不可变，并发调用必须与串行结果一致，
+	// 否则说明引入了共享可变状态（数据竞争）。
+	baseLog := tn.LogFormat()
+	baseName := tn.FileName(".jpg")
+	basePath, baseErr := tn.FilePath("temp", ".txt")
 
-	// 并发调用各种方法
 	done := make(chan bool, 3)
 
 	go func() {
 		for i := 0; i < 100; i++ {
-			_ = tn.LogFormat()
+			if got := tn.LogFormat(); got != baseLog {
+				t.Errorf("LogFormat() = %q, want %q", got, baseLog)
+			}
 		}
 		done <- true
 	}()
 
 	go func() {
 		for i := 0; i < 100; i++ {
-			_ = tn.FileName(".jpg")
+			if got := tn.FileName(".jpg"); got != baseName {
+				t.Errorf("FileName() = %q, want %q", got, baseName)
+			}
 		}
 		done <- true
 	}()
 
 	go func() {
 		for i := 0; i < 100; i++ {
-			_, _ = tn.FilePath("temp", ".txt")
+			got, err := tn.FilePath("temp", ".txt")
+			if err != baseErr || got != basePath {
+				t.Errorf("FilePath() = %q,%v want %q,%v", got, err, basePath, baseErr)
+			}
 		}
 		done <- true
 	}()
@@ -724,19 +735,24 @@ func TestTweetNaming_Concurrent(t *testing.T) {
 
 func TestUserNaming_Concurrent(t *testing.T) {
 	un := NewUserNaming("User", "screen", testMaxFileNameLen)
+	base := un.SanitizedTitle()
 
 	done := make(chan bool, 2)
 
 	go func() {
 		for i := 0; i < 100; i++ {
-			_ = un.SanitizedTitle()
+			if got := un.SanitizedTitle(); got != base {
+				t.Errorf("SanitizedTitle() = %q, want %q", got, base)
+			}
 		}
 		done <- true
 	}()
 
 	go func() {
 		for i := 0; i < 100; i++ {
-			_ = un.SanitizedTitle()
+			if got := un.SanitizedTitle(); got != base {
+				t.Errorf("SanitizedTitle() = %q, want %q", got, base)
+			}
 		}
 		done <- true
 	}()
@@ -748,19 +764,24 @@ func TestUserNaming_Concurrent(t *testing.T) {
 
 func TestListNaming_Concurrent(t *testing.T) {
 	ln := NewListNamingFromBase(&mockListBase{id: 1, title: "Test List"}, testMaxFileNameLen)
+	base := ln.SanitizedTitle()
 
 	done := make(chan bool, 2)
 
 	go func() {
 		for i := 0; i < 100; i++ {
-			_ = ln.SanitizedTitle()
+			if got := ln.SanitizedTitle(); got != base {
+				t.Errorf("SanitizedTitle() = %q, want %q", got, base)
+			}
 		}
 		done <- true
 	}()
 
 	go func() {
 		for i := 0; i < 100; i++ {
-			_ = ln.SanitizedTitle()
+			if got := ln.SanitizedTitle(); got != base {
+				t.Errorf("SanitizedTitle() = %q, want %q", got, base)
+			}
 		}
 		done <- true
 	}()

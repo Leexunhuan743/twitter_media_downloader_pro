@@ -42,7 +42,7 @@ provider command
 → provider task notification
 ```
 
-The key invariant is that creating a task is not enough. Any command that starts work must call `Server.EnqueueTask`, otherwise the task will remain queued forever.
+The key invariant is that creating a task is not enough. Any command that starts work must call `Server.EnqueueTask`, otherwise the task will remain queued forever. `EnqueueTask` and `DownloadQueue.Enqueue` return an error when the queue is closed (shutdown window): the rejected task is converted to a terminal `Failed` state so callers never receive a false "queued" success.
 
 `/cancel` must call `TaskManager.CancelTask` so task status, context cancellation, EventBus updates, and logs stay consistent. Calling only `task.Cancel()` cancels the context without updating task state.
 

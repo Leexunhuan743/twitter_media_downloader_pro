@@ -219,7 +219,12 @@ func TestRenameRejectsExistingDestination(t *testing.T) {
 	}
 }
 
-func TestRenameRejectsExistingDestinationWhenSourceIsMissing(t *testing.T) {
+func TestRenameSelfHealsWhenSourceMissingAndDestinationExists(t *testing.T) {
+	// 崩溃窗口自愈：Rename 的「目录移动」已成功（目录在目标位置）但
+	// DB 记录尚未更新（进程在两步之间被杀/断电），下次 Sync 必须收敛
+	// 而不是永久 ErrPathConflict。目标目录既可能是上次 rename 移过去的
+	// 实体目录，也可能是用户手工放置的目录——两者 FS 状态不可区分，
+	// 接管（保留目录内容、提交 DB 记录）优先于永久卡死。
 	for _, fixture := range entityFixtures {
 		t.Run(fixture.name, func(t *testing.T) {
 			db := openEntityTestDB(t)
@@ -232,11 +237,37 @@ func TestRenameRejectsExistingDestinationWhenSourceIsMissing(t *testing.T) {
 
 			err := result.Rename("new")
 
-			assert.Error(t, err)
+			assert.NoError(t, err)
 			assert.FileExists(t, filepath.Join(parentDir, "new", "marker.txt"))
 			name, nameErr := result.Name()
 			require.NoError(t, nameErr)
-			assert.Equal(t, "old", name)
+			assert.Equal(t, "new", name)
+			assert.NoDirExists(t, filepath.Join(parentDir, "old"))
+		})
+	}
+}
+
+func TestRenameSelfHealsThroughSyncAfterCrashWindow(t *testing.T) {
+	// 完整用户路径：实体目录已在新名、DB 记录仍是旧名（rename 崩溃
+	// 残留），重启后 Sync(expectedName) 应成功收敛，而不是永久失败。
+	for _, fixture := range entityFixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			db := openEntityTestDB(t)
+			parentDir := t.TempDir()
+			result := newFixtureEntity(t, fixture, db, parentDir)
+			require.NoError(t, result.Create("old"))
+			require.NoError(t, os.Rename(filepath.Join(parentDir, "old"), filepath.Join(parentDir, "new")))
+
+			reloaded, err := fixture.newEntity(db, parentDir)
+			require.NoError(t, err)
+			err = entity.Sync(reloaded, "new")
+
+			assert.NoError(t, err)
+			name, nameErr := reloaded.Name()
+			require.NoError(t, nameErr)
+			assert.Equal(t, "new", name)
+			assert.DirExists(t, filepath.Join(parentDir, "new"))
+			assert.NoDirExists(t, filepath.Join(parentDir, "old"))
 		})
 	}
 }
@@ -444,6 +475,35 @@ func TestCreateAllowsSameOwnerDirectoryReuse(t *testing.T) {
 	err := first.Create("own-dir")
 	assert.Error(t, err)
 	assert.DirExists(t, filepath.Join(parentDir, "own-dir"))
+}
+
+func TestCreateRollsBackDirectoryWhenOwnershipCheckFails(t *testing.T) {
+	// E1 修复回归：归属检查（entityDirectoryOwnedByAnother）的 SELECT 失败
+	// 时，本次新建的目录必须回滚，不能残留孤儿空目录。
+	for _, fixture := range entityFixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			db := openEntityTestDB(t)
+			parentDir := t.TempDir()
+			result := newFixtureEntity(t, fixture, db, parentDir)
+			// 预检 LocateUserEntity/LocateLstEntity 只查本实体表；归属检查
+			// 的 UNION SELECT 会查另一张表。DROP 另一张表使归属检查失败，
+			// 且不影响预检与最终写入路径的走向。
+			if fixture.name == "user" {
+				_, err := db.Exec(`DROP TABLE lst_entities`)
+				require.NoError(t, err)
+			} else {
+				_, err := db.Exec(`DROP TABLE user_entities`)
+				require.NoError(t, err)
+			}
+
+			err := result.Create("created")
+
+			assert.Error(t, err)
+			assert.NoDirExists(t, filepath.Join(parentDir, "created"), "directory must be rolled back when ownership check fails")
+			_, nameErr := result.Name()
+			assert.Error(t, nameErr)
+		})
+	}
 }
 
 func TestRenameRejectsTargetOwnedByAnotherEntity(t *testing.T) {

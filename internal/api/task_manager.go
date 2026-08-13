@@ -42,8 +42,15 @@ func (tm *TaskManager) publishTasks() {
 	tm.eventBus.Publish("tasks", tasks)
 }
 
-// CreateTask 创建任务
+// CreateTask creates a task without source metadata.
 func (tm *TaskManager) CreateTask(taskType TaskType, data interface{}) *Task {
+	return tm.CreateTaskWithOptions(taskType, data, TaskCreateOptions{})
+}
+
+// CreateTaskWithOptions creates and publishes a task with immutable
+// creation-time metadata. Callers must supply an EntryID here rather than
+// patching a live task after it has already been published.
+func (tm *TaskManager) CreateTaskWithOptions(taskType TaskType, data interface{}, options TaskCreateOptions) *Task {
 	tm.mu.Lock()
 
 	now := time.Now()
@@ -55,6 +62,7 @@ func (tm *TaskManager) CreateTask(taskType TaskType, data interface{}) *Task {
 	ctx, cancel := context.WithCancel(context.Background())
 	task := &Task{
 		ID:        tm.nextTaskIDLocked(),
+		EntryID:   options.EntryID,
 		Type:      taskType,
 		Status:    TaskStatusQueued,
 		Data:      cloneTaskData(data),
@@ -596,9 +604,10 @@ func (tm *TaskManager) RetryTask(id string) (*Task, RetryTaskResult) {
 
 	taskType := original.Type
 	taskData := cloneTaskData(original.Data)
+	entryID := original.EntryID
 	tm.mu.RUnlock()
 
-	newTask := tm.CreateTask(taskType, taskData)
+	newTask := tm.CreateTaskWithOptions(taskType, taskData, TaskCreateOptions{EntryID: entryID})
 	return newTask, RetryTaskResultSuccess
 }
 

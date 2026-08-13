@@ -17,7 +17,7 @@ import (
 func setupUserEntityTestDB(t *testing.T) *sqlx.DB {
 	db, err := sqlx.Connect(database.DriverName, database.MemoryDSN(true))
 	require.NoError(t, err)
-	database.CreateTables(db)
+		require.NoError(t, database.CreateTables(db))
 
 	usr := &database.User{
 		Id:           1,

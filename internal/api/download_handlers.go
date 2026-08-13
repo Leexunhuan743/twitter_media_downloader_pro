@@ -30,25 +30,36 @@ const (
 	maxUploadMemory      = 32 << 20
 )
 
-func (s *Server) enqueueTask(task *Task, run func(ctx context.Context, taskID string, reporter service.ProgressReporter) error) {
+// enqueueTask 入队任务。入队失败（队列已关闭/不可用）时把任务转为 Failed
+// 终态并返回错误，调用方不应再向客户端回复"已排队"成功。
+func (s *Server) enqueueTask(task *Task, run func(ctx context.Context, taskID string, reporter service.ProgressReporter) error) error {
 	if s.downloadQueue == nil {
-		s.taskManager.SetTaskError(task.ID, errors.New("download queue not available"))
-		return
+		err := errors.New("download queue not available")
+		s.taskManager.SetTaskError(task.ID, err)
+		return err
 	}
-	s.downloadQueue.Enqueue(task, run)
+	if err := s.downloadQueue.Enqueue(task, run); err != nil {
+		s.taskManager.SetTaskError(task.ID, err)
+		log.Warnf("[tasks] Enqueue rejected task_id=%s type=%s error=%q", task.ID, task.Type, err.Error())
+		return err
+	}
+	return nil
 }
 
-// buildAndEnqueueTask 构建 task 的运行函数并入队。构建失败时写入 500 响应并返回 false，
-// 调用方应在返回 false 时立即 return。统一 12 处下载处理器的"构建+入队"重复逻辑。
-// 注意：上传变体（需 cleanupUploadDirAfterTask 包装）和重试变体（不入队）不适用本方法。
+// buildAndEnqueueTask admits an existing HTTP task through the same mapper and
+// queue path used by bot, scheduler, and system tasks. It writes a 500/503
+// response on rejection, and callers must return immediately when it is false.
+// Upload variants still build the mapper result directly so they can wrap it
+// with temporary-upload cleanup.
 func (s *Server) buildAndEnqueueTask(w http.ResponseWriter, task *Task) bool {
-	runFunc, err := s.buildTaskRunFunc(task)
-	if err != nil {
-		log.Errorf("[tasks] Run function build failed task_id=%s type=%s error=%q", task.ID, task.Type, err.Error())
-		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
+	if err := s.EnqueueTask(task); err != nil {
+		if errors.Is(err, ErrQueueClosed) {
+			s.writeError(w, http.StatusServiceUnavailable, "Task rejected during shutdown")
+		} else {
+			s.writeError(w, http.StatusInternalServerError, "Failed to create task")
+		}
 		return false
 	}
-	s.enqueueTask(task, runFunc)
 	return true
 }
 
@@ -66,10 +77,23 @@ func (s *Server) EnqueueTask(task *Task) error {
 	runFunc, err := s.buildTaskRunFunc(task)
 	if err != nil {
 		s.taskManager.SetTaskError(task.ID, err)
+		log.Errorf("[tasks] Run function build failed task_id=%s type=%s error=%q", task.ID, task.Type, err.Error())
 		return err
 	}
-	s.enqueueTask(task, runFunc)
-	return nil
+	return s.enqueueTask(task, runFunc)
+}
+
+// createAndEnqueueTask is the canonical admission path for producers that do
+// not need to customize the task runner. It captures the initial status before
+// the queue worker can advance the task, preserving the HTTP 202 contract.
+func (s *Server) createAndEnqueueTask(taskType TaskType, data interface{}, options TaskCreateOptions) (string, TaskStatus, error) {
+	task := s.taskManager.CreateTaskWithOptions(taskType, data, options)
+	taskID := task.ID
+	status := task.Status
+	if err := s.EnqueueTask(task); err != nil {
+		return taskID, status, err
+	}
+	return taskID, status, nil
 }
 
 func formatTaskMarkTime(timestamp *time.Time) *string {
@@ -384,12 +408,15 @@ func (s *Server) handleJsonFileDownload(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req JsonFileDownloadTaskData
+	s.limitJSONBody(w, r, defaultJSONBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if s.writeBodyTooLarge(w, err) {
+			return
+		}
 		log.Debugf("[download] Invalid request body route=json_file_download error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
-
 	if len(req.Paths) == 0 {
 		s.writeError(w, http.StatusBadRequest, "Paths are required")
 		return
@@ -418,12 +445,15 @@ func (s *Server) handleJsonFolderDownload(w http.ResponseWriter, r *http.Request
 	}
 
 	var req JsonFolderDownloadTaskData
+	s.limitJSONBody(w, r, defaultJSONBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if s.writeBodyTooLarge(w, err) {
+			return
+		}
 		log.Debugf("[download] Invalid request body route=json_folder_download error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
-
 	if len(req.Paths) == 0 {
 		s.writeError(w, http.StatusBadRequest, "Paths are required")
 		return
@@ -479,11 +509,21 @@ func (s *Server) handleJsonFileUpload(w http.ResponseWriter, r *http.Request) {
 	runFunc, err := s.buildTaskRunFunc(task)
 	if err != nil {
 		_ = os.RemoveAll(uploadDir)
+		s.taskManager.SetTaskError(task.ID, err)
 		log.Errorf("[tasks] Run function build failed task_id=%s type=%s error=%q", task.ID, task.Type, err.Error())
 		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
 		return
 	}
-	s.enqueueTask(task, cleanupUploadDirAfterTask(uploadDir, runFunc))
+	if err := s.enqueueTask(task, cleanupUploadDirAfterTask(uploadDir, runFunc)); err != nil {
+		// 入队被拒（关停窗口）：清理上传目录，回复 503，不给假成功。
+		_ = os.RemoveAll(uploadDir)
+		status := http.StatusServiceUnavailable
+		if !errors.Is(err, ErrQueueClosed) {
+			status = http.StatusInternalServerError
+		}
+		s.writeError(w, status, "Upload rejected during shutdown")
+		return
+	}
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"message":    "JSON file upload task queued",
@@ -528,11 +568,21 @@ func (s *Server) handleJsonFolderUpload(w http.ResponseWriter, r *http.Request) 
 	runFunc, err := s.buildTaskRunFunc(task)
 	if err != nil {
 		_ = os.RemoveAll(uploadDir)
+		s.taskManager.SetTaskError(task.ID, err)
 		log.Errorf("[tasks] Run function build failed task_id=%s type=%s error=%q", task.ID, task.Type, err.Error())
 		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
 		return
 	}
-	s.enqueueTask(task, cleanupUploadDirAfterTask(uploadDir, runFunc))
+	if err := s.enqueueTask(task, cleanupUploadDirAfterTask(uploadDir, runFunc)); err != nil {
+		// 入队被拒（关停窗口）：清理上传目录，回复 503，不给假成功。
+		_ = os.RemoveAll(uploadDir)
+		status := http.StatusServiceUnavailable
+		if !errors.Is(err, ErrQueueClosed) {
+			status = http.StatusInternalServerError
+		}
+		s.writeError(w, status, "Upload rejected during shutdown")
+		return
+	}
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"message":    "LoongTweet upload task queued",
@@ -727,12 +777,15 @@ func parseScheduledListIDs(values []string) ([]StringUint64, error) {
 
 func (s *Server) handleBatchDownload(w http.ResponseWriter, r *http.Request) {
 	var req BatchDownloadTaskData
+	s.limitJSONBody(w, r, rawContentBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if s.writeBodyTooLarge(w, err) {
+			return
+		}
 		log.Debugf("[download] Invalid request body route=batch_download error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
-
 	if len(req.Users) == 0 && len(req.Lists) == 0 && len(req.FollowingNames) == 0 {
 		s.writeError(w, http.StatusBadRequest, "At least one of users, lists, or following_names is required")
 		return
@@ -786,7 +839,11 @@ func (s *Server) handleBatchDownload(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBatchMark(w http.ResponseWriter, r *http.Request) {
 	var req BatchMarkDownloadedTaskData
+	s.limitJSONBody(w, r, defaultJSONBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if s.writeBodyTooLarge(w, err) {
+			return
+		}
 		log.Debugf("[download] Invalid request body route=batch_mark error=%q", err.Error())
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
@@ -944,7 +1001,14 @@ func (s *Server) handleRetryTask(w http.ResponseWriter, r *http.Request) {
 	case RetryTaskResultSuccess:
 		newTaskID := newTask.ID
 		status := newTask.Status
-		s.enqueueTask(newTask, runFunc)
+		if err := s.enqueueTask(newTask, runFunc); err != nil {
+			httpStatus := http.StatusServiceUnavailable
+			if !errors.Is(err, ErrQueueClosed) {
+				httpStatus = http.StatusInternalServerError
+			}
+			s.writeError(w, httpStatus, "Task rejected during shutdown")
+			return
+		}
 		s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 			"message":     "Task retried",
 			"task_id":     newTaskID,
@@ -964,6 +1028,10 @@ func (s *Server) handleRetryTask(w http.ResponseWriter, r *http.Request) {
 // buildTaskRunFunc 根据 Task 的类型和数据构建对应的下载执行函数。
 // 所有创建任务的 handler 和重试逻辑共用此方法，确保 DownloadOptions 和服务调用逻辑唯一。
 func (s *Server) buildTaskRunFunc(task *Task) (func(ctx context.Context, taskID string, reporter service.ProgressReporter) error, error) {
+	if task == nil {
+		return nil, errors.New("task is nil")
+	}
+
 	switch task.Type {
 	case TaskTypeUserDownload:
 		data, ok := task.Data.(*UserDownloadTaskData)
@@ -1092,20 +1160,31 @@ func (s *Server) buildTaskRunFunc(task *Task) (func(ctx context.Context, taskID 
 			return s.downloadService.JsonFolderDownload(ctx, taskID, data.Paths, data.NoRetry, reporter)
 		}, nil
 
+	case TaskTypeRetryAllFailed:
+		// This is the sole payload-free system task. It still uses the same
+		// mapper and queue admission path as every download task.
+		if task.Data != nil {
+			return nil, fmt.Errorf("invalid task data for retry_all_failed")
+		}
+		return func(ctx context.Context, taskID string, reporter service.ProgressReporter) error {
+			return s.downloadService.RetryAllFailed(ctx, taskID, reporter)
+		}, nil
+
 	default:
-		return nil, fmt.Errorf("unsupported task type for retry: %s", task.Type)
+		return nil, fmt.Errorf("unsupported task type: %s", task.Type)
 	}
 }
 
 func (s *Server) handleRetryAllFailed(w http.ResponseWriter, r *http.Request) {
-	// 作为任务创建并入队，与批量下载模式一致
-	task := s.taskManager.CreateTask(TaskTypeRetryAllFailed, nil)
-	taskID := task.ID
-	status := task.Status
-
-	s.enqueueTask(task, func(ctx context.Context, taskID string, reporter service.ProgressReporter) error {
-		return s.downloadService.RetryAllFailed(ctx, taskID, reporter)
-	})
+	taskID, status, err := s.createAndEnqueueTask(TaskTypeRetryAllFailed, nil, TaskCreateOptions{})
+	if err != nil {
+		if errors.Is(err, ErrQueueClosed) {
+			s.writeError(w, http.StatusServiceUnavailable, "Task rejected during shutdown")
+		} else {
+			s.writeError(w, http.StatusInternalServerError, "Failed to create task")
+		}
+		return
+	}
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"message": "Retry all failed tweets task queued",

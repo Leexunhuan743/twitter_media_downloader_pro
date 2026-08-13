@@ -11,7 +11,7 @@ import (
 func TestEntityRemovalJournalLifecycle(t *testing.T) {
 	db := setupSchemaTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	database.CreateTables(db)
+		require.NoError(t, database.CreateTables(db))
 	journal := database.EntityRemovalJournal{
 		StagedPath:   `/data/.tmd-remove-v1-stage`,
 		OriginalPath: `/data/entity`,
@@ -32,7 +32,7 @@ func TestEntityRemovalJournalLifecycle(t *testing.T) {
 func TestEntityRemovalJournalRejectsEmptyPaths(t *testing.T) {
 	db := setupSchemaTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	database.CreateTables(db)
+		require.NoError(t, database.CreateTables(db))
 
 	err := database.CreateEntityRemovalJournal(db, database.EntityRemovalJournal{})
 

@@ -1,6 +1,8 @@
 package database_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
@@ -20,7 +22,7 @@ func TestCreateTables(t *testing.T) {
 	db := setupSchemaTestDB(t)
 	defer db.Close()
 
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	tables := []string{
 		"users",
@@ -40,11 +42,24 @@ func TestCreateTables(t *testing.T) {
 	}
 }
 
+// P2-8 修复回归：建表/建库失败必须返回 error（而非 panic），Connect 能作为
+// 可控启动错误处理。构造父路径是普通文件（而非目录）的 DB 路径，SQLite
+// 无法在其下创建数据库文件——Windows/Linux 均成立。
+func TestConnectReturnsErrorWhenDatabaseCannotBeCreated(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("not a dir"), 0600))
+
+	db, err := database.Connect(filepath.Join(blocker, "nope.db"))
+
+	assert.Error(t, err)
+	assert.Nil(t, db)
+}
+
 func TestCreateTables_UsersSchema(t *testing.T) {
 	db := setupSchemaTestDB(t)
 	defer db.Close()
 
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	columns := []string{"id", "screen_name", "name", "protected", "friends_count", "is_accessible"}
 	for _, col := range columns {
@@ -64,7 +79,7 @@ func TestCreateTables_UserPreviousNamesSchema(t *testing.T) {
 	db := setupSchemaTestDB(t)
 	defer db.Close()
 
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	columns := []string{"id", "user_id", "screen_name", "name", "record_date"}
 	for _, col := range columns {
@@ -79,7 +94,7 @@ func TestCreateTables_LstsSchema(t *testing.T) {
 	db := setupSchemaTestDB(t)
 	defer db.Close()
 
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	columns := []string{"id", "name", "owner_user_id"}
 	for _, col := range columns {
@@ -94,7 +109,7 @@ func TestCreateTables_LstEntitiesSchema(t *testing.T) {
 	db := setupSchemaTestDB(t)
 	defer db.Close()
 
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	columns := []string{"id", "lst_id", "name", "parent_dir"}
 	for _, col := range columns {
@@ -109,7 +124,7 @@ func TestCreateTables_UserEntitiesSchema(t *testing.T) {
 	db := setupSchemaTestDB(t)
 	defer db.Close()
 
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	columns := []string{"id", "user_id", "name", "latest_release_time", "parent_dir", "media_count"}
 	for _, col := range columns {
@@ -124,7 +139,7 @@ func TestCreateTables_UserLinksSchema(t *testing.T) {
 	db := setupSchemaTestDB(t)
 	defer db.Close()
 
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	columns := []string{"id", "user_id", "name", "parent_lst_entity_id"}
 	for _, col := range columns {
@@ -139,7 +154,7 @@ func TestCreateTables_EntityRemovalJournalSchema(t *testing.T) {
 	db := setupSchemaTestDB(t)
 	defer db.Close()
 
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	columns := []string{"staged_path", "original_path", "created_at"}
 	for _, col := range columns {
@@ -154,7 +169,7 @@ func TestCreateTables_Indexes(t *testing.T) {
 	db := setupSchemaTestDB(t)
 	defer db.Close()
 
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	indexes := []string{
 		"idx_users_screen_name",
@@ -212,7 +227,7 @@ func TestMigrateDatabase_Idempotent(t *testing.T) {
 	db := setupSchemaTestDB(t)
 	defer db.Close()
 
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	err := database.MigrateDatabase(db)
 	require.NoError(t, err)
@@ -225,7 +240,7 @@ func TestMigrateDatabase_NoErrorOnNewDatabase(t *testing.T) {
 	db := setupSchemaTestDB(t)
 	defer db.Close()
 
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	err := database.MigrateDatabase(db)
 	assert.NoError(t, err)
@@ -235,9 +250,9 @@ func TestCreateTables_Idempotent(t *testing.T) {
 	db := setupSchemaTestDB(t)
 	defer db.Close()
 
-	database.CreateTables(db)
-	database.CreateTables(db)
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
+	require.NoError(t, database.CreateTables(db))
+	require.NoError(t, database.CreateTables(db))
 
 	var count int
 	err := db.Get(&count, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='users'")

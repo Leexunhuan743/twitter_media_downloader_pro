@@ -21,8 +21,45 @@ const (
 	jwtSubject       = "tmd-session"
 	jwtTokenTTL      = 1 * time.Hour
 	jwtRefreshMargin = 5 * time.Minute // refresh when less than 5 min remaining
-	jwtSigningCtx    = "tmd-jwt-v1"    // HMAC derivation context
+	// jwtMaxRefreshAge 限制 refresh 链的存活窗口：过期 JWT 只有在签发后
+	// 该时长内可续期。防止被盗令牌无限期续期（唯一吊销手段是轮换 api_key）。
+	jwtMaxRefreshAge = 24 * time.Hour
+	jwtSigningCtx    = "tmd-jwt-v1" // HMAC derivation context
 )
+
+// enforceMaxRefreshAge rejects refresh tokens whose original issuance is older
+// than jwtMaxRefreshAge. The refresh window is measured from IssuedAt so a
+// continuously-refreshed session (each new token re-issues now) stays valid,
+// while an abandoned ancient token cannot be revived. It parses the token
+// again without the expiry check because validateSessionToken returns a nil
+// token (not just an error) once the token is expired.
+func enforceMaxRefreshAge(tokenString string, apiKey string) error {
+	secret := deriveJWTSecret(apiKey)
+	parsed, err := jwt.ParseWithClaims(tokenString, &jwtClaims{}, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+		return secret, nil
+	},
+		jwt.WithIssuer(jwtIssuer),
+		jwt.WithSubject(jwtSubject),
+		jwt.WithValidMethods([]string{"HS256"}),
+		// 只解析并验证签名/issuer/subject，不校验过期——过期正是本函数
+		// 需要检查的状态（golang-jwt 默认在过期时返回 nil token）。
+		jwt.WithoutClaimsValidation(),
+	)
+	if err != nil {
+		return fmt.Errorf("parse token for age check: %w", err)
+	}
+	claims, ok := parsed.Claims.(*jwtClaims)
+	if !ok || claims == nil || claims.IssuedAt == nil {
+		return fmt.Errorf("token has no issued-at claim")
+	}
+	if time.Since(claims.IssuedAt.Time) > jwtMaxRefreshAge {
+		return fmt.Errorf("token issued more than %s ago", jwtMaxRefreshAge)
+	}
+	return nil
+}
 
 // deriveJWTSecret derives a 256-bit HMAC key from the API Key.
 // Using a derived key means: if jwt_secret leaks, the original api_key is unaffected.
@@ -178,15 +215,24 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate the JWT — accept expired tokens too (the client is trying to refresh them)
-	_, err := validateSessionToken(tokenStr, apiKey)
-	if err != nil && !isJWTExpiredError(err) {
+	if _, err := validateSessionToken(tokenStr, apiKey); err != nil && !isJWTExpiredError(err) {
 		// Token is invalid (bad signature, wrong format, etc.)
 		w.Header().Set("X-Token-Type", "invalid")
 		log.Warnf("[auth] Refresh rejected ip=%s error=%q", clientAddr, err.Error())
 		s.writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	// Expired JWT with valid signature is acceptable for refresh
+	// Expired JWT with valid signature is acceptable for refresh — but only
+	// within the maximum refresh window. A token issued arbitrarily long ago
+	// (e.g. stolen and refreshed forever) must not be renewable; the only
+	// existing revocation mechanism (rotating api_key) would otherwise be
+	// useless against a leaked session.
+	if err := enforceMaxRefreshAge(tokenStr, apiKey); err != nil {
+		w.Header().Set("X-Token-Type", "too-old")
+		log.Warnf("[auth] Refresh rejected ip=%s error=%q", clientAddr, err.Error())
+		s.writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 
 	// Generate new JWT
 	jwtToken, err := generateSessionToken(apiKey)

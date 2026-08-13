@@ -28,7 +28,7 @@ func setupTestDB(t *testing.T) *sqlx.DB {
 	}
 
 	// 创建必要的表
-	database.CreateTables(db)
+		require.NoError(t, database.CreateTables(db))
 	return db
 }
 
@@ -400,6 +400,145 @@ func TestHandleDBUserDelete_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, remaining)
 	assert.NoDirExists(t, entityDir)
+}
+
+func TestHandleDBUserDelete_FailClosedWhenCascadeCountFails(t *testing.T) {
+	// P1-1：级联计数失败时必须拒绝整个删除，而不是 Warn+0 继续——
+	// 否则只删一条实体、DelUser 事务删剩余行，留下无 journal 孤儿媒体目录。
+	server, db := createTestServer(t)
+	defer db.Close()
+
+	user := &database.User{Id: 7, ScreenName: "countfail", Name: "Count Fail"}
+	require.NoError(t, database.CreateUser(db, user))
+	for i := 1; i <= 3; i++ {
+		entityRow := &database.UserEntity{
+			UserId:    7,
+			Name:      fmt.Sprintf("Count Fail(%d)", i),
+			ParentDir: t.TempDir(),
+		}
+		require.NoError(t, database.CreateUserEntity(db, entityRow))
+		dir := filepath.Join(entityRow.ParentDir, entityRow.Name)
+		require.NoError(t, os.MkdirAll(dir, 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "media.jpg"), []byte("data"), 0600))
+	}
+
+	// 使 countUserCascade 的 user_previous_names 计数查询失败。
+	_, err := db.Exec(`DROP TABLE user_previous_names`)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/db/users/7", nil)
+	req.SetPathValue("id", "7")
+	rr := httptest.NewRecorder()
+	server.handleDBUserDelete(rr, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+	// 用户行、所有实体行与目录都必须保留——没有部分删除。
+	deletedUser, err := database.GetUserById(db, 7)
+	require.NoError(t, err)
+	assert.NotNil(t, deletedUser)
+	remaining, err := database.QueryUserEntities(db, "user_id = ?", []interface{}{uint64(7)}, "", 10, 0)
+	require.NoError(t, err)
+	assert.Len(t, remaining, 3)
+}
+
+func TestHandleDBUserDelete_MultipleEntitiesAllRemoved(t *testing.T) {
+	// 多实体删除：全部实体行与目录都必须删除，且父用户行同时删除。
+	server, db := createTestServer(t)
+	defer db.Close()
+
+	user := &database.User{Id: 8, ScreenName: "multi", Name: "Multi Entity"}
+	require.NoError(t, database.CreateUser(db, user))
+	var dirs []string
+	for i := 1; i <= 3; i++ {
+		entityRow := &database.UserEntity{
+			UserId:    8,
+			Name:      fmt.Sprintf("Multi Entity(%d)", i),
+			ParentDir: t.TempDir(),
+		}
+		require.NoError(t, database.CreateUserEntity(db, entityRow))
+		dir := filepath.Join(entityRow.ParentDir, entityRow.Name)
+		require.NoError(t, os.MkdirAll(dir, 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "media.jpg"), []byte("data"), 0600))
+		dirs = append(dirs, dir)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/db/users/8", nil)
+	req.SetPathValue("id", "8")
+	rr := httptest.NewRecorder()
+	server.handleDBUserDelete(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	deletedUser, err := database.GetUserById(db, 8)
+	require.NoError(t, err)
+	assert.Nil(t, deletedUser)
+	remaining, err := database.QueryUserEntities(db, "user_id = ?", []interface{}{uint64(8)}, "", 10, 0)
+	require.NoError(t, err)
+	assert.Empty(t, remaining)
+	for _, dir := range dirs {
+		assert.NoDirExists(t, dir)
+	}
+}
+
+func TestHandleDBUserDelete_RetryConvergesAfterMidLoopFailure(t *testing.T) {
+	// 中途实体 Remove 失败：返回错误、父记录与未删实体保留（可重试收敛），
+	// 已删实体不残留目录；移除注入后重试 DELETE 必须收敛到全删。
+	server, db := createTestServer(t)
+	defer db.Close()
+
+	user := &database.User{Id: 9, ScreenName: "retry", Name: "Retry Delete"}
+	require.NoError(t, database.CreateUser(db, user))
+	var entityRows []*database.UserEntity
+	for i := 1; i <= 2; i++ {
+		entityRow := &database.UserEntity{
+			UserId:    9,
+			Name:      fmt.Sprintf("Retry Delete(%d)", i),
+			ParentDir: t.TempDir(),
+		}
+		require.NoError(t, database.CreateUserEntity(db, entityRow))
+		dir := filepath.Join(entityRow.ParentDir, entityRow.Name)
+		require.NoError(t, os.MkdirAll(dir, 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "media.jpg"), []byte("data"), 0600))
+		entityRows = append(entityRows, entityRow)
+	}
+
+	// 第二个实体的 Remove 会在 DB 删除行时失败（TRIGGER 注入），
+	// 其 staged 目录回滚；第一个实体正常删除。id 为测试内整数，内联安全。
+	_, err := db.Exec(fmt.Sprintf(`CREATE TRIGGER fail_second BEFORE DELETE ON user_entities
+		WHEN OLD.id = %d BEGIN SELECT RAISE(FAIL, 'injected'); END`, int(entityRows[1].Id.Int32)))
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/db/users/9", nil)
+	req.SetPathValue("id", "9")
+	rr := httptest.NewRecorder()
+	server.handleDBUserDelete(rr, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+	// 父记录仍在；第二个实体（行+目录）保留。
+	deletedUser, err := database.GetUserById(db, 9)
+	require.NoError(t, err)
+	assert.NotNil(t, deletedUser)
+	secondDir := filepath.Join(entityRows[1].ParentDir, entityRows[1].Name)
+	assert.DirExists(t, secondDir)
+	remaining, err := database.QueryUserEntities(db, "user_id = ?", []interface{}{uint64(9)}, "", 10, 0)
+	require.NoError(t, err)
+	assert.Len(t, remaining, 1)
+	assert.Equal(t, entityRows[1].Name, remaining[0].Name)
+
+	// 移除注入后重试：全部收敛删除。
+	_, err = db.Exec(`DROP TRIGGER fail_second`)
+	require.NoError(t, err)
+	req2 := httptest.NewRequest(http.MethodDelete, "/api/v1/db/users/9", nil)
+	req2.SetPathValue("id", "9")
+	rr2 := httptest.NewRecorder()
+	server.handleDBUserDelete(rr2, req2)
+
+	assert.Equal(t, http.StatusOK, rr2.Code)
+	deletedUser2, err := database.GetUserById(db, 9)
+	require.NoError(t, err)
+	assert.Nil(t, deletedUser2)
+	remaining2, err := database.QueryUserEntities(db, "user_id = ?", []interface{}{uint64(9)}, "", 10, 0)
+	require.NoError(t, err)
+	assert.Empty(t, remaining2)
 }
 
 func TestHandleDBUserDelete_NotFound(t *testing.T) {

@@ -69,7 +69,9 @@ func (le *ListEntity) Create(name string) error {
 	// 尾点/尾空格）或大小写变体映射到同一路径，且其目录当前缺失。
 	owned, ownerErr := entityDirectoryOwnedByAnother(le.db, le.record.ParentDir, path, "list", uint64(le.record.LstId))
 	if ownerErr != nil {
-		return fmt.Errorf("create %s: %w", le.description(), ownerErr)
+		// 归属检查查询失败（瞬时 SQLITE_BUSY/IO）：本次若新建了目录，
+		// 必须回滚移除，否则残留孤儿空目录且无自愈机制。
+		return change.rollback(fmt.Errorf("create %s: %w", le.description(), ownerErr))
 	}
 	if owned {
 		// 目录归属冲突：若本次新建了目录，回滚移除，避免残留空目录。

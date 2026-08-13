@@ -16,7 +16,7 @@ import (
 func setupLstEntityTestDB(t *testing.T) *sqlx.DB {
 	db, err := sqlx.Connect(database.DriverName, database.MemoryDSN(true))
 	require.NoError(t, err)
-	database.CreateTables(db)
+		require.NoError(t, database.CreateTables(db))
 
 	lst := &database.Lst{
 		Id:          1,

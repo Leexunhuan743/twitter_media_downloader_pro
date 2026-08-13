@@ -45,8 +45,8 @@ var (
 		"x_xsrf_token":        {},
 		"xsrf_token":          {},
 	}
-	bearerTokenRegex      = regexp.MustCompile(`(?i)\bBearer[ \t]+[^\s,;&"']+`)
-	namedSecretRegex      = regexp.MustCompile(`(?i)(["']?)\b(` + sensitiveFieldPattern() + `)(["']?)([ \t]*[:=][ \t]*)(Bearer[ \t]+[^\s,;&"']+|Basic[ \t]+[^\s,;&"']+|"(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?|[^,;&"'\n]+)`)
+	bearerTokenRegex      = regexp.MustCompile(`(?i)\bBearer[ \t\r\n]+[^\s,;&"']+`)
+	namedSecretRegex      = regexp.MustCompile(`(?i)(["']?)\b(` + sensitiveFieldPattern() + `)(["']?)([ \t]*[:=][ \t]*)(Bearer[ \t\r\n]+[^\s,;&"']+|Basic[ \t\r\n]+[^\s,;&"']+|"(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?|[^,;&"'\n]+)`)
 	absoluteURLRegex      = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s<>"']+`)
 	rootlessUserinfoRegex = regexp.MustCompile(`\b[A-Za-z0-9._~%!$&'()*+,;=:/-]+:[^@\s,;&"'\]]*@[^\s,;&"']+`)
 	maskedSecretRegex     = regexp.MustCompile(`^\[redacted:[0-9a-f]{8,64}\]$`)
@@ -181,11 +181,11 @@ func RedactSensitiveText(text string) string {
 		return parts[1] + parts[2] + parts[3] + parts[4] + maskCredential(parts[5])
 	})
 	return bearerTokenRegex.ReplaceAllStringFunc(text, func(match string) string {
-		separator := strings.IndexAny(match, " \t")
+		separator := strings.IndexAny(match, " \t\r\n")
 		if separator < 0 {
 			return match
 		}
-		return match[:separator] + " " + MaskSecret(match[separator+1:])
+		return match[:separator] + " " + MaskSecret(strings.TrimSpace(match[separator+1:]))
 	})
 }
 
@@ -197,8 +197,8 @@ func maskCredential(value string) string {
 	}
 
 	for _, scheme := range []string{"Bearer", "Basic"} {
-		if len(value) > len(scheme) && strings.EqualFold(value[:len(scheme)], scheme) && (value[len(scheme)] == ' ' || value[len(scheme)] == '\t') {
-			return scheme + " " + MaskSecret(value[len(scheme)+1:])
+		if len(value) > len(scheme) && strings.EqualFold(value[:len(scheme)], scheme) && (value[len(scheme)] == ' ' || value[len(scheme)] == '\t' || value[len(scheme)] == '\r' || value[len(scheme)] == '\n') {
+			return scheme + " " + MaskSecret(strings.TrimSpace(value[len(scheme)+1:]))
 		}
 	}
 	return MaskSecret(value)
@@ -223,7 +223,14 @@ func SanitizeLogText(text string) string {
 	}, text)
 }
 
-// SanitizeURL redacts sensitive URL user information, query values, and fragments.
+// telegramBotPathTokenRe 匹配 Telegram Bot API URL path 中的令牌
+// （https://api.telegram.org/bot<id>:<secret>/... 与 /file/bot<id>:<secret>/...）。
+// Telegram SDK 把 token 直接拼进 path，传输层失败时 *url.Error 会携带完整
+// URL；SanitizeURL 只处理 userinfo/query/fragment，必须在此显式掩码 path。
+var telegramBotPathTokenRe = regexp.MustCompile(`(?i)(/(?:file/)?bot)([0-9]{4,}:[A-Za-z0-9_-]+)`)
+
+// SanitizeURL redacts sensitive URL user information, query values, fragments,
+// and path-embedded credentials (Telegram bot tokens).
 func SanitizeURL(raw string) string {
 	if raw == "" {
 		return ""
@@ -231,6 +238,16 @@ func SanitizeURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return url.Values{"invalid-url": {MaskSecret(raw)}}.Encode()
+	}
+	if telegramBotPathTokenRe.MatchString(u.Path) {
+		u.Path = telegramBotPathTokenRe.ReplaceAllStringFunc(u.Path, func(match string) string {
+			parts := telegramBotPathTokenRe.FindStringSubmatch(match)
+			if len(parts) != 3 {
+				return match
+			}
+			// 保留前缀（/bot 或 /file/bot），仅掩码令牌本体，便于日志定位。
+			return parts[1] + MaskSecret(parts[2])
+		})
 	}
 	if u.User != nil {
 		u.User = url.User(MaskSecret(u.User.String()))
@@ -256,6 +273,18 @@ func SanitizeURL(raw string) string {
 	}
 	queryChanged := false
 	for key, values := range query {
+		// ParseQuery 对 "token%3DSECRET123"（编码的 =）返回 key="token=SECRET123"、
+		// value 为空——键本身携带敏感字段名与值，拆开后再按字段名掩码，
+		// 否则该形态的凭据会原样进入日志。
+		if before, after, found := strings.Cut(key, "="); found && isSensitiveFieldName(before) {
+			maskedKey := before + "=" + MaskSecret(after)
+			if maskedKey != key {
+				delete(query, key)
+				query[maskedKey] = values
+				queryChanged = true
+			}
+			continue
+		}
 		for index, value := range values {
 			redacted := RedactSensitiveText(value)
 			if isSensitiveFieldName(key) {

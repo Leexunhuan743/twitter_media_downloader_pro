@@ -95,7 +95,9 @@ func (b *Bot) runWithReconnect(ctx context.Context) {
 
 		loginCtx, loginCancel := context.WithTimeout(ctx, 2*time.Minute)
 		err := b.wechatBot.Login(loginCtx, func(qrCode string) {
-			log.Infof("[bot-wechat] Login QR url=%s", qrCode)
+			// 二维码是可直接渲染扫描的 base64 图像（登录凭据），绝不能进日志
+			// （终端/文件/Web 面板）。只记录接收到的数据大小，便于排查。
+			log.Infof("[bot-wechat] Login QR received bytes=%d hint=scan_to_login", len(qrCode))
 		})
 		loginCancel()
 		if err != nil {

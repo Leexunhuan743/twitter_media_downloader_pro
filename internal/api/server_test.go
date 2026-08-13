@@ -36,7 +36,8 @@ type batchDownloadCall struct {
 }
 
 type fakeDownloadService struct {
-	batchCalls chan batchDownloadCall
+	batchCalls          chan batchDownloadCall
+	retryAllFailedCalls chan string
 }
 
 type blockingStartBot struct {
@@ -100,7 +101,10 @@ func (f *fakeDownloadService) BatchDownload(_ context.Context, taskID string, sc
 	return nil
 }
 
-func (f *fakeDownloadService) RetryAllFailed(context.Context, string, service.ProgressReporter) error {
+func (f *fakeDownloadService) RetryAllFailed(_ context.Context, taskID string, _ service.ProgressReporter) error {
+	if f.retryAllFailedCalls != nil {
+		f.retryAllFailedCalls <- taskID
+	}
 	return nil
 }
 
@@ -120,7 +124,7 @@ func setupTestServerWithAppRoot(t *testing.T, appRoot string) (*Server, *sqlx.DB
 	}
 
 	// 创建必要的表
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	cfg := &config.Config{
 		RootPath:           t.TempDir(),
@@ -495,7 +499,7 @@ func TestHandleUpdateSchedulesRawInitializesSchedulerAfterStartupParseFailure(t 
 	db, err := sqlx.Connect(database.DriverName, database.MemoryDSN(true))
 	assert.NoError(t, err)
 	defer db.Close()
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	appRoot := t.TempDir()
 	err = os.WriteFile(filepath.Join(appRoot, "schedules.yaml"), []byte("schedules:\n  - type: ["), 0600)
@@ -531,7 +535,7 @@ func TestHandleGetSchedulesReturnsFrontendFieldNames(t *testing.T) {
 	db, err := sqlx.Connect(database.DriverName, database.MemoryDSN(true))
 	assert.NoError(t, err)
 	defer db.Close()
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	appRoot := t.TempDir()
 	content := `schedules:
@@ -580,7 +584,7 @@ func TestStructuredScheduleCRUDUsesStableID(t *testing.T) {
 	db, err := sqlx.Connect(database.DriverName, database.MemoryDSN(true))
 	assert.NoError(t, err)
 	defer db.Close()
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	appRoot := t.TempDir()
 	cfg := &config.Config{
@@ -661,7 +665,7 @@ func TestStructuredScheduleCRUDSupportsMixedAndNormalizesShape(t *testing.T) {
 	db, err := sqlx.Connect(database.DriverName, database.MemoryDSN(true))
 	assert.NoError(t, err)
 	defer db.Close()
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	appRoot := t.TempDir()
 	cfg := &config.Config{
@@ -1232,7 +1236,7 @@ func TestServer_PutRoutesForConfigFieldsAndCookies(t *testing.T) {
 	db, err := sqlx.Connect(database.DriverName, database.MemoryDSN(true))
 	assert.NoError(t, err)
 	defer db.Close()
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	appRoot := t.TempDir()
 	cfg := &config.Config{
@@ -1285,7 +1289,7 @@ func TestServer_UpdateConfigRawRejectsInvalidSemanticConfig(t *testing.T) {
 	db, err := sqlx.Connect(database.DriverName, database.MemoryDSN(true))
 	assert.NoError(t, err)
 	defer db.Close()
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	appRoot := t.TempDir()
 	cfg := &config.Config{RootPath: appRoot}
@@ -1310,7 +1314,7 @@ func TestServer_UpdateConfigRawPersistsNormalizedConfig(t *testing.T) {
 	db, err := sqlx.Connect(database.DriverName, database.MemoryDSN(true))
 	assert.NoError(t, err)
 	defer db.Close()
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	appRoot := t.TempDir()
 	cfg := &config.Config{RootPath: appRoot}
@@ -1346,7 +1350,7 @@ func TestServer_SaveCookiesFailsWhenExistingCookiesUnreadable(t *testing.T) {
 	db, err := sqlx.Connect(database.DriverName, database.MemoryDSN(true))
 	assert.NoError(t, err)
 	defer db.Close()
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	appRoot := t.TempDir()
 	cfg := &config.Config{
@@ -1376,7 +1380,7 @@ func TestServer_SaveCookiesKeepsOldValuesByOriginalIndex(t *testing.T) {
 	db, err := sqlx.Connect(database.DriverName, database.MemoryDSN(true))
 	assert.NoError(t, err)
 	defer db.Close()
-	database.CreateTables(db)
+	require.NoError(t, database.CreateTables(db))
 
 	appRoot := t.TempDir()
 	cfg := &config.Config{
@@ -2114,6 +2118,7 @@ func TestScheduledDownloadMixedCreatesBatchTaskAndCallsService(t *testing.T) {
 	server.downloadService = fakeService
 
 	taskID := server.scheduledDownload(scheduler.ScheduleEntry{
+		ID:             "mixed-entry",
 		Type:           scheduler.ScheduleTypeMixed,
 		Users:          []string{"@user1"},
 		Lists:          []string{"123", "456"},
@@ -2135,6 +2140,7 @@ func TestScheduledDownloadMixedCreatesBatchTaskAndCallsService(t *testing.T) {
 	assert.True(t, data.FollowMembers)
 	assert.True(t, data.SkipProfile)
 	assert.True(t, data.NoRetry)
+	assert.Equal(t, "mixed-entry", task.EntryID)
 
 	select {
 	case call := <-fakeService.batchCalls:
@@ -2195,6 +2201,28 @@ func TestScheduledDownloadFollowing_NormalizesAndValidatesTarget(t *testing.T) {
 		Target: "??bad??",
 	})
 	assert.Empty(t, invalidTaskID)
+}
+
+func TestScheduledDownloadUsesUnifiedAdmissionWhenQueueIsClosed(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer db.Close()
+
+	server.downloadQueue.CloseAndWait(time.Second)
+	server.downloadQueue = &DownloadQueue{closed: true, detached: make(map[string]*detachedRun)}
+
+	taskID := server.scheduledDownload(scheduler.ScheduleEntry{
+		ID:     "schedule-user",
+		Type:   scheduler.ScheduleTypeUser,
+		Target: "alice",
+	})
+
+	assert.Empty(t, taskID)
+	tasks := server.taskManager.GetAllTasks()
+	require.Len(t, tasks, 1)
+	assert.Equal(t, TaskTypeUserDownload, tasks[0].Type)
+	assert.Equal(t, "schedule-user", tasks[0].EntryID)
+	assert.Equal(t, TaskStatusFailed, tasks[0].Status)
+	assert.NotEmpty(t, tasks[0].Error)
 }
 
 func TestCleanupUploadDirAfterTask_CleansAfterTaskReturns(t *testing.T) {
@@ -3161,6 +3189,8 @@ func TestHandleBatchMark(t *testing.T) {
 func TestHandleRetryAllFailed(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer db.Close()
+	fakeService := &fakeDownloadService{retryAllFailedCalls: make(chan string, 1)}
+	server.downloadService = fakeService
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/errors/retry", nil)
 	rr := serveAPI(server, req)
@@ -3171,6 +3201,33 @@ func TestHandleRetryAllFailed(t *testing.T) {
 	err := json.Unmarshal(rr.Body.Bytes(), &resp)
 	assert.NoError(t, err)
 	assert.True(t, resp.Success)
+
+	tasks := server.taskManager.GetAllTasks()
+	require.Len(t, tasks, 1)
+	assert.Equal(t, TaskTypeRetryAllFailed, tasks[0].Type)
+	assert.Nil(t, tasks[0].Data)
+	select {
+	case taskID := <-fakeService.retryAllFailedCalls:
+		assert.Equal(t, tasks[0].ID, taskID)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for retry-all task to execute")
+	}
+}
+
+func TestHandleRetryAllFailedRejectsClosedQueue(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer db.Close()
+
+	server.downloadQueue.CloseAndWait(time.Second)
+	server.downloadQueue = &DownloadQueue{closed: true, detached: make(map[string]*detachedRun)}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/errors/retry", nil)
+	rr := serveAPI(server, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
+	tasks := server.taskManager.GetAllTasks()
+	require.Len(t, tasks, 1)
+	assert.Equal(t, TaskTypeRetryAllFailed, tasks[0].Type)
+	assert.Equal(t, TaskStatusFailed, tasks[0].Status)
 }
 
 func TestHandleClearErrors(t *testing.T) {

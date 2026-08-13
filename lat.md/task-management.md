@@ -37,7 +37,7 @@ In-memory task store with RWMutex protection. Responsible for lifecycle, cancell
 - Each task holds its own `context.Context` + `CancelFunc`
 - Task IDs are `task_<uuid>` format, monotonically increasing by creation time
 - State changes → snapshot rebuild → EventBus broadcast
-- `GetTask` returns a deep snapshot and `GetAllTasks` returns cached read-only snapshots; mutable lifecycle fields are changed only while holding the manager lock.
+- `GetTask` returns a deep snapshot and `GetAllTasks` returns cached read-only snapshots; mutable lifecycle fields are changed only while holding the manager lock. `TaskCreateOptions` carries immutable creation metadata: Scheduler supplies `EntryID` before task creation, so the first snapshot and SSE broadcast already contain `entry_id`; post-creation metadata patching is not a supported lifecycle operation.
 - Request handlers capture response fields before enqueueing because the queue may transition a task to `running` immediately on another goroutine.
 
 ## DownloadQueue
@@ -46,8 +46,9 @@ Producer-consumer queue backed by `sync.Cond`. Ensures only one task runs per ta
 
 - **Target lock**: same scope+value (e.g. user "elonmusk") cannot run concurrently
 - **Detached mode**: cancelled tasks get 10s grace period, then continue as detached (no status updates)
-- **Shutdown**: worker exit and detached runs share the server's remaining shutdown budget; the queue never restarts a full timeout for its second phase
+- **Shutdown**: worker exit and detached runs share the server's remaining shutdown budget; the queue never restarts a full timeout for its second phase. `Enqueue` returns an error once closed — a task admitted by the mutation gate but enqueued after the queue closes (shutdown window) is converted to a terminal `Failed` state and the caller returns 503 instead of a false "queued" success.
 - **Worker loop**: single goroutine dequeues one task at a time
+- **Single mapper**: `Server.EnqueueTask` uses `buildTaskRunFunc` for every task type. `retry_all_failed` is intentionally payload-free, but it is still built by that mapper and executed through the same queue.
 
 ## EventBus / SSE
 

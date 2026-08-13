@@ -91,9 +91,20 @@ CREATE INDEX IF NOT EXISTS idx_user_links_lst_entity ON user_links(parent_lst_en
 CREATE INDEX IF NOT EXISTS idx_user_previous_names_user_id ON user_previous_names(user_id);
 `
 
-func CreateTables(db *sqlx.DB) {
-	db.MustExec(schema)
-	db.MustExec(indexes)
+// CreateTables 创建全部表与索引。返回 error 而非 panic（只读数据库、
+// 磁盘空间耗尽、索引冲突等建表错误必须是可控启动错误，由 Connect 关闭
+// 连接并补充路径上下文后上抛）。
+func CreateTables(db *sqlx.DB) error {
+	if db == nil {
+		return fmt.Errorf("create tables: database is nil")
+	}
+	if _, err := db.Exec(schema); err != nil {
+		return fmt.Errorf("create tables: %w", err)
+	}
+	if _, err := db.Exec(indexes); err != nil {
+		return fmt.Errorf("create indexes: %w", err)
+	}
+	return nil
 }
 
 // renameMigration 描述一条 ALTER TABLE RENAME COLUMN 迁移。

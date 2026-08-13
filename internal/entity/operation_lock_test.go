@@ -72,12 +72,19 @@ func TestEntityOperationLockKeepsDifferentKeysIndependent(t *testing.T) {
 
 func TestEntityOperationLockReleasesAfterRecoveredPanic(t *testing.T) {
 	parentDir := t.TempDir()
+	key := operationLockKey{kind: "list", ownerID: "1", parentDir: operationParentDirKey(parentDir)}
 	func() {
 		defer func() { _ = recover() }()
 		unlock := lockEntityOperation("list", "1", parentDir)
 		defer unlock()
 		panic("test panic")
 	}()
+
+	// panic 后锁引用计数必须归零并删除 entry，否则 map 永久增长。
+	operationLocks.Lock()
+	_, exists := operationLocks.entries[key]
+	operationLocks.Unlock()
+	assert.False(t, exists, "lock entry must be reclaimed after recovered panic")
 
 	unlock := lockEntityOperation("list", "1", parentDir)
 	unlock()

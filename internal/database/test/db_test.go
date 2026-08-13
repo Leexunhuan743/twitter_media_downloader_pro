@@ -29,7 +29,9 @@ func opentmpdb() *sqlx.DB {
 		panic(err)
 	}
 
-	database.CreateTables(db)
+	if err := database.CreateTables(db); err != nil {
+		panic(err)
+	}
 	return db
 }
 

@@ -41,7 +41,11 @@ func (s *Server) handleGetCookiesRaw(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleUpdateCookiesRaw(w http.ResponseWriter, r *http.Request) {
 	var req ConfigUpdateRequest
+	s.limitJSONBody(w, r, rawContentBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if s.writeBodyTooLarge(w, err) {
+			return
+		}
 		log.Debugf("[cookies] Invalid request body operation=update_raw error=%q", err.Error())
 		s.writeErrorDetail(w, http.StatusBadRequest, "Invalid request body", err.Error())
 		return
@@ -122,7 +126,11 @@ func (s *Server) handleGetCookies(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleSaveCookies(w http.ResponseWriter, r *http.Request) {
 	var req CookiesSaveRequest
+	s.limitJSONBody(w, r, defaultJSONBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if s.writeBodyTooLarge(w, err) {
+			return
+		}
 		log.Debugf("[cookies] Invalid request body operation=save_fields error=%q", err.Error())
 		s.writeErrorDetail(w, http.StatusBadRequest, "Invalid request body", err.Error())
 		return

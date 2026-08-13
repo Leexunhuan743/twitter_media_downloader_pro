@@ -60,7 +60,11 @@ func migrateExistingDatabase(path string) error {
 	}
 
 	configureSQLiteConnection(targetDB)
-	CreateTables(targetDB)
+	if err := CreateTables(targetDB); err != nil {
+		targetDB.Close()
+		removeSQLiteFiles(tempPath)
+		return fmt.Errorf("failed to create migration target tables at %q: %w", tempPath, err)
+	}
 	if err := MigrateDatabase(targetDB); err != nil {
 		targetDB.Close()
 		removeSQLiteFiles(tempPath)

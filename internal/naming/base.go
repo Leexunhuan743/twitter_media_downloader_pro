@@ -74,6 +74,14 @@ func parenthesizedIdentity(identity string, maxLen int) string {
 	return "(" + truncateUTF8(identity, maxLen-2) + ")"
 }
 
+// normalizeExtension normalizes an extension into the reserved byte budget,
+// stripping path separators and characters outside [alnum . - _]. Common media
+// extensions (.jpg/.mp4/.gif/.webp/.m3u8) are unchanged, so already-downloaded
+// files keep their names. Legacy URLs whose path extension contains other
+// characters (for example ".../xyz.jpg:large") normalize differently from the
+// baseline's raw concatenation; on Linux that re-downloads the media once and
+// leaves the old file as an orphan (Windows could never create the old name,
+// so it is unaffected). Interior dots are preserved.
 func normalizeExtension(ext string) string {
 	ext = strings.TrimSpace(ext)
 	if index := strings.LastIndexAny(ext, `/\`); index >= 0 {

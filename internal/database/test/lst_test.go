@@ -13,7 +13,7 @@ import (
 func setupLstTestDB(t *testing.T) *sqlx.DB {
 	db, err := sqlx.Connect(database.DriverName, database.MemoryDSN(true))
 	require.NoError(t, err)
-	database.CreateTables(db)
+		require.NoError(t, database.CreateTables(db))
 	return db
 }
 

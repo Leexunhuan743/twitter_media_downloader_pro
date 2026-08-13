@@ -35,9 +35,9 @@ const (
 type RetryTaskResult string
 
 const (
-	RetryTaskResultSuccess       RetryTaskResult = "success"
-	RetryTaskResultNotFound      RetryTaskResult = "not_found"
-	RetryTaskResultNotRetryable  RetryTaskResult = "not_retryable"
+	RetryTaskResultSuccess      RetryTaskResult = "success"
+	RetryTaskResultNotFound     RetryTaskResult = "not_found"
+	RetryTaskResultNotRetryable RetryTaskResult = "not_retryable"
 )
 
 // TaskType 任务类型
@@ -55,6 +55,13 @@ const (
 	TaskTypeListProfile        TaskType = "list_profile"
 	TaskTypeRetryAllFailed     TaskType = "retry_all_failed"
 )
+
+// TaskCreateOptions contains metadata that must exist before a task's first
+// snapshot and SSE publication. It intentionally excludes mutable lifecycle
+// fields, which remain owned by TaskManager.
+type TaskCreateOptions struct {
+	EntryID string
+}
 
 // Task 任务
 type Task struct {

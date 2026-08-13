@@ -148,7 +148,7 @@ func validateWindowsCompatibleName(name string) error {
 
 	base := strings.TrimRight(strings.ToUpper(strings.SplitN(name, ".", 2)[0]), " ")
 	reserved := base == "CON" || base == "PRN" || base == "AUX" || base == "NUL" ||
-		base == "CONIN$" || base == "CONOUT$" ||
+		base == "CLOCK$" || base == "CONIN$" || base == "CONOUT$" ||
 		isWindowsReservedPortName(base)
 	if reserved {
 		return fmt.Errorf("%w: name is reserved on Windows: %q", ErrInvalidName, name)
@@ -476,7 +476,14 @@ func normalizeRemovalJournal(journal database.EntityRemovalJournal) (database.En
 	return journal, nil
 }
 
+// stagedDirectoryNameHash hashes the normalized base name. Trailing dots and
+// spaces are stripped first because Windows resolves them to the same path as
+// the trimmed name (storedEntityPath normalizes them); a stage created on one
+// platform must match the same record scanned on another, otherwise recovery
+// silently degrades to zero candidates and RemoveAll can delete live media.
+// Interior dots (extensions) are preserved.
 func stagedDirectoryNameHash(name string) string {
+	name = strings.TrimRight(name, " .")
 	sum := sha256.Sum256([]byte(name))
 	return hex.EncodeToString(sum[:stagedDirectoryHashBytes])
 }
@@ -555,8 +562,18 @@ func renameEntityDirectory(parentDir, oldName, newName string) (directoryChange,
 
 	oldInfo, err := os.Lstat(oldPath)
 	if os.IsNotExist(err) {
-		if _, targetErr := os.Lstat(newPath); targetErr == nil {
-			return directoryChange{}, fmt.Errorf("%w: target path %q already exists", ErrPathConflict, newPath)
+		newInfo, targetErr := os.Lstat(newPath)
+		if targetErr == nil {
+			if !newInfo.IsDir() {
+				return directoryChange{}, fmt.Errorf("%w: target path %q exists and is not a directory", ErrPathConflict, newPath)
+			}
+			// 崩溃残留自愈：上次 Rename 已把目录移到目标位置但 DB 记录
+			// 未提交（进程在 os.Rename 与 name-only CAS 之间被杀/断电），
+			// 或目标目录已存在（用户手工放置）。两者 FS 状态不可区分，
+			// 接管该目录并让调用方提交 DB 更新，避免实体永久 ErrPathConflict
+			// 卡死。directoryChange 标记为空操作：DB 更新失败时目录本就
+			// 不在 oldPath，不能移回，保持现状待下次 Sync 重试。
+			return directoryChange{oldPath: oldPath, newPath: newPath}, nil
 		} else if !os.IsNotExist(targetErr) {
 			return directoryChange{}, fmt.Errorf("inspect target entity path %q: %w", newPath, targetErr)
 		}

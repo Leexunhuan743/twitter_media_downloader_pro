@@ -15,6 +15,8 @@ func setupTestDB(t *testing.T) *sqlx.DB {
 	if err != nil {
 		t.Fatalf("Failed to connect to test DB: %v", err)
 	}
-	database.CreateTables(db)
+	if err := database.CreateTables(db); err != nil {
+		t.Fatalf("Failed to create test tables: %v", err)
+	}
 	return db
 }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TMD Download Button
 // @namespace    https://github.com/tmd-tool/tmd
-// @version      1.2.0
+// @version      1.2.1
 // @description  在 Twitter/X 个人资料页面的"更多"按钮左边添加 TMD 下载按钮，一键推送下载任务
 // @author       TMD
 // @match        https://x.com/*
@@ -10,8 +10,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
-// @connect      localhost
-// @connect      127.0.0.1
+// @connect      *
 // @run-at       document-idle
 // @license      MIT
 // ==/UserScript==
@@ -19,6 +18,7 @@
 (function () {
     'use strict';
 
+    // @lat: [[lat.md/api-server#API Server#Userscript Remote API Access]]
     const DEFAULT_API_URL = 'http://localhost:25556';
     const TMD_BTN_ID = 'tmd-download-btn';
     const INJECT_RETRY_INTERVAL = 1000;

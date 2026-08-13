@@ -62,7 +62,11 @@ func (s *Server) handleGetConfigRaw(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleUpdateConfigRaw(w http.ResponseWriter, r *http.Request) {
 	var req ConfigUpdateRequest
+	s.limitJSONBody(w, r, rawContentBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if s.writeBodyTooLarge(w, err) {
+			return
+		}
 		log.Debugf("[config] Invalid request body operation=update_raw error=%q", err.Error())
 		s.writeErrorDetail(w, http.StatusBadRequest, "Invalid request body", err.Error())
 		return
@@ -229,7 +233,11 @@ func (s *Server) handleGetConfigFields(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleSaveConfigFields(w http.ResponseWriter, r *http.Request) {
 	var req ConfigFieldsRequest
+	s.limitJSONBody(w, r, defaultJSONBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if s.writeBodyTooLarge(w, err) {
+			return
+		}
 		log.Debugf("[config] Invalid request body operation=save_fields error=%q", err.Error())
 		s.writeErrorDetail(w, http.StatusBadRequest, "Invalid request body", err.Error())
 		return
