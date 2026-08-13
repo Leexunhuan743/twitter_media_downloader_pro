@@ -895,7 +895,9 @@ func TestCheckRespStatus(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client := resty.New()
+			// Bind Resty to the test server's client so this unit test does not
+			// inherit proxy or transport state from the host environment.
+			client := resty.NewWithClient(server.Client())
 			resp, err := client.R().Get(server.URL)
 			if err != nil {
 				t.Fatalf("request failed: %v", err)

@@ -43,8 +43,10 @@ func (le *ListEntity) Create(name string) error {
 	if le.db == nil {
 		return fmt.Errorf("create %s: database is nil", le.description())
 	}
-	unlock := lockEntityOperation("list", strconv.FormatInt(le.record.LstId, 10), le.record.ParentDir)
-	defer unlock()
+	unlockEntity := lockEntityOperation("list", strconv.FormatInt(le.record.LstId, 10), le.record.ParentDir)
+	defer unlockEntity()
+	unlockParent := lockEntityStorageParent(le.record.ParentDir)
+	defer unlockParent()
 	if le.created {
 		return fmt.Errorf("%s already exists", le.description())
 	}
@@ -98,13 +100,24 @@ func (le *ListEntity) Remove() error {
 	if le.db == nil {
 		return fmt.Errorf("remove %s: database is nil", le.description())
 	}
-	unlock := lockEntityOperation("list", strconv.FormatInt(le.record.LstId, 10), le.record.ParentDir)
-	defer unlock()
+	unlockEntity := lockEntityOperation("list", strconv.FormatInt(le.record.LstId, 10), le.record.ParentDir)
+	defer unlockEntity()
+	unlockParent := lockEntityStorageParent(le.record.ParentDir)
+	defer unlockParent()
 	if err := le.requireRecorded(); err != nil {
 		return err
 	}
 	if err := le.refreshRecord(); err != nil {
 		return err
+	}
+	if le.record.Name == "" {
+		if err := database.DelLstEntity(le.db, int(le.record.Id.Int32)); err != nil {
+			return fmt.Errorf("delete legacy empty-name %s database record: %w", le.description(), TranslateError(err))
+		}
+		le.created = false
+		le.record.Id.Valid = false
+		le.record.Id.Int32 = 0
+		return nil
 	}
 	path, err := le.Path()
 	if err != nil {
@@ -134,8 +147,10 @@ func (le *ListEntity) Rename(name string) error {
 	if err := ValidateName(name); err != nil {
 		return err
 	}
-	unlock := lockEntityOperation("list", strconv.FormatInt(le.record.LstId, 10), le.record.ParentDir)
-	defer unlock()
+	unlockEntity := lockEntityOperation("list", strconv.FormatInt(le.record.LstId, 10), le.record.ParentDir)
+	defer unlockEntity()
+	unlockParent := lockEntityStorageParent(le.record.ParentDir)
+	defer unlockParent()
 	if err := le.requireRecorded(); err != nil {
 		return err
 	}
@@ -165,7 +180,16 @@ func (le *ListEntity) Rename(name string) error {
 		return fmt.Errorf("%w: rename %s: target directory %q already belongs to another entity", ErrPathConflict, le.description(), targetPath)
 	}
 
-	change, err := renameEntityDirectory(le.record.ParentDir, oldName, name)
+	var change directoryChange
+	var err error
+	if oldName == "" {
+		change, err = recoverEmptyStoredEntityDirectory(targetPath)
+		if err != nil {
+			return fmt.Errorf("recover legacy empty-name %s directory: %w", le.description(), err)
+		}
+	} else {
+		change, err = renameEntityDirectory(le.record.ParentDir, oldName, name)
+	}
 	if err != nil {
 		return err
 	}
@@ -201,7 +225,7 @@ func (le *ListEntity) Name() (string, error) {
 	if err := le.requireRecord(); err != nil {
 		return "", err
 	}
-	if le.record.Name == "" {
+	if !le.created {
 		return "", fmt.Errorf("the name of %s is unset", le.description())
 	}
 	return le.record.Name, nil

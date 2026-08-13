@@ -12,7 +12,34 @@ permissions:
   contents: read
 
 jobs:
+  verify:
+    name: Verify release source
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run race tests
+        run: go test -race -count=1 ./...
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate knowledge graph
+        run: npx --yes lat.md@0.12.2 check
+
   release-build:
+    needs: verify
     strategy:
       fail-fast: false
       matrix:

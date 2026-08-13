@@ -180,6 +180,45 @@ func replaceSQLiteFiles(path string, tempPath string) error {
 	return nil
 }
 
+// recoverInterruptedSQLiteReplacement restores the original database when a
+// process stopped after moving it to .replacing but before a migrated main file
+// reached path. A stranded .migrating file without that original is ambiguous,
+// so callers must fail closed rather than let SQLite create a blank database.
+func recoverInterruptedSQLiteReplacement(path string) (bool, error) {
+	exists, err := fileExists(path)
+	if err != nil {
+		return false, fmt.Errorf("inspect database path %q: %w", path, err)
+	}
+	if exists {
+		return false, nil
+	}
+
+	holdingPath := path + ".replacing"
+	holdingExists, err := fileExists(holdingPath)
+	if err != nil {
+		return false, fmt.Errorf("inspect original replacement path %q: %w", holdingPath, err)
+	}
+	tempPath := path + ".migrating"
+	tempExists, err := fileExists(tempPath)
+	if err != nil {
+		return false, fmt.Errorf("inspect migration target %q: %w", tempPath, err)
+	}
+
+	if holdingExists {
+		if err := moveSQLiteFiles(holdingPath, path, true); err != nil {
+			return false, fmt.Errorf("restore original database from %q: %w", holdingPath, err)
+		}
+		// No application writes occur while the rebuild is replacing files, so
+		// the uncommitted migration target cannot contain newer user data.
+		removeSQLiteFiles(tempPath)
+		return true, nil
+	}
+	if tempExists {
+		return false, fmt.Errorf("database main file is missing while uncommitted migration target %q remains; refusing to create a new database", tempPath)
+	}
+	return false, nil
+}
+
 func moveSQLiteFiles(srcPath string, dstPath string, requireMain bool) error {
 	movedSuffixes := make([]string, 0, 3)
 	for _, suffix := range []string{"", "-wal", "-shm"} {

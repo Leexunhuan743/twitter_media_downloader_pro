@@ -221,14 +221,12 @@ func CleanupStagedDirectories(db *sqlx.DB, parentDirs ...string) (StagedDirector
 	}
 
 	activePaths := make(map[string]struct{}, len(activeEntities))
-	parentsWithMissingActivePaths := make(map[string]struct{})
 	activeByParentAndHash := make(map[string]map[string][]string)
 	for _, active := range activeEntities {
 		scanDirs = append(scanDirs, active.ParentDir)
 		parentKey := comparablePath(active.ParentDir)
 		activePath, err := storedEntityPath(active.ParentDir, active.Name)
 		if err != nil {
-			parentsWithMissingActivePaths[parentKey] = struct{}{}
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("resolve active entity path in %q: %w", active.ParentDir, err))
 			continue
 		}
@@ -258,7 +256,6 @@ func CleanupStagedDirectories(db *sqlx.DB, parentDirs ...string) (StagedDirector
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("inspect active entity path %q: %w", activePath, err))
 		}
 
-		parentsWithMissingActivePaths[parentKey] = struct{}{}
 	}
 
 	handledJournals := make(map[string]struct{}, len(journalByStagedPath))
@@ -410,35 +407,19 @@ func CleanupStagedDirectories(db *sqlx.DB, parentDirs ...string) (StagedDirector
 						continue
 					}
 				}
-				// Zero candidates: normally this stage's record was already
-				// deleted and the directory may be removed. But when an active
-				// entity directory in this parent is missing, the stage may be
-				// the interrupted removal of that entity whose hash does not
-				// match here (for example the stage was created on Windows,
-				// where trailing dots/spaces are normalized, and the record is
-				// scanned on a case-sensitive platform). Removing it would
-				// destroy the entity's media, so retain it for inspection.
-				if _, missing := parentsWithMissingActivePaths[parentKey]; missing {
-					cleanupErr = errors.Join(cleanupErr, fmt.Errorf("retain staged entity directory %q: an active entity directory in %q is missing", stagedPath, parentDir))
-					continue
-				}
-				if err := os.RemoveAll(stagedPath); err != nil {
-					cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove staged entity directory %q: %w", stagedPath, err))
-					continue
-				}
-				result.Removed++
+				// A stage without a journal is not evidence that an entity row was
+				// committed as deleted. It can be a user-created directory with the
+				// reserved-looking prefix, or an interrupted pre-journal removal.
+				// With no unique active target, retain it for inspection rather than
+				// risking a recursive deletion of media we cannot prove is orphaned.
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("retain unjournaled staged entity directory %q: no matching active entity record", stagedPath))
 				continue
 			}
 
-			if _, missing := parentsWithMissingActivePaths[parentKey]; missing {
-				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("retain legacy staged entity directory %q: an active entity directory in %q is missing", stagedPath, parentDir))
-				continue
-			}
-			if err := os.RemoveAll(stagedPath); err != nil {
-				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove staged entity directory %q: %w", stagedPath, err))
-				continue
-			}
-			result.Removed++
+			// Legacy unversioned stages have no hash or journal to establish
+			// ownership, so they are always retained. A warning is preferable to
+			// treating a prefix collision as authorization to RemoveAll.
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("retain unjournaled legacy staged entity directory %q: no removal journal", stagedPath))
 		}
 	}
 	for stagedKey, journal := range journalByStagedPath {
@@ -598,6 +579,13 @@ func renameEntityDirectory(parentDir, oldName, newName string) (directoryChange,
 		return directoryChange{}, fmt.Errorf("rename entity directory from %q to %q: %w", oldPath, newPath, err)
 	}
 	return directoryChange{oldPath: oldPath, newPath: newPath, moved: true}, nil
+}
+
+// recoverEmptyStoredEntityDirectory creates or adopts a new directory for a
+// legacy record whose empty stored name has no safe source path. In particular,
+// it never interprets the parent directory itself as the entity directory.
+func recoverEmptyStoredEntityDirectory(targetPath string) (directoryChange, error) {
+	return ensureEntityDirectory(targetPath)
 }
 
 func (c directoryChange) rollback(operationErr error) error {

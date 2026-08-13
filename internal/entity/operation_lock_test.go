@@ -70,6 +70,47 @@ func TestEntityOperationLockKeepsDifferentKeysIndependent(t *testing.T) {
 	}
 }
 
+func TestEntityStorageParentLockSerializesDifferentOwners(t *testing.T) {
+	parentDir := t.TempDir()
+	parentKey := operationLockKey{kind: "storage-parent", ownerID: "", parentDir: operationParentDirKey(parentDir)}
+	unlockFirstOwner := lockEntityOperation("user", "1", parentDir)
+	defer unlockFirstOwner()
+	unlockParent := lockEntityStorageParent(parentDir)
+
+	attempting := make(chan struct{})
+	acquired := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		unlockSecondOwner := lockEntityOperation("list", "2", parentDir)
+		defer unlockSecondOwner()
+		close(attempting)
+		unlockSecondParent := lockEntityStorageParent(parentDir)
+		close(acquired)
+		unlockSecondParent()
+		close(done)
+	}()
+	<-attempting
+	require.Eventually(t, func() bool {
+		operationLocks.Lock()
+		defer operationLocks.Unlock()
+		entry := operationLocks.entries[parentKey]
+		return entry != nil && entry.refs == 2
+	}, time.Second, 5*time.Millisecond)
+
+	select {
+	case <-acquired:
+		t.Fatal("different owners acquired the same storage parent before release")
+	default:
+	}
+
+	unlockParent()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("different owner did not acquire the storage parent after release")
+	}
+}
+
 func TestEntityOperationLockReleasesAfterRecoveredPanic(t *testing.T) {
 	parentDir := t.TempDir()
 	key := operationLockKey{kind: "list", ownerID: "1", parentDir: operationParentDirKey(parentDir)}

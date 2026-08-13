@@ -54,11 +54,11 @@ Batch logs summarize collect/preprocess/complete counts. They avoid per-media su
 4. On failure: keep URL, retry later (skip 403/404 — permanent)
 5. Fire-and-forget: save `.loongtweet/{TweetId}.txt` + `.json`
 
-**Key behavior**: `downloadTweetMedia` mutates `tweet.Urls` in place — callers check `len(tweet.Urls)` for complete success.
+**Key behavior**: `downloadTweetMedia` mutates `tweet.Urls` in place — callers check `len(tweet.Urls)` for complete success. When present, `tweet.LegacyURLs` has the same positional retry-only contract, so an interrupted retry still retains the historical media-name alias after JSON persistence and reload.
 
 Tweet field extraction is shared: [[internal/twitter/tweet.go#TweetTextFromResult]] selects the display text (note-tweet body preferred over `legacy.full_text`, HTML-unescaped) and [[internal/twitter/tweet.go#TweetCreatedAtFromResult]] parses `legacy.created_at`; both `parseTweetResults` and the `.loongtweet/.txt` writer use them. The txt writer deliberately tolerates a malformed timestamp (zero time, file still written) where `parseTweetResults` hard-fails — a metadata file must not be dropped over a bad date.
 
-Video variant selection is unified: [[internal/twitter/tweet.go#bestVideoVariantURL]] picks the highest-bitrate variant for both the GraphQL path and formatted-entry parsing (`json_folder_download`), never preferring bitrate-less playlists, and falls back to the last variant when none declares a bitrate (legacy `@reverse.0` behavior).
+Video variant selection is unified: [[internal/twitter/tweet.go#SelectVideoVariantURLs]] picks the highest-bitrate variant for both the GraphQL path and formatted-entry parsing (`json_folder_download`), never preferring bitrate-less playlists, and falls back to the last usable variant when none declares a bitrate. It also carries the exact final-array URL used by older releases as a compatibility alias. Before a new media write, `downloadTweetMedia` asks [[internal/naming/tweet_naming.go#TweetNaming#LegacyFileNames]] for safe historical filenames and reuses a regular existing alias. When the legacy URL differs from the selected URL, the same filename is also a valid migration candidate because two bitrate variants can both be `.mp4`; otherwise current-name matches retain normal collision behavior. The batch keeps one lazily loaded directory collision index, so this compatibility path does not rescan a large media directory for every item. This prevents a bitrate or extension policy upgrade from silently creating a second download and orphaning the first.
 
 ## Single-File Download
 

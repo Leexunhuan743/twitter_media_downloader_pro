@@ -17,6 +17,8 @@ Four schedule types determine what content gets downloaded when a trigger fires.
 
 Two modes control how often a schedule fires: fixed interval or daily time windows.
 
+Daily scheduling calculates the next run from one captured clock value; the pure calculation accepts that value explicitly so boundary behavior at midnight and at an exact scheduled minute remains deterministic in tests.
+
 | Mode | Format | Example |
 |------|--------|---------|
 | `interval` | Go duration string | `1h30m` |

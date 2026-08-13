@@ -707,10 +707,13 @@ func logReloadSummary(entries []ScheduleEntry) {
 }
 
 func nextDailyTrigger(times []time.Time) time.Time {
+	return nextDailyTriggerAt(time.Now(), times)
+}
+
+func nextDailyTriggerAt(now time.Time, times []time.Time) time.Time {
 	if len(times) == 0 {
 		return time.Time{}
 	}
-	now := time.Now()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 
 	for _, t := range times {

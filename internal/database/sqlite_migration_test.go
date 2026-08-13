@@ -56,3 +56,61 @@ func TestReplaceSQLiteFiles_ReplacesOriginalWithMigratedFile(t *testing.T) {
 		t.Fatalf("migrated temp file should be moved away, stat err: %v", err)
 	}
 }
+
+func TestRecoverInterruptedSQLiteReplacement_RestoresOriginalDatabase(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "foo.db")
+	holdingPath := dbPath + ".replacing"
+	tempPath := dbPath + ".migrating"
+
+	if err := os.WriteFile(holdingPath, []byte("original"), 0600); err != nil {
+		t.Fatalf("write replacement holding file: %v", err)
+	}
+	if err := os.WriteFile(holdingPath+"-wal", []byte("original wal"), 0600); err != nil {
+		t.Fatalf("write replacement WAL file: %v", err)
+	}
+	if err := os.WriteFile(tempPath, []byte("uncommitted migration"), 0600); err != nil {
+		t.Fatalf("write migration file: %v", err)
+	}
+
+	recovered, err := recoverInterruptedSQLiteReplacement(dbPath)
+	if err != nil {
+		t.Fatalf("recoverInterruptedSQLiteReplacement() error: %v", err)
+	}
+	if !recovered {
+		t.Fatal("recoverInterruptedSQLiteReplacement() = false, want true")
+	}
+	content, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatalf("read restored database: %v", err)
+	}
+	if string(content) != "original" {
+		t.Fatalf("restored database content = %q", string(content))
+	}
+	if _, err := os.Stat(dbPath + "-wal"); err != nil {
+		t.Fatalf("restored database WAL: %v", err)
+	}
+	for _, path := range []string{holdingPath, tempPath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("recovery artifact %q should be removed, stat err: %v", path, err)
+		}
+	}
+}
+
+func TestRecoverInterruptedSQLiteReplacement_RefusesStrandedMigrationTarget(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "foo.db")
+	if err := os.WriteFile(dbPath+".migrating", []byte("uncommitted migration"), 0600); err != nil {
+		t.Fatalf("write migration file: %v", err)
+	}
+
+	recovered, err := recoverInterruptedSQLiteReplacement(dbPath)
+	if err == nil {
+		t.Fatal("recoverInterruptedSQLiteReplacement() error = nil, want refusal")
+	}
+	if recovered {
+		t.Fatal("recoverInterruptedSQLiteReplacement() recovered a database without an original")
+	}
+	if _, statErr := os.Stat(dbPath); !os.IsNotExist(statErr) {
+		t.Fatalf("database path should remain absent, stat err: %v", statErr)
+	}
+}

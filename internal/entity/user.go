@@ -44,8 +44,10 @@ func (ue *UserEntity) Create(name string) error {
 	if ue.db == nil {
 		return fmt.Errorf("create %s: database is nil", ue.description())
 	}
-	unlock := lockEntityOperation("user", strconv.FormatUint(ue.record.UserId, 10), ue.record.ParentDir)
-	defer unlock()
+	unlockEntity := lockEntityOperation("user", strconv.FormatUint(ue.record.UserId, 10), ue.record.ParentDir)
+	defer unlockEntity()
+	unlockParent := lockEntityStorageParent(ue.record.ParentDir)
+	defer unlockParent()
 	if ue.created {
 		return fmt.Errorf("%s already exists", ue.description())
 	}
@@ -101,13 +103,24 @@ func (ue *UserEntity) Remove() error {
 	if ue.db == nil {
 		return fmt.Errorf("remove %s: database is nil", ue.description())
 	}
-	unlock := lockEntityOperation("user", strconv.FormatUint(ue.record.UserId, 10), ue.record.ParentDir)
-	defer unlock()
+	unlockEntity := lockEntityOperation("user", strconv.FormatUint(ue.record.UserId, 10), ue.record.ParentDir)
+	defer unlockEntity()
+	unlockParent := lockEntityStorageParent(ue.record.ParentDir)
+	defer unlockParent()
 	if err := ue.requireRecorded(); err != nil {
 		return err
 	}
 	if err := ue.refreshRecord(); err != nil {
 		return err
+	}
+	if ue.record.Name == "" {
+		if err := database.DelUserEntity(ue.db, uint32(ue.record.Id.Int32)); err != nil {
+			return fmt.Errorf("delete legacy empty-name %s database record: %w", ue.description(), TranslateError(err))
+		}
+		ue.created = false
+		ue.record.Id.Valid = false
+		ue.record.Id.Int32 = 0
+		return nil
 	}
 	path, err := ue.Path()
 	if err != nil {
@@ -137,8 +150,10 @@ func (ue *UserEntity) Rename(name string) error {
 	if err := ValidateName(name); err != nil {
 		return err
 	}
-	unlock := lockEntityOperation("user", strconv.FormatUint(ue.record.UserId, 10), ue.record.ParentDir)
-	defer unlock()
+	unlockEntity := lockEntityOperation("user", strconv.FormatUint(ue.record.UserId, 10), ue.record.ParentDir)
+	defer unlockEntity()
+	unlockParent := lockEntityStorageParent(ue.record.ParentDir)
+	defer unlockParent()
 	if err := ue.requireRecorded(); err != nil {
 		return err
 	}
@@ -171,7 +186,16 @@ func (ue *UserEntity) Rename(name string) error {
 		return fmt.Errorf("%w: rename %s: target directory %q already belongs to another entity", ErrPathConflict, ue.description(), targetPath)
 	}
 
-	change, err := renameEntityDirectory(ue.record.ParentDir, oldName, name)
+	var change directoryChange
+	var err error
+	if oldName == "" {
+		change, err = recoverEmptyStoredEntityDirectory(targetPath)
+		if err != nil {
+			return fmt.Errorf("recover legacy empty-name %s directory: %w", ue.description(), err)
+		}
+	} else {
+		change, err = renameEntityDirectory(ue.record.ParentDir, oldName, name)
+	}
 	if err != nil {
 		return err
 	}
@@ -215,7 +239,7 @@ func (ue *UserEntity) Name() (string, error) {
 	if err := ue.requireRecord(); err != nil {
 		return "", err
 	}
-	if ue.record.Name == "" {
+	if !ue.created {
 		return "", fmt.Errorf("the name of %s is unset", ue.description())
 	}
 	return ue.record.Name, nil

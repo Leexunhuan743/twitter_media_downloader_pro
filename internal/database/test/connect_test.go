@@ -146,3 +146,49 @@ CREATE TABLE entity_removal_journal (
 	require.NoError(t, err)
 	assert.NotEmpty(t, backups, "legacy database should be backed up before rebuild")
 }
+
+func TestConnect_RecoversOriginalAfterInterruptedReplacement(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test_replacement.db")
+	db, err := database.Connect(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, database.CreateUser(db, &database.User{
+		Id:           1,
+		ScreenName:   "preserved",
+		Name:         "Preserved User",
+		IsAccessible: true,
+	}))
+	require.NoError(t, db.Close())
+
+	holdingPath := dbPath + ".replacing"
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		source := dbPath + suffix
+		if _, statErr := os.Stat(source); os.IsNotExist(statErr) {
+			continue
+		} else {
+			require.NoError(t, statErr)
+		}
+		require.NoError(t, os.Rename(source, holdingPath+suffix))
+	}
+
+	recovered, err := database.Connect(dbPath)
+	require.NoError(t, err)
+	defer recovered.Close()
+	user, err := database.GetUserById(recovered, 1)
+	require.NoError(t, err)
+	require.NotNil(t, user)
+	assert.Equal(t, "preserved", user.ScreenName)
+	_, statErr := os.Stat(holdingPath)
+	assert.True(t, os.IsNotExist(statErr), "holding main file should be restored into place")
+}
+
+func TestConnect_RefusesBlankDatabaseAfterStrandedMigration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test_stranded.db")
+	require.NoError(t, os.WriteFile(dbPath+".migrating", []byte("uncommitted migration"), 0600))
+
+	db, err := database.Connect(dbPath)
+
+	assert.Nil(t, db)
+	assert.Error(t, err)
+	_, statErr := os.Stat(dbPath)
+	assert.True(t, os.IsNotExist(statErr), "Connect must not create a blank replacement database")
+}

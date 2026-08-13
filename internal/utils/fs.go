@@ -97,6 +97,34 @@ func WinFileNameWithMaxLenStable(name string, maxLen int) string {
 	return sanitizeFileNameCore(name, maxLen)
 }
 
+// WinFileNameWithMaxLenLegacy reproduces the tweet filename sanitization used
+// before control characters were removed. It exists solely to locate an
+// already-written POSIX filename during an upgrade; new filenames must use the
+// current sanitizers above.
+func WinFileNameWithMaxLenLegacy(name string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	name = reURL.ReplaceAllString(name, "")
+	name = reWinNonSupport.ReplaceAllString(name, "")
+
+	var buffer bytes.Buffer
+	for _, ch := range name {
+		switch ch {
+		case '\r':
+			continue
+		case '\n':
+			ch = ' '
+		}
+
+		if buffer.Len()+utf8.RuneLen(ch) > maxLen {
+			break
+		}
+		buffer.WriteRune(ch)
+	}
+	return buffer.String()
+}
+
 // TruncateUTF8 truncates value to at most maxLen UTF-8 bytes without splitting
 // a rune. It is the single implementation shared across packages (the naming
 // package previously carried a private copy). A non-positive maxLen yields the

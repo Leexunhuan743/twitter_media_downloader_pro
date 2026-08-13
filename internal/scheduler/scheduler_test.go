@@ -813,77 +813,60 @@ func TestRunLoopExitsOnInvalidIndex(t *testing.T) {
 	sc.runLoop(1)
 }
 
-func TestNextDailyTrigger_EmptyTimes(t *testing.T) {
-	got := nextDailyTrigger([]time.Time{})
+func TestNextDailyTriggerAt_EmptyTimes(t *testing.T) {
+	now := time.Date(2026, time.August, 14, 12, 0, 0, 0, time.Local)
+	got := nextDailyTriggerAt(now, []time.Time{})
 	if !got.IsZero() {
 		t.Errorf("expected zero time, got %v", got)
 	}
 }
 
-func TestNextDailyTrigger_ReturnsTodayIfTimeHasNotPassed(t *testing.T) {
-	trigger := time.Now().Add(5 * time.Minute)
-	times := []time.Time{trigger}
+func TestNextDailyTriggerAt_ReturnsTodayIfTimeHasNotPassed(t *testing.T) {
+	location := time.FixedZone("UTC+8", 8*60*60)
+	now := time.Date(2026, time.August, 14, 12, 0, 0, 0, location)
+	trigger := time.Date(2000, time.January, 1, 12, 5, 0, 0, location)
 
-	got := nextDailyTrigger(times)
-
-	if got.IsZero() {
-		t.Fatal("expected non-zero time")
-	}
-	if !got.After(time.Now()) && !got.Equal(trigger) {
-		t.Errorf("expected time after now, got %v", got)
-	}
-	if got.Hour() != trigger.Hour() || got.Minute() != trigger.Minute() {
-		t.Errorf("expected %02d:%02d, got %02d:%02d", trigger.Hour(), trigger.Minute(), got.Hour(), got.Minute())
-	}
-	// 判别 today 分支：候选在今天的未来时刻，结果必须落在今天（不能跳到明天）。
-	now := time.Now()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	tomorrow := today.AddDate(0, 0, 1)
-	if got.Before(today) || !got.Before(tomorrow) {
-		t.Errorf("expected today (%v..%v), got %v", today, tomorrow, got)
+	got := nextDailyTriggerAt(now, []time.Time{trigger})
+	want := time.Date(2026, time.August, 14, 12, 5, 0, 0, location)
+	if !got.Equal(want) {
+		t.Errorf("expected %v, got %v", want, got)
 	}
 }
 
-func TestNextDailyTrigger_ReturnsTomorrowWhenAllTimesPassed(t *testing.T) {
-	past := time.Now().Add(-1 * time.Hour)
-	times := []time.Time{past}
+func TestNextDailyTriggerAt_ReturnsTomorrowWhenAllTimesPassed(t *testing.T) {
+	location := time.FixedZone("UTC+8", 8*60*60)
+	now := time.Date(2026, time.August, 14, 12, 0, 0, 0, location)
+	past := time.Date(2000, time.January, 1, 11, 0, 0, 0, location)
 
-	got := nextDailyTrigger(times)
-
-	if got.IsZero() {
-		t.Fatal("expected non-zero time")
-	}
-	if !got.After(time.Now()) {
-		t.Errorf("expected future time, got %v (now=%v)", got, time.Now())
-	}
-	if got.Hour() != past.Hour() || got.Minute() != past.Minute() {
-		t.Errorf("expected hour:minute %02d:%02d, got %02d:%02d", past.Hour(), past.Minute(), got.Hour(), got.Minute())
-	}
-	// 判别 tomorrow 分支：所有候选已过，结果必须落在明天。
-	now := time.Now()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	tomorrow := today.AddDate(0, 0, 1)
-	dayAfter := tomorrow.AddDate(0, 0, 1)
-	if got.Before(tomorrow) || !got.Before(dayAfter) {
-		t.Errorf("expected tomorrow (%v..%v), got %v", tomorrow, dayAfter, got)
+	got := nextDailyTriggerAt(now, []time.Time{past})
+	want := time.Date(2026, time.August, 15, 11, 0, 0, 0, location)
+	if !got.Equal(want) {
+		t.Errorf("expected %v, got %v", want, got)
 	}
 }
 
-func TestNextDailyTrigger_SelectsNextTimeWhenMultiple(t *testing.T) {
-	now := time.Now()
-	in5Min := now.Add(5 * time.Minute)
-	in30Min := now.Add(30 * time.Minute)
+func TestNextDailyTriggerAt_SelectsNextTimeWhenMultiple(t *testing.T) {
+	location := time.FixedZone("UTC+8", 8*60*60)
+	now := time.Date(2026, time.August, 14, 12, 0, 0, 0, location)
+	inFiveMinutes := time.Date(2000, time.January, 1, 12, 5, 0, 0, location)
+	inThirtyMinutes := time.Date(2000, time.January, 1, 12, 30, 0, 0, location)
 
-	// times must be sorted ascending; in5Min is the nearest future
-	times := []time.Time{in5Min, in30Min}
-	got := nextDailyTrigger(times)
-
-	if got.IsZero() {
-		t.Fatal("expected non-zero time")
+	got := nextDailyTriggerAt(now, []time.Time{inFiveMinutes, inThirtyMinutes})
+	want := time.Date(2026, time.August, 14, 12, 5, 0, 0, location)
+	if !got.Equal(want) {
+		t.Errorf("expected %v, got %v", want, got)
 	}
-	// should pick the nearest future time (in5Min)
-	if got.Hour() != in5Min.Hour() || got.Minute() != in5Min.Minute() {
-		t.Errorf("expected %02d:%02d (nearest), got %02d:%02d", in5Min.Hour(), in5Min.Minute(), got.Hour(), got.Minute())
+}
+
+func TestNextDailyTriggerAt_ReturnsTomorrowAtExactTime(t *testing.T) {
+	location := time.FixedZone("UTC+8", 8*60*60)
+	now := time.Date(2026, time.August, 14, 12, 0, 0, 0, location)
+	trigger := time.Date(2000, time.January, 1, 12, 0, 0, 0, location)
+
+	got := nextDailyTriggerAt(now, []time.Time{trigger})
+	want := time.Date(2026, time.August, 15, 12, 0, 0, 0, location)
+	if !got.Equal(want) {
+		t.Errorf("expected %v, got %v", want, got)
 	}
 }
 

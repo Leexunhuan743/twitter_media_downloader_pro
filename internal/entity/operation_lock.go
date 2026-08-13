@@ -48,6 +48,13 @@ func lockEntityOperation(kind, ownerID, parentDir string) func() {
 	}
 }
 
+// lockEntityStorageParent serializes filesystem ownership checks and mutations
+// across user and list entities that share one storage parent. Owner-level
+// locks still provide narrow serialization for independent parents.
+func lockEntityStorageParent(parentDir string) func() {
+	return lockEntityOperation("storage-parent", "", parentDir)
+}
+
 // operationParentDirKey 与 storage.go 的 comparablePath 同一归一化语义
 // （Clean + Windows 小写），复用单一实现避免两处规则漂移。
 func operationParentDirKey(parentDir string) string {

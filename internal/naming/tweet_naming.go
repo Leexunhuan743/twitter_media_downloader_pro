@@ -3,6 +3,7 @@ package naming
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"unicode"
 
@@ -11,29 +12,37 @@ import (
 
 // TweetNaming builds stable tweet media names and their human-readable log label.
 type TweetNaming struct {
-	sanitized string
-	tweetID   uint64
-	creator   string
-	maxLen    int
+	sanitized           string
+	historicalSanitized string
+	legacySanitized     string
+	tweetID             uint64
+	creator             string
+	maxLen              int
 }
 
 func NewTweetNaming(text string, tweetID uint64, creator string, maxLen int) *TweetNaming {
 	return &TweetNaming{
-		sanitized: sanitizeTweetPart(text, maxLen),
-		tweetID:   tweetID,
-		creator:   normalizeLogLabel(creator, maxLen),
-		maxLen:    maxLen,
+		sanitized:           sanitizeTweetPart(text, maxLen),
+		historicalSanitized: sanitizeNamePart(text, maxLen),
+		legacySanitized:     legacyTweetPart(text, maxLen),
+		tweetID:             tweetID,
+		creator:             normalizeLogLabel(creator, maxLen),
+		maxLen:              maxLen,
 	}
 }
 
 func (tn *TweetNaming) textPart() string {
+	return tn.textPartFor(tn.sanitized)
+}
+
+func (tn *TweetNaming) textPartFor(sanitized string) string {
 	idPart := fmt.Sprintf("_%d", tn.tweetID)
 	maxTextLen := tn.maxLen - len(idPart) - ExtReserveLen
 	if maxTextLen < 0 {
 		maxTextLen = 0
 	}
 
-	text := tn.sanitized
+	text := sanitized
 	text = utils.TruncateUTF8(text, maxTextLen)
 	if text == "" {
 		text = "tweet"
@@ -43,7 +52,11 @@ func (tn *TweetNaming) textPart() string {
 }
 
 func (tn *TweetNaming) baseName() string {
-	return tn.textPart() + fmt.Sprintf("_%d", tn.tweetID)
+	return tn.baseNameFor(tn.sanitized)
+}
+
+func (tn *TweetNaming) baseNameFor(sanitized string) string {
+	return tn.textPartFor(sanitized) + fmt.Sprintf("_%d", tn.tweetID)
 }
 
 func (tn *TweetNaming) logBaseName() string {
@@ -64,6 +77,53 @@ func (tn *TweetNaming) LogFormat() string {
 // uncreatable file.
 func (tn *TweetNaming) FileName(ext string) string {
 	return guardReservedFileName(tn.baseName() + normalizeExtension(ext))
+}
+
+// LegacyFileNames returns safe filenames produced by superseded tweet naming
+// rules. It is deliberately for read-only compatibility lookup: callers must
+// never choose one of these names for a new write.
+func (tn *TweetNaming) LegacyFileNames(ext string) []string {
+	return tn.legacyFileNamesForPlatform(ext, runtime.GOOS == "windows")
+}
+
+func (tn *TweetNaming) legacyFileNamesForPlatform(ext string, windows bool) []string {
+	appendUnique := func(names []string, name string) []string {
+		if name == "" {
+			return names
+		}
+		for _, existing := range names {
+			if existing == name {
+				return names
+			}
+		}
+		return append(names, name)
+	}
+
+	names := make([]string, 0, 3)
+	// The immediately previous selection may use a different but otherwise
+	// normalized extension (for example .m3u8 instead of the current .mp4).
+	names = appendUnique(names, guardReservedFileName(tn.baseName()+normalizeExtension(ext)))
+	// 14c..d6ef normalized extensions but used the stricter historical text
+	// sanitizer, so a title with leading/trailing characters can differ.
+	names = appendUnique(names, guardReservedFileName(tn.baseNameFor(tn.historicalSanitized)+normalizeExtension(ext)))
+	// Before extension hardening, POSIX installations could write raw extension
+	// suffixes and control characters. Windows cannot address those filenames.
+	if !windows {
+		raw := tn.baseNameFor(tn.legacySanitized) + ext
+		if legacyFileNameIsSafeComponent(raw) {
+			names = appendUnique(names, raw)
+		}
+	}
+	return names
+}
+
+func legacyFileNameIsSafeComponent(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	return !strings.ContainsRune(name, 0) &&
+		!strings.ContainsAny(name, `/\\`) &&
+		filepath.Base(name) == name
 }
 
 // FilePath returns a collision-free path based on the current filesystem.

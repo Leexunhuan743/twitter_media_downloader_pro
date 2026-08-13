@@ -392,6 +392,95 @@ func TestRemoveHandlesLegacyStoredName(t *testing.T) {
 	}
 }
 
+func TestSyncMigratesLegacyEmptyStoredNameWithoutTouchingParent(t *testing.T) {
+	for _, fixture := range entityFixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			db := openEntityTestDB(t)
+			parentDir := t.TempDir()
+			result := newFixtureEntity(t, fixture, db, parentDir)
+			require.NoError(t, result.Create("temporary-source"))
+			id, err := result.Id()
+			require.NoError(t, err)
+			require.NoError(t, os.RemoveAll(filepath.Join(parentDir, "temporary-source")))
+			marker := filepath.Join(parentDir, "parent-marker.txt")
+			require.NoError(t, os.WriteFile(marker, []byte("keep"), 0600))
+			require.NoError(t, fixture.setName(db, id, ""))
+
+			stored, err := fixture.newEntity(db, parentDir)
+			require.NoError(t, err)
+			name, err := stored.Name()
+			require.NoError(t, err)
+			assert.Empty(t, name)
+			_, pathErr := stored.Path()
+			assert.Error(t, pathErr, "an empty stored name must never resolve to the parent directory")
+
+			require.NoError(t, entity.Sync(stored, "recovered"))
+
+			assert.FileExists(t, marker)
+			assert.DirExists(t, filepath.Join(parentDir, "recovered"))
+			name, err = stored.Name()
+			require.NoError(t, err)
+			assert.Equal(t, "recovered", name)
+		})
+	}
+}
+
+func TestSyncEmptyStoredNameRollsBackNewDirectoryWhenDatabaseWriteFails(t *testing.T) {
+	for _, fixture := range entityFixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			db := openEntityTestDB(t)
+			parentDir := t.TempDir()
+			result := newFixtureEntity(t, fixture, db, parentDir)
+			require.NoError(t, result.Create("temporary-source"))
+			id, err := result.Id()
+			require.NoError(t, err)
+			require.NoError(t, os.RemoveAll(filepath.Join(parentDir, "temporary-source")))
+			marker := filepath.Join(parentDir, "parent-marker.txt")
+			require.NoError(t, os.WriteFile(marker, []byte("keep"), 0600))
+			require.NoError(t, fixture.setName(db, id, ""))
+			installWriteFailureTrigger(t, db, "UPDATE")
+
+			stored, err := fixture.newEntity(db, parentDir)
+			require.NoError(t, err)
+			err = entity.Sync(stored, "recovered")
+
+			assert.Error(t, err)
+			assert.FileExists(t, marker)
+			assert.NoDirExists(t, filepath.Join(parentDir, "recovered"))
+			name, nameErr := stored.Name()
+			require.NoError(t, nameErr)
+			assert.Empty(t, name)
+		})
+	}
+}
+
+func TestRemoveDropsLegacyEmptyStoredNameWithoutTouchingParent(t *testing.T) {
+	for _, fixture := range entityFixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			db := openEntityTestDB(t)
+			parentDir := t.TempDir()
+			result := newFixtureEntity(t, fixture, db, parentDir)
+			require.NoError(t, result.Create("temporary-source"))
+			id, err := result.Id()
+			require.NoError(t, err)
+			require.NoError(t, os.RemoveAll(filepath.Join(parentDir, "temporary-source")))
+			marker := filepath.Join(parentDir, "parent-marker.txt")
+			require.NoError(t, os.WriteFile(marker, []byte("keep"), 0600))
+			require.NoError(t, fixture.setName(db, id, ""))
+
+			stored, err := fixture.newEntity(db, parentDir)
+			require.NoError(t, err)
+			require.NoError(t, stored.Remove())
+
+			assert.False(t, stored.Recorded())
+			assert.FileExists(t, marker)
+			reloaded, err := fixture.newEntity(db, parentDir)
+			require.NoError(t, err)
+			assert.False(t, reloaded.Recorded())
+		})
+	}
+}
+
 func TestRenameRejectsUnsafeStoredName(t *testing.T) {
 	for _, fixture := range entityFixtures {
 		t.Run(fixture.name, func(t *testing.T) {

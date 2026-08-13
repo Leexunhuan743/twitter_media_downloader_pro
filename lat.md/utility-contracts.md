@@ -18,7 +18,7 @@ Path helpers reject empty paths and generate collision suffixes without changing
 
 Filename sanitization produces a Windows-compatible component within an explicit UTF-8 byte budget.
 
-[[internal/utils/fs.go#WinFileNameWithMaxLen]] removes URLs, unsupported characters, and control characters; converts line feeds to spaces; removes carriage returns and trailing dots/spaces; and prefixes reserved device names. Empty output remains valid so naming layers can apply their domain fallback. [[internal/utils/fs.go#WinFileNameWithMaxLenStable]] keeps the first and last spaces and trailing dots (older versions wrote tweet media names without trimming them), so upgrading does not rename already-downloaded files and trigger re-downloads; control characters are still removed because such files could never be created on Windows.
+[[internal/utils/fs.go#WinFileNameWithMaxLen]] removes URLs, unsupported characters, and control characters; converts line feeds to spaces; removes carriage returns and trailing dots/spaces; and prefixes reserved device names. Empty output remains valid so naming layers can apply their domain fallback. [[internal/utils/fs.go#WinFileNameWithMaxLenStable]] keeps the first and last spaces and trailing dots (older versions wrote tweet media names without trimming them), so upgrading does not rename already-downloaded files and trigger re-downloads; control characters are still removed because such files could never be created on Windows. [[internal/utils/fs.go#WinFileNameWithMaxLenLegacy]] is read-only compatibility logic for POSIX files created before control-character hardening; it is never used to construct a new write target.
 
 ## Domain Naming
 
@@ -26,7 +26,7 @@ Domain naming composes sanitized filename parts with stable identities, determin
 
 [[internal/naming/user_naming.go#NewUserNaming]] preserves a non-empty screen name in a closed parenthesized suffix and spends the remaining budget on the display name. Profile defaults use the same policy through [[internal/downloading/profile/downloader.go#resolveUserTitle]], while an explicit `UserTitle` remains authoritative after generic sanitization.
 
-[[internal/naming/list_naming.go#NewListNamingFromBase]] preserves an existing numeric list-ID suffix and falls back to `list(ID)` or `list` for empty, fully removed, nil, and typed-nil inputs. [[internal/naming/tweet_naming.go#TweetNaming#FileName]] sanitizes tweet text with the stable (non-trimming) policy, normalizes untrusted extensions into the reserved extension budget so they cannot add path components, and re-checks the final name against Windows reserved device names; tweet log creators are single-line and use `unknown` when empty.
+[[internal/naming/list_naming.go#NewListNamingFromBase]] preserves an existing numeric list-ID suffix and falls back to `list(ID)` or `list` for empty, fully removed, nil, and typed-nil inputs. [[internal/naming/tweet_naming.go#TweetNaming#FileName]] sanitizes tweet text with the stable (non-trimming) policy, normalizes untrusted extensions into the reserved extension budget so they cannot add path components, and re-checks the final name against Windows reserved device names. [[internal/naming/tweet_naming.go#TweetNaming#LegacyFileNames]] exposes only safe historic filename candidates for lookup, covering pre-extension-hardening POSIX names and the immediately previous video-extension selection without ever using them for a new write. Tweet log creators are single-line and use `unknown` when empty.
 
 ## HTTP And Media URLs
 

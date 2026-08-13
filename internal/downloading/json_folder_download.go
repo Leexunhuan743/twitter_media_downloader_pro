@@ -69,7 +69,8 @@ func parseFormattedEntry(entry *FormattedTweetEntry) *twitter.Tweet {
 			tweet.CreatedAt = parseTwitterDate(createdAt)
 		}
 
-		// 提取媒体链接（视频选最高码率，图片直接取链接）
+		// 提取媒体链接（视频选最高码率，图片直接取链接）。两种来源都通过
+		// twitter.SelectVideoVariantURLs，避免 JSON 重放与 GraphQL 拉取漂移。
 		if extendedEntities, ok := legacy["extended_entities"].(map[string]any); ok {
 			if mediaList, ok := extendedEntities["media"].([]any); ok {
 				for _, m := range mediaList {
@@ -77,36 +78,31 @@ func parseFormattedEntry(entry *FormattedTweetEntry) *twitter.Tweet {
 						mediaType := getStringFromMap(mm, "type")
 						switch mediaType {
 						case "video", "animated_gif":
-							// 选择最高码率的视频变体；与 twitter.getUrlsFromMedia 的
-							// bestVideoVariantURL 语义一致：无码率的播放列表变体不优先，
-							// 全无码率时兜底取最后一个 URL。
 							if variants, ok := mm["video_info"].(map[string]any); ok {
 								if variantList, ok := variants["variants"].([]any); ok {
-									var bestURL string
-									var lastURL string
-									var maxBitrate int
+									parsed := make([]twitter.VideoVariant, 0, len(variantList))
 									for _, v := range variantList {
 										if vv, ok := v.(map[string]any); ok {
-											if url := getStringFromMap(vv, "url"); url != "" {
-												lastURL = url
-												if bitrate := getIntFromMap(vv, "bitrate"); bitrate > maxBitrate {
-													maxBitrate = bitrate
-													bestURL = url
-												}
-											}
+											parsed = append(parsed, twitter.VideoVariant{
+												URL:     getStringFromMap(vv, "url"),
+												Bitrate: int64(getIntFromMap(vv, "bitrate")),
+											})
 										}
 									}
-									if bestURL == "" {
-										bestURL = lastURL
-									}
+									bestURL, legacyURL := twitter.SelectVideoVariantURLs(parsed)
 									if bestURL != "" {
+										if legacyURL == "" {
+											legacyURL = bestURL
+										}
 										tweet.Urls = append(tweet.Urls, bestURL)
+										tweet.LegacyURLs = append(tweet.LegacyURLs, legacyURL)
 									}
 								}
 							}
 						case "photo":
 							if url := getStringFromMap(mm, "media_url_https"); url != "" {
 								tweet.Urls = append(tweet.Urls, url)
+								tweet.LegacyURLs = append(tweet.LegacyURLs, url)
 							}
 						}
 					}

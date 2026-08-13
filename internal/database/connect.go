@@ -10,6 +10,14 @@ import (
 )
 
 func Connect(path string) (*sqlx.DB, error) {
+	recovered, err := recoverInterruptedSQLiteReplacement(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to recover interrupted database replacement at %q: %w", path, err)
+	}
+	if recovered {
+		log.Warnf("[db] Recovered original database after interrupted replacement path=%q", logging.Path(path))
+	}
+
 	exists, err := utils.PathExists(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check if db file exists at %q: %w", path, err)

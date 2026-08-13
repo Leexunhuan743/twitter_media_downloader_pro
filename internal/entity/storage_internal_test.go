@@ -97,7 +97,7 @@ func TestValidateNameRejectsStagedPrefixCaseVariants(t *testing.T) {
 	}
 }
 
-func TestCleanupStagedDirectories(t *testing.T) {
+func TestCleanupStagedDirectoriesRetainsUnjournaledLegacyStage(t *testing.T) {
 	db := openStorageTestDB(t)
 	parentDir := t.TempDir()
 	staged := filepath.Join(parentDir, stagedDirectoryPrefix+"orphan")
@@ -110,10 +110,11 @@ func TestCleanupStagedDirectories(t *testing.T) {
 
 	cleanup, err := CleanupStagedDirectories(db, parentDir, parentDir, filepath.Join(parentDir, "missing"))
 
-	require.NoError(t, err)
-	assert.Equal(t, 1, cleanup.Removed)
+	assert.Error(t, err)
+	assert.Zero(t, cleanup.Removed)
 	assert.Zero(t, cleanup.Restored)
-	assert.NoDirExists(t, staged)
+	assert.DirExists(t, staged)
+	assert.FileExists(t, filepath.Join(staged, "nested", "media.jpg"))
 	assert.DirExists(t, normalDir)
 	assert.FileExists(t, prefixedFile)
 }
@@ -293,11 +294,11 @@ func TestCleanupStagedDirectoriesRetainsZeroCandidateStageWhenActiveDirIsMissing
 	assert.FileExists(t, filepath.Join(stagedPath, "media.jpg"))
 }
 
-func TestCleanupStagedDirectoriesRemovesZeroCandidateStageWhenAllActiveDirsExist(t *testing.T) {
+func TestCleanupStagedDirectoriesRetainsZeroCandidateStageWhenAllActiveDirsExist(t *testing.T) {
 	db := openStorageTestDB(t)
 	parentDir := t.TempDir()
 	// 无 journal 的 versioned stage、哈希无匹配候选、且 parent 下所有 active
-	// 目录都存在——此时 stage 是已提交删除的残留，应被清理。
+	// 目录都存在：仍不能证明它已提交删除，必须保留以避免对撞名前缀误删。
 	seedStorageUserEntity(t, db, parentDir, "active-user")
 	require.NoError(t, os.Mkdir(filepath.Join(parentDir, "active-user"), 0755))
 	stagedPath := filepath.Join(parentDir, strings.TrimSuffix(stagedDirectoryPattern(filepath.Join(parentDir, "removed-user")), "*")+"fixture")
@@ -305,10 +306,10 @@ func TestCleanupStagedDirectoriesRemovesZeroCandidateStageWhenAllActiveDirsExist
 
 	cleanup, err := CleanupStagedDirectories(db)
 
-	require.NoError(t, err)
-	assert.Equal(t, 1, cleanup.Removed)
+	assert.Error(t, err)
+	assert.Zero(t, cleanup.Removed)
 	assert.Zero(t, cleanup.Restored)
-	assert.NoDirExists(t, stagedPath)
+	assert.DirExists(t, stagedPath)
 }
 
 func TestCleanupStagedDirectoriesRejectsMismatchedJournalHash(t *testing.T) {
