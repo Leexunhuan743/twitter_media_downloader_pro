@@ -58,9 +58,9 @@ func IsNonRetriableStatusError(err error) bool {
 	return utils.IsStatusCode(err, 403) || utils.IsStatusCode(err, 404)
 }
 
-// LogURL 对写入日志的 URL 做脱敏（掩盖敏感查询参数），保证日志可审计且
-// 不泄露 token 等凭据。与旧 mediaURLForLog 语义逐字一致，统一出口。
-func LogURL(raw string) string {
+// logURL 对写入日志的 URL 做脱敏（掩盖敏感查询参数），保证日志可审计且
+// 不泄露 token 等凭据。脱敏实现即 logging.SanitizeURL（logging 包统一出口）。
+func logURL(raw string) string {
 	return logging.SanitizeURL(raw)
 }
 
@@ -155,7 +155,7 @@ func (d *DefaultDownloader) Download(req DownloadRequest) (*DownloadResult, erro
 		// HEAD 失败，回退到 Buffer 模式
 		d.logger.Debugf("[downloader] HEAD request failed, fallback to buffer mode%s",
 			orderedLogFields(req,
-				logField{"url", LogURL(req.URL)},
+				logField{"url", logURL(req.URL)},
 				logField{"error", logError(err)},
 			))
 		return d.downloadBuffer(req)
@@ -167,7 +167,7 @@ func (d *DefaultDownloader) Download(req DownloadRequest) (*DownloadResult, erro
 		d.logger.Debugf("[downloader] Using stream mode for large file%s",
 			orderedLogFields(req,
 				logField{"size", contentLength},
-				logField{"url", LogURL(req.URL)},
+				logField{"url", logURL(req.URL)},
 			))
 		return d.downloadStream(req, contentLength)
 	} else {
@@ -175,7 +175,7 @@ func (d *DefaultDownloader) Download(req DownloadRequest) (*DownloadResult, erro
 		d.logger.Debugf("[downloader] Using buffer mode for small file%s",
 			orderedLogFields(req,
 				logField{"size", contentLength},
-				logField{"url", LogURL(req.URL)},
+				logField{"url", logURL(req.URL)},
 			))
 		return d.downloadBuffer(req)
 	}
@@ -235,7 +235,7 @@ func (d *DefaultDownloader) downloadBuffer(req DownloadRequest) (*DownloadResult
 		d.logger.Warnf("[downloader] Download failed with non-2xx status%s",
 			orderedLogFields(req,
 				logField{"status_code", resp.StatusCode()},
-				logField{"url", LogURL(req.URL)},
+				logField{"url", logURL(req.URL)},
 			))
 		return result, err
 	}
@@ -277,7 +277,7 @@ func (d *DefaultDownloader) downloadStream(req DownloadRequest, contentLength in
 				d.logger.Infof("[downloader] Download succeeded after retry%s",
 					orderedLogFields(req,
 						logField{"attempt", attempt},
-						logField{"url", LogURL(req.URL)},
+						logField{"url", logURL(req.URL)},
 					))
 			}
 			return result, nil
@@ -296,7 +296,7 @@ func (d *DefaultDownloader) downloadStream(req DownloadRequest, contentLength in
 				d.logger.Warnf("[downloader] Stream download failed after max retries, fallback to buffer mode%s",
 					orderedLogFields(req,
 						logField{"attempts", maxDownloadRetries},
-						logField{"url", LogURL(req.URL)},
+						logField{"url", logURL(req.URL)},
 						logField{"last_error", logError(err)},
 					))
 				return d.downloadBuffer(req)
@@ -307,7 +307,7 @@ func (d *DefaultDownloader) downloadStream(req DownloadRequest, contentLength in
 				orderedLogFields(req,
 					logField{"attempt", attempt},
 					logField{"max_retries", maxDownloadRetries},
-					logField{"url", LogURL(req.URL)},
+					logField{"url", logURL(req.URL)},
 					logField{"error", logError(err)},
 				))
 
@@ -356,7 +356,7 @@ func (d *DefaultDownloader) doDownloadStream(req DownloadRequest, contentLength 
 		d.logger.Warnf("[downloader] Stream download failed with non-2xx status%s",
 			orderedLogFields(req,
 				logField{"status_code", resp.StatusCode()},
-				logField{"url", LogURL(req.URL)},
+				logField{"url", logURL(req.URL)},
 			))
 		return result, err
 	}
@@ -387,14 +387,14 @@ func (d *DefaultDownloader) doDownloadStream(req DownloadRequest, contentLength 
 			orderedLogFields(req,
 				logField{"expected_size", contentLength},
 				logField{"actual_size", writeResult.NewSize},
-				logField{"url", LogURL(req.URL)},
+				logField{"url", logURL(req.URL)},
 			))
 
 		// 删除不完整的文件
 		if removeErr := os.Remove(req.Destination); removeErr != nil {
 			d.logger.Warnf("[downloader] Incomplete file remove failed%s",
 				orderedLogFields(req,
-					logField{"url", LogURL(req.URL)},
+					logField{"url", logURL(req.URL)},
 					logField{"error", logError(removeErr)},
 				))
 		}

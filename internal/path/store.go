@@ -38,7 +38,6 @@ func NewStorePath(root string) (*StorePath, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	sp := &StorePath{Root: root}
 	sp.Users = filepath.Join(root, "users")
 	sp.Data = filepath.Join(root, ".data")
@@ -52,8 +51,4 @@ func NewStorePath(root string) (*StorePath, error) {
 		}
 	}
 	return sp, nil
-}
-
-func normalizeRoot(root string) (string, error) {
-	return NormalizeRoot(root)
 }

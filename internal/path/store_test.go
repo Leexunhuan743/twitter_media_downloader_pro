@@ -476,7 +476,7 @@ func BenchmarkNewStorePath_Existing(b *testing.B) {
 func mustNormalizeRoot(t *testing.T, root string) string {
 	t.Helper()
 
-	normalized, err := normalizeRoot(root)
+	normalized, err := NormalizeRoot(root)
 	require.NoError(t, err)
 	return normalized
 }

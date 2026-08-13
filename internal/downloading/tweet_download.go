@@ -299,7 +299,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 
 		path, err := tweetNaming.FilePathWithResolver(dir, ext, cfg.pathResolver)
 		if err != nil {
-			log.Warnf("[download] Media path build failed tweet_id=%d url=%s error=%q", tweet.Id, downloader.LogURL(u), logging.RedactSensitiveText(err.Error()))
+			log.Warnf("[download] Media path build failed tweet_id=%d url=%s error=%q", tweet.Id, logging.SanitizeURL(u), logging.RedactSensitiveText(err.Error()))
 			tweet.Urls = append(tweet.Urls, u)
 			if firstRetryableErr == nil {
 				firstRetryableErr = err
@@ -322,11 +322,11 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 		result, err := cfg.downloader.Download(req)
 		if err != nil {
 			if downloader.IsNonRetriableStatusError(err) {
-				log.Infof("[download] Skip non-retriable media tweet_id=%d url=%s error=%q", tweet.Id, downloader.LogURL(u), logging.RedactSensitiveText(err.Error()))
+				log.Infof("[download] Skip non-retriable media tweet_id=%d url=%s error=%q", tweet.Id, logging.SanitizeURL(u), logging.RedactSensitiveText(err.Error()))
 				skippedUrls = append(skippedUrls, u)
 				continue
 			}
-			log.Warnf("[download] Failed media tweet_id=%d url=%s error=%q", tweet.Id, downloader.LogURL(u), logging.RedactSensitiveText(err.Error()))
+			log.Warnf("[download] Failed media tweet_id=%d url=%s error=%q", tweet.Id, logging.SanitizeURL(u), logging.RedactSensitiveText(err.Error()))
 			tweet.Urls = append(tweet.Urls, u)
 			if firstRetryableErr == nil {
 				firstRetryableErr = err
@@ -335,7 +335,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 		}
 		if result == nil {
 			err = fmt.Errorf("download returned nil result")
-			log.Warnf("[download] Media returned nil result tweet_id=%d url=%s", tweet.Id, downloader.LogURL(u))
+			log.Warnf("[download] Media returned nil result tweet_id=%d url=%s", tweet.Id, logging.SanitizeURL(u))
 			tweet.Urls = append(tweet.Urls, u)
 			if firstRetryableErr == nil {
 				firstRetryableErr = err
@@ -344,7 +344,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 		}
 		if !result.Success {
 			if result.Error != nil && downloader.IsNonRetriableStatusError(result.Error) {
-				log.Infof("[download] Skip non-retriable media tweet_id=%d url=%s error=%q", tweet.Id, downloader.LogURL(u), logging.RedactSensitiveText(result.Error.Error()))
+				log.Infof("[download] Skip non-retriable media tweet_id=%d url=%s error=%q", tweet.Id, logging.SanitizeURL(u), logging.RedactSensitiveText(result.Error.Error()))
 				skippedUrls = append(skippedUrls, u)
 				continue
 			}
@@ -352,7 +352,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 			if result.Error != nil {
 				errorText = logging.RedactSensitiveText(result.Error.Error())
 			}
-			log.Warnf("[download] Media reported failure tweet_id=%d url=%s error=%q", tweet.Id, downloader.LogURL(u), errorText)
+			log.Warnf("[download] Media reported failure tweet_id=%d url=%s error=%q", tweet.Id, logging.SanitizeURL(u), errorText)
 			tweet.Urls = append(tweet.Urls, u)
 			if firstRetryableErr == nil {
 				if result.Error != nil {
