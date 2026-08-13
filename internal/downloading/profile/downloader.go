@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -41,10 +40,11 @@ var validImageExts = map[string]bool{
 }
 
 func imageExtFromURL(rawURL string) string {
-	ext, err := utils.GetExtFromUrl(rawURL)
-	if err != nil {
-		ext = pathpkg.Ext(rawURL)
-	}
+	// utils.GetExtFromUrl 覆盖 path.Ext 对解析后 URL path 的提取语义。
+	// 解析失败（畸形 URL）时直接落默认 ".jpg"：旧实现对原始字符串再做一次
+	// pathpkg.Ext 兜底，会把 query/fragment 中的点误判为扩展名且 url.Parse 失败
+	// 的 URL 本就不可下载，故删除该兜底（生产头像/横幅 URL 无解析失败场景）。
+	ext, _ := utils.GetExtFromUrl(rawURL)
 	ext = strings.ToLower(ext)
 	if validImageExts[ext] {
 		return ext
@@ -246,7 +246,7 @@ func resolveUserTitle(req DownloadRequest, maxLen int) string {
 	if req.UserTitle != "" {
 		return utils.WinFileNameWithMaxLen(req.UserTitle, maxLen)
 	}
-	return naming.NewUserNaming(req.Name, req.ScreenName, maxLen).SanitizedTitle()
+	return naming.UserDirTitle(req.Name, req.ScreenName, maxLen)
 }
 
 func (pd *ProfileDownloader) syncUserDirectory(profile *ProfileInfo, userTitle, screenName string) (string, error) {

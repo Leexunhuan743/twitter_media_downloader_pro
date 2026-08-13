@@ -3,7 +3,6 @@ package naming
 import (
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/unkmonster/tmd/internal/utils"
 )
@@ -40,28 +39,14 @@ func finalizeName(value string, maxLen int) string {
 	return strings.TrimSpace(utils.WinFileNameWithMaxLen(value, maxLen))
 }
 
-func truncateUTF8(value string, maxLen int) string {
-	if maxLen <= 0 {
-		return ""
-	}
-	if len(value) <= maxLen {
-		return value
-	}
-	end := maxLen
-	for end > 0 && !utf8.RuneStart(value[end]) {
-		end--
-	}
-	return value[:end]
-}
-
 func fitNameWithSuffix(name, suffix string, maxLen int) string {
 	if maxLen <= 0 {
 		return ""
 	}
 	if len(suffix) >= maxLen {
-		return truncateUTF8(suffix, maxLen)
+		return utils.TruncateUTF8(suffix, maxLen)
 	}
-	return truncateUTF8(name, maxLen-len(suffix)) + suffix
+	return utils.TruncateUTF8(name, maxLen-len(suffix)) + suffix
 }
 
 func parenthesizedIdentity(identity string, maxLen int) string {
@@ -69,9 +54,9 @@ func parenthesizedIdentity(identity string, maxLen int) string {
 		return ""
 	}
 	if maxLen < 3 {
-		return truncateUTF8(identity, maxLen)
+		return utils.TruncateUTF8(identity, maxLen)
 	}
-	return "(" + truncateUTF8(identity, maxLen-2) + ")"
+	return "(" + utils.TruncateUTF8(identity, maxLen-2) + ")"
 }
 
 // normalizeExtension normalizes an extension into the reserved byte budget,
@@ -98,7 +83,7 @@ func normalizeExtension(ext string) string {
 	if core == "" {
 		return ""
 	}
-	return truncateUTF8("."+core, ExtReserveLen)
+	return utils.TruncateUTF8("."+core, ExtReserveLen)
 }
 
 func normalizeLogLabel(value string, maxLen int) string {
@@ -113,7 +98,7 @@ func normalizeLogLabel(value string, maxLen int) string {
 		value = "unknown"
 	}
 	if maxLen > 0 {
-		value = truncateUTF8(value, maxLen)
+		value = utils.TruncateUTF8(value, maxLen)
 	}
 	return value
 }

@@ -506,12 +506,18 @@ func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" style="color:#2563eb"><path fill="currentColor" d="M582 88c16 0 28 12 28 28v178h192c23 0 34 28 17 45l-76 76c-5 5-12 8-20 8H610v248c0 80 43 129 130 145 25 5 35 35 19 54l-70 82c-8 9-20 14-32 11-122-27-205-122-205-267V423H274c-24 0-35-29-17-46l77-75c5-5 12-8 19-8h99V116c0-16 12-28 28-28h102Zm-74 335v290c0 102 59 177 153 209l42-49c-99-31-149-101-149-202V423h-46Z"/></svg>`))
 }
 
-func (s *Server) writeJSON(w http.ResponseWriter, status int, data interface{}) {
+// writeJSONResponse 将 data 以 JSON 形式写入响应（Content-Type: application/json）。
+// writeJSON 方法与 writeAuth401 共用此包级函数；writeAuth401 的额外响应头由调用方先设置。
+func writeJSONResponse(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		log.Warnf("[api] Response write failed error=%q", err.Error())
 	}
+}
+
+func (s *Server) writeJSON(w http.ResponseWriter, status int, data interface{}) {
+	writeJSONResponse(w, status, data)
 }
 
 func (s *Server) writeError(w http.ResponseWriter, status int, message string) {

@@ -34,29 +34,26 @@ func (b *Bot) cmdDownload(msg *tgbotapi.Message) {
 			b.sendText(msg.Chat.ID, "Invalid list ID. Must be a number.")
 			return
 		}
-		task = b.taskManager.CreateTask(api.TaskTypeListDownload, &api.ListDownloadTaskData{
-			ListID:        api.StringUint64(listID),
+		task = b.taskManager.CreateTask(api.TaskTypeListDownload, api.NewListDownloadTask(listID, api.DownloadFlags{
 			AutoFollow:    opts.AutoFollow,
 			FollowMembers: opts.FollowMembers,
 			SkipProfile:   opts.SkipProfile,
 			NoRetry:       opts.NoRetry,
-		})
+		}))
 	case "foll":
-		task = b.taskManager.CreateTask(api.TaskTypeFollowingDownload, &api.FollowingDownloadTaskData{
-			ScreenName:    target,
+		task = b.taskManager.CreateTask(api.TaskTypeFollowingDownload, api.NewFollowingDownloadTask(target, api.DownloadFlags{
 			AutoFollow:    opts.AutoFollow,
 			FollowMembers: opts.FollowMembers,
 			SkipProfile:   opts.SkipProfile,
 			NoRetry:       opts.NoRetry,
-		})
+		}))
 	default:
-		task = b.taskManager.CreateTask(api.TaskTypeUserDownload, &api.UserDownloadTaskData{
-			ScreenName:    target,
+		task = b.taskManager.CreateTask(api.TaskTypeUserDownload, api.NewUserDownloadTask(target, api.DownloadFlags{
 			AutoFollow:    opts.AutoFollow,
 			FollowMembers: opts.FollowMembers,
 			SkipProfile:   opts.SkipProfile,
 			NoRetry:       opts.NoRetry,
-		})
+		}))
 	}
 	if b.enqueueTask == nil {
 		b.taskManager.SetTaskError(task.ID, fmt.Errorf("download queue not available"))

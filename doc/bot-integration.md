@@ -75,11 +75,14 @@ Server 在 `Start()` 中并行调用各个 `b.Start()`，Bot 外部网络初始�
   → Bot 接收消息
   → handleCommand("/dl elonmusk")
   → parseDLArgs → (type="user", target="elonmusk")
-  → taskManager.CreateTask(TaskTypeUserDownload, &UserDownloadTaskData{...})
-  → server.EnqueueTask(task) 入队下载（telegram/commands.go:61-69；不调用则任务永远停留在 queued）
+  → api.NewUserDownloadTask(target, api.DownloadFlags{...})  // 统一任务构造入口
+  → taskManager.CreateTask(TaskTypeUserDownload, taskData)
+  → server.EnqueueTask(task) 入队下载（telegram/commands.go；不调用则任务永远停留在 queued）
   → 返回 task_id 给用户
   → DownloadQueue 异步执行下载
 ```
+
+任务数据必须经 api 包的统一构造器（`NewUserDownloadTask` / `NewListDownloadTask` / `NewFollowingDownloadTask` / `NewBatchDownloadTask`）创建，禁止在各平台内手写 TaskData 字面量——新增任务字段只会在 api/types.go 一处变更。
 
 **通知推送**：
 

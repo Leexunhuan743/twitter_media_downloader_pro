@@ -14,6 +14,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/logging"
+	"github.com/unkmonster/tmd/internal/path"
 	"github.com/unkmonster/tmd/internal/utils"
 	"gopkg.in/yaml.v3"
 )
@@ -254,11 +255,14 @@ func normalizeRootPath(raw string) (string, error) {
 	if raw == "" {
 		return "", fmt.Errorf("storage dir cannot be empty")
 	}
-	if err := os.MkdirAll(raw, 0755); err != nil {
+	// 归一化逻辑与 path 包共享（Clean + 绝对路径）。MkdirAll 在归一化后的
+	// 绝对路径上执行，避免相对 root 在 cwd 误建目录（path 包在 StorePath
+	// 构造时同样创建这些目录，此处为配置加载阶段的急切创建）。
+	absPath, err := path.NormalizeRoot(raw)
+	if err != nil {
 		return "", err
 	}
-	absPath, err := filepath.Abs(raw)
-	if err != nil {
+	if err := os.MkdirAll(absPath, 0755); err != nil {
 		return "", err
 	}
 	return absPath, nil

@@ -1831,7 +1831,7 @@ tmdp -user elonmusk -dbg
 | **503**              | Service Unavailable   | Twitter 服务暂时不可用     | 等待服务恢复后重试                                      |
 | **connection reset** | 网络连接中断                | 代理不稳定或网络波动          | 检查代理设置；启用 `-no-retry` 快速测试                     |
 
-> **403/404 均为不可重试错误**：对应媒体立即失败并跳过（`[download] Skip non-retriable media ...`），不再自动重试（`isNonRetriableStatusError` 仅匹配 403/404）；仅 500/503 等错误才触发自动重试。
+> **403/404 均为不可重试错误**：对应媒体立即失败并跳过（`[download] Skip non-retriable media ...`），不再自动重试（`IsNonRetriableStatusError` 仅匹配 403/404）；仅 500/503 等错误才触发自动重试。
 
 ### 调试技巧集锦
 

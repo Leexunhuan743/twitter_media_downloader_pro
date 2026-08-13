@@ -3,6 +3,7 @@ package scheduler
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -14,6 +15,17 @@ import (
 
 // ScheduleIDPattern 用于校验手动指定的 schedule ID 格式。
 var ScheduleIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// 触发/查找错误哨兵：供 API 层把 not found / disabled / already triggering
+// 映射为不同状态码（404 / 409），而不是统一 400。
+var (
+	// ErrScheduleNotFound 表示指定 ID 的调度条目不存在。
+	ErrScheduleNotFound = errors.New("schedule not found")
+	// ErrScheduleDisabled 表示条目存在但被禁用。
+	ErrScheduleDisabled = errors.New("schedule is disabled")
+	// ErrScheduleAlreadyTriggering 表示同一条目正在触发中（并发拒绝）。
+	ErrScheduleAlreadyTriggering = errors.New("schedule is already triggering")
+)
 
 const maxDailyTimes = 96
 
@@ -30,7 +42,14 @@ func canonicalizeScheduleEntry(entry ScheduleEntry) ScheduleEntry {
 		return entry
 	}
 
+	// @ 前缀仅对用户名（user/following）目标剥除，与 mixed 的
+	// canonicalizeScreenNameSlice 一致；list 目标是数字 ID，剥 @ 会让
+	// 校验（canonicalize 副本）与解析（调用方原始值）对同一输入产生分歧：
+	// "@123" 校验通过但 ParseUint 失败静默得 0。
 	entry.Target = strings.TrimSpace(entry.Target)
+	if entry.Type != ScheduleTypeList {
+		entry.Target = utils.NormalizeScreenName(entry.Target)
+	}
 	entry.Users = nil
 	entry.Lists = nil
 	entry.FollowingNames = nil
@@ -119,6 +138,25 @@ func ValidateEntry(entry ScheduleEntry) error {
 		}
 	}
 	return nil
+}
+
+// ValidateAndParseEntries 对 entries 逐条执行 ValidateEntry 与 ParseSchedule 校验，
+// 是 readConfig / api 配置保存与校验共用的权威循环。任一条失败时返回带序号与
+// 名称的错误（格式 "schedule #N (name): ..."），全部通过时返回与 entries 等长
+// 的 parsed 列表。
+func ValidateAndParseEntries(entries []ScheduleEntry) ([]*ParsedSchedule, error) {
+	parsed := make([]*ParsedSchedule, len(entries))
+	for i, entry := range entries {
+		if err := ValidateEntry(entry); err != nil {
+			return nil, fmt.Errorf("schedule #%d (%s): %w", i+1, entry.Name, err)
+		}
+		p, err := ParseSchedule(entry.Schedule)
+		if err != nil {
+			return nil, fmt.Errorf("schedule #%d (%s): %w", i+1, entry.Name, err)
+		}
+		parsed[i] = p
+	}
+	return parsed, nil
 }
 
 func NormalizeEntries(entries []ScheduleEntry) ([]ScheduleEntry, error) {

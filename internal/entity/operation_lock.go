@@ -1,9 +1,6 @@
 package entity
 
 import (
-	"path/filepath"
-	"runtime"
-	"strings"
 	"sync"
 )
 
@@ -51,10 +48,8 @@ func lockEntityOperation(kind, ownerID, parentDir string) func() {
 	}
 }
 
+// operationParentDirKey 与 storage.go 的 comparablePath 同一归一化语义
+// （Clean + Windows 小写），复用单一实现避免两处规则漂移。
 func operationParentDirKey(parentDir string) string {
-	key := filepath.Clean(parentDir)
-	if runtime.GOOS == "windows" {
-		key = strings.ToLower(key)
-	}
-	return key
+	return comparablePath(parentDir)
 }

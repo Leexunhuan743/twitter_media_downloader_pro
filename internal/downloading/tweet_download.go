@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"path/filepath"
 	"sync"
 	"syscall"
@@ -101,15 +100,12 @@ func saveLoongTweet(cfg *workerConfig, dir string, tweet *twitter.Tweet, namingO
 		if tweet.RawJSON != "" {
 			result := gjson.Parse(tweet.RawJSON)
 			tweetID = result.Get("rest_id").Uint()
-			if createdAtStr := result.Get("legacy.created_at").String(); createdAtStr != "" {
-				createdAt, _ = time.Parse(time.RubyDate, createdAtStr)
+			// 元数据文件采用容忍式解析：created_at 缺失/畸形时保留零值继续写 txt，
+			// 与 parseTweetResults 的硬失败语义有意不同（txt 不因时间戳丢失而丢弃）。
+			if t, err := twitter.TweetCreatedAtFromResult(&result); err == nil {
+				createdAt = t
 			}
-			noteText := result.Get("note_tweet.note_tweet_results.result.text").String()
-			if noteText != "" {
-				text = html.UnescapeString(noteText)
-			} else {
-				text = html.UnescapeString(result.Get("legacy.full_text").String())
-			}
+			text = twitter.TweetTextFromResult(&result)
 			screenName = result.Get("core.user_results.result.legacy.screen_name").String()
 			if screenName == "" {
 				screenName = "unknown"
@@ -211,7 +207,7 @@ func cleanMediaRecursive(data any) {
 
 						if mediaType, ok := m["type"].(string); ok && mediaType == "photo" {
 							if rawUrl, ok := m["media_url_https"].(string); ok {
-								m["media_url_https"] = utils.EnsurePhotoHighQuality(rawUrl)
+								m["media_url_https"] = upgradePhotoMediaURL(mediaType, rawUrl)
 							}
 						}
 					}
@@ -241,12 +237,15 @@ func (e *mediaDownloadError) Unwrap() error {
 	return e.cause
 }
 
-func isNonRetriableMediaError(err error) bool {
-	return utils.IsStatusCode(err, 403) || utils.IsStatusCode(err, 404)
-}
-
-func mediaURLForLog(raw string) string {
-	return logging.SanitizeURL(raw)
+// upgradePhotoMediaURL 将 photo 类型媒体的 URL 升级为最高质量版本；
+// 非 photo 类型原样返回。供 cleanMediaRecursive（map 遍历）与
+// tweet_json_converter.upgradeMediaToHighQuality（类型化切片遍历）共用，
+// 避免高清升级逻辑双实现。
+func upgradePhotoMediaURL(mediaType, rawURL string) string {
+	if mediaType != "photo" {
+		return rawURL
+	}
+	return utils.EnsurePhotoHighQuality(rawURL)
 }
 
 func tweetMediaSummaryFields(succeeded, failed, skipped, total int) string {
@@ -300,7 +299,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 
 		path, err := tweetNaming.FilePathWithResolver(dir, ext, cfg.pathResolver)
 		if err != nil {
-			log.Warnf("[download] Media path build failed tweet_id=%d url=%s error=%q", tweet.Id, mediaURLForLog(u), logging.RedactSensitiveText(err.Error()))
+			log.Warnf("[download] Media path build failed tweet_id=%d url=%s error=%q", tweet.Id, downloader.LogURL(u), logging.RedactSensitiveText(err.Error()))
 			tweet.Urls = append(tweet.Urls, u)
 			if firstRetryableErr == nil {
 				firstRetryableErr = err
@@ -322,12 +321,12 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 
 		result, err := cfg.downloader.Download(req)
 		if err != nil {
-			if isNonRetriableMediaError(err) {
-				log.Infof("[download] Skip non-retriable media tweet_id=%d url=%s error=%q", tweet.Id, mediaURLForLog(u), logging.RedactSensitiveText(err.Error()))
+			if downloader.IsNonRetriableStatusError(err) {
+				log.Infof("[download] Skip non-retriable media tweet_id=%d url=%s error=%q", tweet.Id, downloader.LogURL(u), logging.RedactSensitiveText(err.Error()))
 				skippedUrls = append(skippedUrls, u)
 				continue
 			}
-			log.Warnf("[download] Failed media tweet_id=%d url=%s error=%q", tweet.Id, mediaURLForLog(u), logging.RedactSensitiveText(err.Error()))
+			log.Warnf("[download] Failed media tweet_id=%d url=%s error=%q", tweet.Id, downloader.LogURL(u), logging.RedactSensitiveText(err.Error()))
 			tweet.Urls = append(tweet.Urls, u)
 			if firstRetryableErr == nil {
 				firstRetryableErr = err
@@ -336,7 +335,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 		}
 		if result == nil {
 			err = fmt.Errorf("download returned nil result")
-			log.Warnf("[download] Media returned nil result tweet_id=%d url=%s", tweet.Id, mediaURLForLog(u))
+			log.Warnf("[download] Media returned nil result tweet_id=%d url=%s", tweet.Id, downloader.LogURL(u))
 			tweet.Urls = append(tweet.Urls, u)
 			if firstRetryableErr == nil {
 				firstRetryableErr = err
@@ -344,8 +343,8 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 			continue
 		}
 		if !result.Success {
-			if result.Error != nil && isNonRetriableMediaError(result.Error) {
-				log.Infof("[download] Skip non-retriable media tweet_id=%d url=%s error=%q", tweet.Id, mediaURLForLog(u), logging.RedactSensitiveText(result.Error.Error()))
+			if result.Error != nil && downloader.IsNonRetriableStatusError(result.Error) {
+				log.Infof("[download] Skip non-retriable media tweet_id=%d url=%s error=%q", tweet.Id, downloader.LogURL(u), logging.RedactSensitiveText(result.Error.Error()))
 				skippedUrls = append(skippedUrls, u)
 				continue
 			}
@@ -353,7 +352,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 			if result.Error != nil {
 				errorText = logging.RedactSensitiveText(result.Error.Error())
 			}
-			log.Warnf("[download] Media reported failure tweet_id=%d url=%s error=%q", tweet.Id, mediaURLForLog(u), errorText)
+			log.Warnf("[download] Media reported failure tweet_id=%d url=%s error=%q", tweet.Id, downloader.LogURL(u), errorText)
 			tweet.Urls = append(tweet.Urls, u)
 			if firstRetryableErr == nil {
 				if result.Error != nil {
@@ -440,8 +439,7 @@ func tweetDownloader(config *workerConfig, errch chan<- PackagedTweet, twech <-c
 					if tie, ok := pt.(TweetInEntity); ok && tie.Entity != nil {
 						parentDir := tie.Entity.ParentDir()
 						if parentDir != "" {
-							userNaming := naming.NewUserNaming(tweet.Creator.Name, tweet.Creator.ScreenName, config.maxFileNameLen)
-							userDirName := userNaming.SanitizedTitle()
+							userDirName := naming.UserDirTitle(tweet.Creator.Name, tweet.Creator.ScreenName, config.maxFileNameLen)
 							userDir := filepath.Join(parentDir, userDirName)
 							tweetNaming := naming.NewTweetNaming(tweet.Text, tweet.Id, tweet.Creator.Title(), config.maxFileNameLen)
 							saveTweetJson(config, userDir, tweet, tweetNaming)

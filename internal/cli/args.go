@@ -8,8 +8,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
+	"github.com/unkmonster/tmd/internal/downloading"
 	"github.com/unkmonster/tmd/internal/utils"
 )
 
@@ -216,15 +216,9 @@ func validateMarkTime(markTime string) error {
 	if markTime == "" {
 		return nil
 	}
-	if strings.EqualFold(markTime, "null") || strings.EqualFold(markTime, "nil") {
-		return nil
-	}
-	// 无时区格式按本地墙钟解释（CLI 契约）；RFC3339（带时区）同样接受，
-	// 与 API 路径的服务端解析保持一致。
-	if _, err := time.Parse(time.RFC3339, markTime); err == nil {
-		return nil
-	}
-	if _, err := time.ParseInLocation("2006-01-02T15:04:05", markTime, time.Local); err != nil {
+	// null/nil（全量标记）与 RFC3339/本地墙钟格式的统一解析逻辑
+	// 收敛在 downloading.ParseMarkTimeValue，这里保留 CLI 自己的错误文案。
+	if _, err := downloading.ParseMarkTimeValue(markTime); err != nil {
 		return fmt.Errorf("invalid mark-time format %q, expected 2006-01-02T15:04:05, RFC3339 (e.g. 2024-01-15T10:30:00Z) or null", markTime)
 	}
 	return nil

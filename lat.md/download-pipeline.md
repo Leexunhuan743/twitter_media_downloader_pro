@@ -56,6 +56,10 @@ Batch logs summarize collect/preprocess/complete counts. They avoid per-media su
 
 **Key behavior**: `downloadTweetMedia` mutates `tweet.Urls` in place — callers check `len(tweet.Urls)` for complete success.
 
+Tweet field extraction is shared: [[internal/twitter/tweet.go#TweetTextFromResult]] selects the display text (note-tweet body preferred over `legacy.full_text`, HTML-unescaped) and [[internal/twitter/tweet.go#TweetCreatedAtFromResult]] parses `legacy.created_at`; both `parseTweetResults` and the `.loongtweet/.txt` writer use them. The txt writer deliberately tolerates a malformed timestamp (zero time, file still written) where `parseTweetResults` hard-fails — a metadata file must not be dropped over a bad date.
+
+Video variant selection is unified: [[internal/twitter/tweet.go#bestVideoVariantURL]] picks the highest-bitrate variant for both the GraphQL path and formatted-entry parsing (`json_folder_download`), never preferring bitrate-less playlists, and falls back to the last variant when none declares a bitrate (legacy `@reverse.0` behavior).
+
 ## Single-File Download
 
 `DefaultDownloader` in `internal/downloader/`:
@@ -85,5 +89,7 @@ Thread safety: 256-slot hash-based mutex (same path serialized, different paths 
 ## Retry
 
 `RetryFailedTweets()` loads failures from [[database|TweetDumper]] (persisted to `errors.json`) and re-downloads. Successes are removed from dumper; permanent failures remain for next retry cycle.
+
+Regular and JSON retries (`RetryFailedTweets` / `RetryFailedJsonTweets`) share one runner ([[internal/downloading/retry.go#downloadRetryBatch]] + [[internal/downloading/retry.go#classifyRetryResults]]): the download pass, progress callback, and per-tweet recovered/remaining/non-retriable classification are single implementations parameterized by the dumper kind and its removal key. Progress semantics are unified across both kinds — `Failed` reports tweets still needing retry (failures plus in-flight), decremented as successes complete; the JSON variant previously reported only in-flight tweets, under-counting failures mid-run.
 
 Retry logs keep start/complete summaries at info level, report remaining retryable tweets as warnings, and push per-tweet recovered messages to debug level.

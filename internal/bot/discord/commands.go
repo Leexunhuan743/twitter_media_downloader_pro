@@ -45,29 +45,26 @@ func (b *Bot) cmdDownload(s *discordgo.Session, i *discordgo.InteractionCreate, 
 			b.respond(s, i, "Invalid list ID. Must be a number.")
 			return
 		}
-		task = b.taskManager.CreateTask(api.TaskTypeListDownload, &api.ListDownloadTaskData{
-			ListID:        api.StringUint64(listID),
+		task = b.taskManager.CreateTask(api.TaskTypeListDownload, api.NewListDownloadTask(listID, api.DownloadFlags{
 			AutoFollow:    autoFollow,
 			FollowMembers: followMembers,
 			SkipProfile:   skipProfile,
 			NoRetry:       noRetry,
-		})
+		}))
 	case "foll":
-		task = b.taskManager.CreateTask(api.TaskTypeFollowingDownload, &api.FollowingDownloadTaskData{
-			ScreenName:    target,
+		task = b.taskManager.CreateTask(api.TaskTypeFollowingDownload, api.NewFollowingDownloadTask(target, api.DownloadFlags{
 			AutoFollow:    autoFollow,
 			FollowMembers: followMembers,
 			SkipProfile:   skipProfile,
 			NoRetry:       noRetry,
-		})
+		}))
 	default:
-		task = b.taskManager.CreateTask(api.TaskTypeUserDownload, &api.UserDownloadTaskData{
-			ScreenName:    target,
+		task = b.taskManager.CreateTask(api.TaskTypeUserDownload, api.NewUserDownloadTask(target, api.DownloadFlags{
 			AutoFollow:    autoFollow,
 			FollowMembers: followMembers,
 			SkipProfile:   skipProfile,
 			NoRetry:       noRetry,
-		})
+		}))
 	}
 	if b.enqueueTask == nil {
 		b.taskManager.SetTaskError(task.ID, fmt.Errorf("download queue not available"))

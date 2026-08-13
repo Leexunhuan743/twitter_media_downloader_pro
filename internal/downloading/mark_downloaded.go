@@ -30,7 +30,7 @@ func MarkUsersAsDownloaded(ctx context.Context, client *resty.Client, db *sqlx.D
 		timestamp = nil
 		log.Infof("[download] Mark downloaded start mode=full lists=%d users=%d", len(lists), len(users))
 	} else {
-		parsedTime, err := parseMarkTime(markTimeStr)
+		parsedTime, err := ParseMarkTimeValue(markTimeStr)
 		if err != nil {
 			return nil, err
 		}
@@ -102,13 +102,19 @@ func MarkUsersAsDownloaded(ctx context.Context, client *resty.Client, db *sqlx.D
 	return results, nil
 }
 
-// parseMarkTime parses a mark-time value. Values with a zone offset
+// ParseMarkTimeValue parses a mark-time value. Values with a zone offset
 // (RFC3339, produced by the API path) are parsed as absolute instants;
 // values without a zone offset (CLI path, user-entered local wall clock)
 // are interpreted in the server's local timezone. The dual contract keeps
 // the CLI behavior unchanged while fixing the API path that previously
 // re-interpreted a UTC wall clock as local time.
-func parseMarkTime(markTimeStr string) (time.Time, error) {
+// "null"/"nil"（大小写不敏感）表示"全量标记"哨兵：返回零值 time.Time 与
+// nil 错误，由调用方在语义层区分（当前消费方是 CLI 校验与测试；API 路径
+// 只产 RFC3339/空串，不触哨兵；调用方必须用 IsZero 判定哨兵而非直接使用）。
+func ParseMarkTimeValue(markTimeStr string) (time.Time, error) {
+	if strings.EqualFold(markTimeStr, "null") || strings.EqualFold(markTimeStr, "nil") {
+		return time.Time{}, nil
+	}
 	parsedTime, err := time.Parse(time.RFC3339, markTimeStr)
 	if err == nil {
 		return parsedTime, nil

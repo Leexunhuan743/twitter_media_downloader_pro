@@ -20,11 +20,13 @@ func TestUserDownloadTaskData(t *testing.T) {
 		{
 			name: "完整数据",
 			data: UserDownloadTaskData{
-				ScreenName:    "testuser",
-				AutoFollow:    true,
-				FollowMembers: true,
-				SkipProfile:   false,
-				NoRetry:       true,
+				ScreenName: "testuser",
+				DownloadFlags: DownloadFlags{
+					AutoFollow:    true,
+					FollowMembers: true,
+					SkipProfile:   false,
+					NoRetry:       true,
+				},
 			},
 			wantJSON:   `{"screen_name":"testuser","auto_follow":true,"follow_members":true,"skip_profile":false,"no_retry":true}`,
 			wantScreen: "testuser",
@@ -58,11 +60,13 @@ func TestListDownloadTaskData(t *testing.T) {
 		{
 			name: "完整数据",
 			data: ListDownloadTaskData{
-				ListID:        12345,
-				AutoFollow:    true,
-				FollowMembers: true,
-				SkipProfile:   true,
-				NoRetry:       false,
+				ListID: 12345,
+				DownloadFlags: DownloadFlags{
+					AutoFollow:    true,
+					FollowMembers: true,
+					SkipProfile:   true,
+					NoRetry:       false,
+				},
 			},
 			wantJSON: `{"list_id":"12345","auto_follow":true,"follow_members":true,"skip_profile":true,"no_retry":false}`,
 		},
@@ -107,11 +111,13 @@ func TestStringUint64JSON(t *testing.T) {
 
 func TestFollowingDownloadTaskData(t *testing.T) {
 	data := FollowingDownloadTaskData{
-		ScreenName:    "following_user",
-		AutoFollow:    true,
-		FollowMembers: true,
-		SkipProfile:   false,
-		NoRetry:       true,
+		ScreenName: "following_user",
+		DownloadFlags: DownloadFlags{
+			AutoFollow:    true,
+			FollowMembers: true,
+			SkipProfile:   false,
+			NoRetry:       true,
+		},
 	}
 
 	bytes, err := json.Marshal(data)
@@ -183,12 +189,14 @@ func TestBatchDownloadTaskData(t *testing.T) {
 		{
 			name: "用户和列表",
 			data: BatchDownloadTaskData{
-				Users:         []string{"user1", "user2"},
-				Lists:         []StringUint64{100, 200},
-				AutoFollow:    true,
-				FollowMembers: true,
-				SkipProfile:   false,
-				NoRetry:       true,
+				Users: []string{"user1", "user2"},
+				Lists: []StringUint64{100, 200},
+				DownloadFlags: DownloadFlags{
+					AutoFollow:    true,
+					FollowMembers: true,
+					SkipProfile:   false,
+					NoRetry:       true,
+				},
 			},
 			wantJSON: `{"users":["user1","user2"],"lists":["100","200"],"following_names":null,"auto_follow":true,"follow_members":true,"skip_profile":false,"no_retry":true}`,
 		},

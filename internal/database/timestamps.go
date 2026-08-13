@@ -1,6 +1,7 @@
 package database
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -25,6 +26,24 @@ var legacyTimeFormats = []string{
 // _time_format=sqlite. It preserves the zone offset, which is why mixed-offset
 // values compare lexically instead of by instant.
 const sqliteTimeLayout = "2006-01-02 15:04:05.999999999-07:00"
+
+// NormalizeTime returns t normalized to UTC. Every latest_release_time write
+// path must pass through this so the stored TEXT order equals the instant
+// order (see NormalizeLegacyTimestamps). It is idempotent, so callers may
+// normalize before updating in-memory records as well.
+func NormalizeTime(t time.Time) time.Time {
+	return t.UTC()
+}
+
+// NormalizeNullTime returns the nullable timestamp normalized to UTC when
+// Valid. It never mutates the caller's value (value semantics), so callers
+// keep the original representation for their own bookkeeping.
+func NormalizeNullTime(t sql.NullTime) sql.NullTime {
+	if t.Valid {
+		t.Time = t.Time.UTC()
+	}
+	return t
+}
 
 // NormalizeLegacyTimestamps rewrites user_entities.latest_release_time values
 // stored by older versions with a non-UTC zone offset into UTC.

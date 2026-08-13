@@ -118,7 +118,7 @@ func (ue *UserEntity) Remove() error {
 		return err
 	}
 	if err := database.DelUserEntity(ue.db, uint32(ue.record.Id.Int32)); err != nil {
-		return staged.rollback(ue.db, fmt.Errorf("delete %s database record: %w", ue.description(), err))
+		return staged.rollback(ue.db, fmt.Errorf("delete %s database record: %w", ue.description(), TranslateError(err)))
 	}
 
 	ue.created = false
@@ -245,8 +245,10 @@ func (ue *UserEntity) SetLatestReleaseTime(t time.Time) error {
 	if ue.db == nil {
 		return fmt.Errorf("set latest release time for %s: database is nil", ue.description())
 	}
-	// 与 DB 层一致：存储与内存记录都归一为 UTC，避免文本序与时刻序分叉。
-	t = t.UTC()
+	// 与 DB 层一致（database.NormalizeTime）：存储与内存记录都归一为 UTC，
+	// 避免文本序与时刻序分叉。归一化幂等，此处对内存记录再归一一次以保持
+	// 内存值 == 存储值。
+	t = database.NormalizeTime(t)
 	err := database.SetUserEntityLatestReleaseTime(ue.db, int(ue.record.Id.Int32), t)
 	if err == nil {
 		ue.record.LatestReleaseTime.Time = t

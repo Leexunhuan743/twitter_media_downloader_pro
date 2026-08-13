@@ -30,6 +30,13 @@ type downloadServiceImpl struct {
 	dumperMu sync.Mutex
 }
 
+// maxDownloadRoutine 返回配置的下载并发数，未配置时回退到默认值。
+// 与 downloading.RuntimeOptions.normalizedMaxDownloadRoutine 构成双层防御：
+// 此处归一化供 profileDownloaderConfig（profile 包不兜底 MaxFileNameLen）与
+// 日志展示（workers=N 需要具体值）使用；downloading 包对 RuntimeOptions 再做
+// 一次归一化兜底，两处默认值来源一致（config.DefaultMaxDownloadRoutine）。
+// 决策理由（B26）：runtimeOptions() 保持归一化而非直传原始 Config 值——
+// 若直传，未配置时日志会显示 workers=0，信息量变差；下载流程本身不受影响。
 func (s *downloadServiceImpl) maxDownloadRoutine() int {
 	if s.deps != nil && s.deps.Config != nil && s.deps.Config.MaxDownloadRoutine > 0 {
 		return s.deps.Config.MaxDownloadRoutine
@@ -37,6 +44,8 @@ func (s *downloadServiceImpl) maxDownloadRoutine() int {
 	return config.DefaultMaxDownloadRoutine()
 }
 
+// maxFileNameLen 返回文件名最大长度，未配置时回退到默认值。
+// 同 maxDownloadRoutine：service 与 downloading 双层归一化（utils.DefaultMaxFileNameLen）。
 func (s *downloadServiceImpl) maxFileNameLen() int {
 	if s.deps != nil && s.deps.Config != nil && s.deps.Config.MaxFileNameLen > 0 {
 		return s.deps.Config.MaxFileNameLen
@@ -44,6 +53,9 @@ func (s *downloadServiceImpl) maxFileNameLen() int {
 	return utils.DefaultMaxFileNameLen
 }
 
+// runtimeOptions 构造下载运行时参数。字段已在 service 层归一化（见
+// maxDownloadRoutine/maxFileNameLen），downloading 包消费时还会通过
+// normalizedMaxDownloadRoutine/normalizedMaxFileNameLen 兜底一次，双层防御。
 func (s *downloadServiceImpl) runtimeOptions() downloading.RuntimeOptions {
 	return downloading.RuntimeOptions{
 		MaxDownloadRoutine: s.maxDownloadRoutine(),
@@ -56,6 +68,17 @@ func (s *downloadServiceImpl) profileDownloaderConfig() *profile.Config {
 	cfg.MaxDownloadRoutine = s.maxDownloadRoutine()
 	cfg.MaxFileNameLen = s.maxFileNameLen()
 	return cfg
+}
+
+// storePathFor 创建存储根路径；失败时统一记录日志并包装错误，避免各处文案分叉。
+// desc 用于日志与错误信息中的上下文标识（如 "task_id=xxx" / "operation=clear_errors"）。
+func (s *downloadServiceImpl) storePathFor(desc string) (*path.StorePath, error) {
+	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
+	if err != nil {
+		log.Errorf("[download] Store path failed %s error=%q", desc, safeDownloadError(err))
+		return nil, fmt.Errorf("failed to make store dir for %s: %w", desc, err)
+	}
+	return pathHelper, nil
 }
 
 func (s *downloadServiceImpl) getReporterOrDefault(reporter ProgressReporter) ProgressReporter {
@@ -231,6 +254,19 @@ func (s *downloadServiceImpl) resolveFollowings(ctx context.Context, screenNames
 	return lists, failures
 }
 
+// logResolveFailures 汇总记录解析失败明细（用户/列表/关注列表统一格式），
+// 供 ProfileDownload / MarkDownloaded / BatchDownload 共用，保证日志逐字一致。
+func logResolveFailures(failures []resolveFailure) {
+	if len(failures) == 0 {
+		return
+	}
+	parts := make([]string, 0, len(failures))
+	for _, f := range failures {
+		parts = append(parts, fmt.Sprintf("%s[%s]: %s", f.Kind, f.Identifier, safeDownloadError(f.Err)))
+	}
+	log.Warnf("[download] Resolve failures count=%d details=%q", len(failures), strings.Join(parts, "; "))
+}
+
 func shouldFollowMember(user *twitter.User) bool {
 	if user == nil || user.Id == 0 {
 		return false
@@ -348,10 +384,9 @@ func (s *downloadServiceImpl) executeDownloadTemplate(ctx context.Context, confi
 
 	config.ReportBeforeDownload(config.TaskID, reporter)
 
-	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
+	pathHelper, err := s.storePathFor(fmt.Sprintf("task_id=%s", config.TaskID))
 	if err != nil {
-		log.Errorf("[download] Store path failed task_id=%s error=%q", config.TaskID, safeDownloadError(err))
-		return fmt.Errorf("failed to make store dir [task=%s]: %w", config.TaskID, err)
+		return err
 	}
 	log.Debugf("[download] Store path ready root=%q", logging.Path(pathHelper.Root))
 
@@ -546,7 +581,7 @@ func (s *downloadServiceImpl) FollowingDownload(ctx context.Context, taskID stri
 func (s *downloadServiceImpl) ProfileDownload(ctx context.Context, taskID string, screenNames []string, reporter ProgressReporter) error {
 	reporter = s.getReporterOrDefault(reporter)
 
-	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
+	pathHelper, err := s.storePathFor(fmt.Sprintf("task_id=%s", taskID))
 	if err != nil {
 		return err
 	}
@@ -562,13 +597,7 @@ func (s *downloadServiceImpl) ProfileDownload(ctx context.Context, taskID string
 		}
 	}
 	users, failures := s.resolveUsers(ctx, unique)
-	if len(failures) > 0 {
-		parts := make([]string, 0, len(failures))
-		for _, f := range failures {
-			parts = append(parts, fmt.Sprintf("%s[%s]: %s", f.Kind, f.Identifier, safeDownloadError(f.Err)))
-		}
-		log.Warnf("[download] Resolve failures count=%d details=%q", len(failures), strings.Join(parts, "; "))
-	}
+	logResolveFailures(failures)
 	if len(unique) > 0 && len(users) == 0 {
 		log.Warnf("[download] Resolve failed target=profile_users reason=all_failed")
 		return fmt.Errorf("all profile users failed to resolve [task=%s]", taskID)
@@ -602,9 +631,8 @@ func (s *downloadServiceImpl) ListProfileDownload(ctx context.Context, taskID st
 		return err
 	}
 
-	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
+	pathHelper, err := s.storePathFor(fmt.Sprintf("task_id=%s", taskID))
 	if err != nil {
-		log.Errorf("[download] Store path failed task_id=%s error=%q", taskID, safeDownloadError(err))
 		return err
 	}
 	versionManager, fileWriter, dwn := s.initDownloader()
@@ -636,13 +664,7 @@ func (s *downloadServiceImpl) MarkDownloaded(ctx context.Context, taskID string,
 
 	// 日志汇总所有解析失败明细
 	allFailures := append(append(userFailures, listFailures...), followingFailures...)
-	if len(allFailures) > 0 {
-		parts := make([]string, 0, len(allFailures))
-		for _, f := range allFailures {
-			parts = append(parts, fmt.Sprintf("%s[%s]: %s", f.Kind, f.Identifier, safeDownloadError(f.Err)))
-		}
-		log.Warnf("[download] Resolve failures count=%d details=%q", len(allFailures), strings.Join(parts, "; "))
-	}
+	logResolveFailures(allFailures)
 
 	if len(users) == 0 && len(lists) == 0 {
 		log.Warn("[download] Mark skipped reason=no_resolved_targets")
@@ -659,9 +681,8 @@ func (s *downloadServiceImpl) MarkDownloaded(ctx context.Context, taskID string,
 
 	// 执行标记
 	// 注意：MarkUsersAsDownloaded 内部会自动获取列表成员并标记
-	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
+	pathHelper, err := s.storePathFor(fmt.Sprintf("task_id=%s", taskID))
 	if err != nil {
-		log.Errorf("[download] Store path failed task_id=%s error=%q", taskID, safeDownloadError(err))
 		return err
 	}
 
@@ -688,9 +709,8 @@ func (s *downloadServiceImpl) JsonFileDownload(ctx context.Context, taskID strin
 		return err
 	}
 
-	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
+	pathHelper, err := s.storePathFor(fmt.Sprintf("task_id=%s", taskID))
 	if err != nil {
-		log.Errorf("[download] Store path failed task_id=%s error=%q", taskID, safeDownloadError(err))
 		return err
 	}
 	_, fileWriter, dwn := s.initDownloader()
@@ -745,9 +765,8 @@ func (s *downloadServiceImpl) JsonFolderDownload(ctx context.Context, taskID str
 		return err
 	}
 
-	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
+	pathHelper, err := s.storePathFor(fmt.Sprintf("task_id=%s", taskID))
 	if err != nil {
-		log.Errorf("[download] Store path failed task_id=%s error=%q", taskID, safeDownloadError(err))
 		return err
 	}
 	_, fileWriter, dwn := s.initDownloader()
@@ -809,13 +828,7 @@ func (s *downloadServiceImpl) BatchDownload(ctx context.Context, taskID string, 
 
 			// 日志汇总所有解析失败明细
 			allFailures := append(append(userFailures, listFailures...), followingFailures...)
-			if len(allFailures) > 0 {
-				parts := make([]string, 0, len(allFailures))
-				for _, f := range allFailures {
-					parts = append(parts, fmt.Sprintf("%s[%s]: %s", f.Kind, f.Identifier, safeDownloadError(f.Err)))
-				}
-				log.Warnf("[download] Resolve failures count=%d details=%q", len(allFailures), strings.Join(parts, "; "))
-			}
+			logResolveFailures(allFailures)
 
 			if len(users) == 0 && len(lists) == 0 {
 				log.Warn("[download] Resolve failed target=batch reason=all_failed")
@@ -852,10 +865,9 @@ func (s *downloadServiceImpl) RetryAllFailed(ctx context.Context, taskID string,
 	start := time.Now()
 	log.Infof("[download] Retry all start task_id=%s", taskID)
 
-	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
+	pathHelper, err := s.storePathFor(fmt.Sprintf("task_id=%s", taskID))
 	if err != nil {
-		log.Errorf("[download] Store path failed task_id=%s error=%q", taskID, safeDownloadError(err))
-		return fmt.Errorf("failed to create store path [task=%s]: %w", taskID, err)
+		return err
 	}
 
 	_, fileWriter, dwn := s.initDownloader()
@@ -907,10 +919,9 @@ func (s *downloadServiceImpl) RetryAllFailed(ctx context.Context, taskID string,
 
 // ClearErrors 清除所有失败推文记录
 func (s *downloadServiceImpl) ClearErrors() error {
-	pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
+	pathHelper, err := s.storePathFor("operation=clear_errors")
 	if err != nil {
-		log.Errorf("[download] Store path failed operation=clear_errors error=%q", safeDownloadError(err))
-		return fmt.Errorf("failed to create store path: %w", err)
+		return err
 	}
 
 	s.dumperMu.Lock()
@@ -1019,7 +1030,7 @@ func (s *downloadServiceImpl) downloadProfile(ctx context.Context, taskID string
 	for i, user := range users {
 		requests[i] = profile.DownloadRequest{
 			ScreenName:  user.ScreenName,
-			UserTitle:   naming.NewUserNaming(user.Name, user.ScreenName, s.maxFileNameLen()).SanitizedTitle(),
+			UserTitle:   naming.UserDirTitle(user.Name, user.ScreenName, s.maxFileNameLen()),
 			Name:        user.Name,
 			UserID:      user.Id,
 			AvatarURL:   user.AvatarURL,

@@ -173,11 +173,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	expiry := time.Now().Add(jwtTokenTTL)
-	s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]interface{}{
-		"token":      jwtToken,
-		"expires_at": expiry.UTC().Format(time.RFC3339),
-		"expires_in": int(jwtTokenTTL.Seconds()),
-	}))
+	s.writeJSON(w, http.StatusOK, NewSuccessResponse(tokenResponsePayload(jwtToken, expiry, int(jwtTokenTTL.Seconds()))))
 }
 
 // handleAuthRefresh accepts a valid JWT and returns a new JWT with fresh expiry.
@@ -243,11 +239,7 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	expiry := time.Now().Add(jwtTokenTTL)
-	s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]interface{}{
-		"token":      jwtToken,
-		"expires_at": expiry.UTC().Format(time.RFC3339),
-		"expires_in": int(jwtTokenTTL.Seconds()),
-	}))
+	s.writeJSON(w, http.StatusOK, NewSuccessResponse(tokenResponsePayload(jwtToken, expiry, int(jwtTokenTTL.Seconds()))))
 }
 
 // handleAuthCheck returns the current JWT status.
@@ -326,17 +318,33 @@ func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
 	exp := claims.ExpiresAt.Time
 	remaining := time.Until(exp)
 
-	s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]interface{}{
-		"authenticated": true,
-		"auth_enabled":  true,
-		"valid":         true,
-		"expires_at":    exp.UTC().Format(time.RFC3339),
-		"expires_in":    int(remaining.Seconds()),
-		"needs_refresh": remaining < jwtRefreshMargin,
-	}))
+	// 复用登录/刷新共用的 expires_at/expires_in 构造；原校验响应不含 token 字段，
+	// 传空 token 以保持逐字一致，再追加校验状态字段
+	payload := tokenResponsePayload("", exp, int(remaining.Seconds()))
+	payload["authenticated"] = true
+	payload["auth_enabled"] = true
+	payload["valid"] = true
+	payload["needs_refresh"] = remaining < jwtRefreshMargin
+	s.writeJSON(w, http.StatusOK, NewSuccessResponse(payload))
 }
 
 // ---- Helpers ----
+
+// tokenResponsePayload 构造会话令牌响应的公共字段。
+// 登录/刷新端点返回 token/expires_at/expires_in 三字段；handleAuthCheck 只复用
+// expires_at/expires_in（原校验响应不含 token 字段，保持逐字一致，故传入空 token
+// 时省略该字段）。expiresIn 由调用方按原有语义计算传入（登录/刷新为 TTL 秒数、
+// 校验为剩余秒数），保证整型截断与改造前完全一致。
+func tokenResponsePayload(token string, expiry time.Time, expiresIn int) map[string]interface{} {
+	payload := map[string]interface{}{
+		"expires_at": expiry.UTC().Format(time.RFC3339),
+		"expires_in": expiresIn,
+	}
+	if token != "" {
+		payload["token"] = token
+	}
+	return payload
+}
 
 // clientIP 从 RemoteAddr（格式 "host:port"）中提取纯 IP 地址。
 // 如果解析失败，返回原始字符串作为 fallback。

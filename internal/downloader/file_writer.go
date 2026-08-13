@@ -76,14 +76,8 @@ func (fw *DefaultFileWriter) Write(req WriteRequest) (WriteResult, error) {
 	}
 
 	// 2. 创建版本备份（如果需要）
-	if req.Options.CreateVersion && fw.versionManager != nil {
-		if _, err := os.Stat(req.Path); err == nil {
-			_, err = fw.versionManager.CreateVersion(req.Path)
-			if err != nil {
-				return result, err
-			}
-			result.Versioned = true
-		}
+	if err := fw.createVersionBackup(req.Path, req.Options.CreateVersion, &result); err != nil {
+		return result, err
 	}
 
 	// 3. 原子写入
@@ -94,11 +88,7 @@ func (fw *DefaultFileWriter) Write(req WriteRequest) (WriteResult, error) {
 	result.NewSize = written
 
 	// 4. 设置修改时间
-	if req.Options.ModTime != nil {
-		if err := os.Chtimes(req.Path, time.Time{}, *req.Options.ModTime); err != nil {
-			log.Warnf("[downloader] Mod time set failed path=%q error=%q", logging.Path(req.Path), err.Error())
-		}
-	}
+	setModTime(req.Path, req.Options.ModTime)
 
 	result.Success = true
 	return result, nil
@@ -128,14 +118,8 @@ func (fw *DefaultFileWriter) writeStream(path string, reader io.Reader, size int
 	}
 
 	// 创建版本备份（如果需要）
-	if options.CreateVersion && fw.versionManager != nil {
-		if _, err := os.Stat(path); err == nil {
-			_, err = fw.versionManager.CreateVersion(path)
-			if err != nil {
-				return result, err
-			}
-			result.Versioned = true
-		}
+	if err := fw.createVersionBackup(path, options.CreateVersion, &result); err != nil {
+		return result, err
 	}
 
 	// 原子流式写入
@@ -148,14 +132,38 @@ func (fw *DefaultFileWriter) writeStream(path string, reader io.Reader, size int
 	result.NewSize = written
 
 	// 设置修改时间
-	if options.ModTime != nil {
-		if err := os.Chtimes(path, time.Time{}, *options.ModTime); err != nil {
-			log.Warnf("[downloader] Mod time set failed path=%q error=%q", logging.Path(path), err.Error())
-		}
-	}
+	setModTime(path, options.ModTime)
 
 	result.Success = true
 	return result, nil
+}
+
+// createVersionBackup 在目标文件已存在时创建版本备份（旧文件归档到 .versions）。
+// 与 Write/writeStream 原内联逻辑逐字等价：文件不存在（或 stat 失败）时静默跳过，
+// CreateVersion 失败时原样返回错误；成功时置位 result.Versioned。
+func (fw *DefaultFileWriter) createVersionBackup(path string, createVersion bool, result *WriteResult) error {
+	if !createVersion || fw.versionManager == nil {
+		return nil
+	}
+	if _, err := os.Stat(path); err != nil {
+		return nil
+	}
+	if _, err := fw.versionManager.CreateVersion(path); err != nil {
+		return err
+	}
+	result.Versioned = true
+	return nil
+}
+
+// setModTime 设置文件的修改时间；失败仅记录警告，不中断写入流程。
+// 与 Write/writeStream 原内联逻辑逐字等价（含日志格式）。
+func setModTime(path string, modTime *time.Time) {
+	if modTime == nil {
+		return
+	}
+	if err := os.Chtimes(path, time.Time{}, *modTime); err != nil {
+		log.Warnf("[downloader] Mod time set failed path=%q error=%q", logging.Path(path), err.Error())
+	}
 }
 
 // atomicWriteFromReader 原子写入 reader 内容

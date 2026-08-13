@@ -115,7 +115,7 @@ func (le *ListEntity) Remove() error {
 		return err
 	}
 	if err := database.DelLstEntity(le.db, int(le.record.Id.Int32)); err != nil {
-		return staged.rollback(le.db, fmt.Errorf("delete %s database record: %w", le.description(), err))
+		return staged.rollback(le.db, fmt.Errorf("delete %s database record: %w", le.description(), TranslateError(err)))
 	}
 
 	le.created = false

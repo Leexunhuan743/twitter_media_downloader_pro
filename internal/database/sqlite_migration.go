@@ -527,6 +527,9 @@ func validateRowCounts(sourceDB *sqlx.Tx, targetQueryer interface {
 	return nil
 }
 
+// nullInt32Value 将 sql.NullInt32 转为 INSERT 绑定值：有效值返回 int32，
+// 无效值返回 nil 让 SQLite 存储 NULL。与 model.go 的 NullInt32（无效→0，
+// 用于内存计算）语义有意不同。
 func nullInt32Value(value sql.NullInt32) interface{} {
 	if value.Valid {
 		return value.Int32

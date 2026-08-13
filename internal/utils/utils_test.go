@@ -1342,3 +1342,23 @@ func BenchmarkPathExists(b *testing.B) {
 		PathExists(path)
 	}
 }
+
+func TestTruncateUTF8(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    string
+		maxLen   int
+		expected string
+	}{
+		{name: "non-positive maxLen yields empty", value: "abc", maxLen: 0, expected: ""},
+		{name: "negative maxLen yields empty (no panic)", value: "abc", maxLen: -1, expected: ""},
+		{name: "short value preserved", value: "abc", maxLen: 10, expected: "abc"},
+		{name: "exact fit", value: "abc", maxLen: 3, expected: "abc"},
+		{name: "byte truncation without rune split", value: "a🎉b", maxLen: 4, expected: "a"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, TruncateUTF8(tt.value, tt.maxLen))
+		})
+	}
+}

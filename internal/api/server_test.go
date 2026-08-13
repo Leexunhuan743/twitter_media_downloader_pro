@@ -1444,11 +1444,13 @@ func TestHandleUserDownload_Success(t *testing.T) {
 	defer db.Close()
 
 	reqData := UserDownloadTaskData{
-		ScreenName:    "testuser",
-		AutoFollow:    true,
-		FollowMembers: true,
-		SkipProfile:   false,
-		NoRetry:       false,
+		ScreenName: "testuser",
+		DownloadFlags: DownloadFlags{
+			AutoFollow:    true,
+			FollowMembers: true,
+			SkipProfile:   false,
+			NoRetry:       false,
+		},
 	}
 	body, _ := json.Marshal(reqData)
 
@@ -1589,9 +1591,11 @@ func TestHandleFollowingDownload_Success(t *testing.T) {
 	defer db.Close()
 
 	reqData := FollowingDownloadTaskData{
-		ScreenName:    "testuser",
-		AutoFollow:    true,
-		FollowMembers: true,
+		ScreenName: "testuser",
+		DownloadFlags: DownloadFlags{
+			AutoFollow:    true,
+			FollowMembers: true,
+		},
 	}
 	body, _ := json.Marshal(reqData)
 
@@ -1653,10 +1657,12 @@ func TestHandleListDownload_Success(t *testing.T) {
 	defer db.Close()
 
 	reqData := ListDownloadTaskData{
-		ListID:        123,
-		AutoFollow:    true,
-		FollowMembers: true,
-		SkipProfile:   false,
+		ListID: 123,
+		DownloadFlags: DownloadFlags{
+			AutoFollow:    true,
+			FollowMembers: true,
+			SkipProfile:   false,
+		},
 	}
 	body, _ := json.Marshal(reqData)
 
@@ -1979,11 +1985,13 @@ func TestHandleBatchDownload_OnlyUsers(t *testing.T) {
 	defer db.Close()
 
 	reqData := BatchDownloadTaskData{
-		Users:         []string{"user1", "user2"},
-		Lists:         []StringUint64{},
-		AutoFollow:    true,
-		FollowMembers: true,
-		SkipProfile:   false,
+		Users: []string{"user1", "user2"},
+		Lists: []StringUint64{},
+		DownloadFlags: DownloadFlags{
+			AutoFollow:    true,
+			FollowMembers: true,
+			SkipProfile:   false,
+		},
 	}
 	body, _ := json.Marshal(reqData)
 
@@ -2040,12 +2048,14 @@ func TestHandleBatchDownload_BothUsersAndLists(t *testing.T) {
 	defer db.Close()
 
 	reqData := BatchDownloadTaskData{
-		Users:         []string{"user1"},
-		Lists:         []StringUint64{100},
-		AutoFollow:    true,
-		FollowMembers: true,
-		SkipProfile:   true,
-		NoRetry:       true,
+		Users: []string{"user1"},
+		Lists: []StringUint64{100},
+		DownloadFlags: DownloadFlags{
+			AutoFollow:    true,
+			FollowMembers: true,
+			SkipProfile:   true,
+			NoRetry:       true,
+		},
 	}
 	body, _ := json.Marshal(reqData)
 
@@ -2117,7 +2127,7 @@ func TestScheduledDownloadMixedCreatesBatchTaskAndCallsService(t *testing.T) {
 	fakeService := &fakeDownloadService{batchCalls: make(chan batchDownloadCall, 1)}
 	server.downloadService = fakeService
 
-	taskID := server.scheduledDownload(scheduler.ScheduleEntry{
+	taskID, _ := server.scheduledDownload(scheduler.ScheduleEntry{
 		ID:             "mixed-entry",
 		Type:           scheduler.ScheduleTypeMixed,
 		Users:          []string{"@user1"},
@@ -2161,7 +2171,7 @@ func TestScheduledDownloadUser_NormalizesAndValidatesTarget(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer db.Close()
 
-	taskID := server.scheduledDownload(scheduler.ScheduleEntry{
+	taskID, _ := server.scheduledDownload(scheduler.ScheduleEntry{
 		Type:   scheduler.ScheduleTypeUser,
 		Target: " @Alice ",
 	})
@@ -2173,18 +2183,43 @@ func TestScheduledDownloadUser_NormalizesAndValidatesTarget(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "Alice", data.ScreenName)
 
-	invalidTaskID := server.scheduledDownload(scheduler.ScheduleEntry{
+	invalidTaskID, _ := server.scheduledDownload(scheduler.ScheduleEntry{
 		Type:   scheduler.ScheduleTypeUser,
 		Target: "坏名字",
 	})
 	assert.Empty(t, invalidTaskID)
 }
 
+// TestScheduledDownloadList_RejectsAtPrefixedTarget 守护 list 目标解析与校验
+// 一致性：ValidateEntry 对 "@123" 拒绝（list 不剥 @），且即使绕过校验直传
+// 也必须在提取层拒绝，而不是静默生成 ListID=0 任务。
+func TestScheduledDownloadList_RejectsAtPrefixedTarget(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer db.Close()
+
+	taskID, _ := server.scheduledDownload(scheduler.ScheduleEntry{
+		Type:   scheduler.ScheduleTypeList,
+		Target: "@123",
+	})
+	assert.Empty(t, taskID, "at-prefixed list target must be rejected, not enqueued as list 0")
+
+	validID, _ := server.scheduledDownload(scheduler.ScheduleEntry{
+		Type:   scheduler.ScheduleTypeList,
+		Target: "123",
+	})
+	assert.NotEmpty(t, validID)
+	task, ok := server.taskManager.GetTask(validID)
+	assert.True(t, ok)
+	data, ok := task.Data.(*ListDownloadTaskData)
+	assert.True(t, ok)
+	assert.Equal(t, StringUint64(123), data.ListID)
+}
+
 func TestScheduledDownloadFollowing_NormalizesAndValidatesTarget(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer db.Close()
 
-	taskID := server.scheduledDownload(scheduler.ScheduleEntry{
+	taskID, _ := server.scheduledDownload(scheduler.ScheduleEntry{
 		Type:   scheduler.ScheduleTypeFollowing,
 		Target: " @Bob ",
 	})
@@ -2196,7 +2231,7 @@ func TestScheduledDownloadFollowing_NormalizesAndValidatesTarget(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "Bob", data.ScreenName)
 
-	invalidTaskID := server.scheduledDownload(scheduler.ScheduleEntry{
+	invalidTaskID, _ := server.scheduledDownload(scheduler.ScheduleEntry{
 		Type:   scheduler.ScheduleTypeFollowing,
 		Target: "??bad??",
 	})
@@ -2210,7 +2245,7 @@ func TestScheduledDownloadUsesUnifiedAdmissionWhenQueueIsClosed(t *testing.T) {
 	server.downloadQueue.CloseAndWait(time.Second)
 	server.downloadQueue = &DownloadQueue{closed: true, detached: make(map[string]*detachedRun)}
 
-	taskID := server.scheduledDownload(scheduler.ScheduleEntry{
+	taskID, _ := server.scheduledDownload(scheduler.ScheduleEntry{
 		ID:     "schedule-user",
 		Type:   scheduler.ScheduleTypeUser,
 		Target: "alice",
@@ -3345,4 +3380,68 @@ func TestHandleGetThemes_ReturnsList(t *testing.T) {
 	current, ok := data["current"].(string)
 	assert.True(t, ok)
 	assert.NotEmpty(t, current)
+}
+
+// TestHandleTriggerSchedule_ErrorStatusCodes 守护 trigger 错误码语义：
+// not found→404、disabled→409、already triggering→409（修复前统一 400）。
+func TestHandleTriggerSchedule_ErrorStatusCodes(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer db.Close()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "schedules.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`schedules:
+  - id: sched-disabled
+    type: user
+    target: alice
+    name: Alice
+    schedule: "interval:1h"
+    enabled: false
+  - id: sched-active
+    type: user
+    target: bob
+    name: Bob
+    schedule: "interval:1h"
+    enabled: true
+`), 0600))
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	sched, err := scheduler.New(configPath, func(entry scheduler.ScheduleEntry) (string, error) {
+		close(started)
+		<-release
+		return "task-1", nil
+	})
+	require.NoError(t, err)
+	server.schedulerMu.Lock()
+	server.scheduler = sched
+	server.schedulerMu.Unlock()
+
+	trigger := func(id string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/schedules/"+id+"/trigger", nil)
+		req.SetPathValue("id", id)
+		rr := httptest.NewRecorder()
+		server.handleTriggerSchedule(rr, req)
+		return rr
+	}
+
+	// not found → 404
+	rr := trigger("does-not-exist")
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+
+	// disabled → 409
+	rr = trigger("sched-disabled")
+	assert.Equal(t, http.StatusConflict, rr.Code)
+
+	// already triggering → 409（downloadFunc 阻塞期间二次触发）
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		_ = trigger("sched-active")
+	}()
+	<-started
+	rr = trigger("sched-active")
+	assert.Equal(t, http.StatusConflict, rr.Code)
+	close(release)
+	<-firstDone
 }

@@ -160,8 +160,7 @@ func DownloadThirdPartyTweets(
 				tweet := convertToTwitterTweet(entries[i])
 
 				// 构建用户目录：usersDir/{ sanitizedUserName }/
-				userNaming := naming.NewUserNaming(entries[i].Name, entries[i].ScreenName, opts.normalizedMaxFileNameLen())
-				userDir := filepath.Join(usersDir, userNaming.SanitizedTitle())
+				userDir := filepath.Join(usersDir, naming.UserDirTitle(entries[i].Name, entries[i].ScreenName, opts.normalizedMaxFileNameLen()))
 				if err := os.MkdirAll(userDir, 0755); err != nil {
 					log.Warnf("[jsonfile] User directory failed tweet_id=%s path=%q error=%q", entries[i].ID, logging.Path(userDir), err.Error())
 				}

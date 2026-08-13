@@ -58,4 +58,7 @@ type ScheduleStatus struct {
 	Triggering          bool          `json:"triggering"`
 }
 
-type DownloadFunc func(entry ScheduleEntry) string
+// DownloadFunc 执行一次调度触发并返回任务 ID。taskID 为空且 err 非 nil 时，
+// err 会写入 ScheduleStatus.LastError（如入队被拒），不再被折叠为虚假的
+// "empty task_id" 失败。
+type DownloadFunc func(entry ScheduleEntry) (string, error)

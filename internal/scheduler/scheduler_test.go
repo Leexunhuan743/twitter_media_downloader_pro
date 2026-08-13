@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,10 +28,10 @@ func TestTriggerSkipsStatusUpdateWhenReloadReplacesEntries(t *testing.T) {
 
 	started := make(chan struct{})
 	release := make(chan struct{})
-	sc, err := New(configPath, func(entry ScheduleEntry) string {
+	sc, err := New(configPath, func(entry ScheduleEntry) (string, error) {
 		close(started)
 		<-release
-		return "task-1"
+		return "task-1", nil
 	})
 	if err != nil {
 		t.Fatalf("new scheduler: %v", err)
@@ -80,19 +81,19 @@ func TestTriggerReleaseAfterReloadDoesNotClearNewGenerationTrigger(t *testing.T)
 	secondStarted := make(chan struct{})
 	secondRelease := make(chan struct{})
 	var calls atomic.Int32
-	sc, err := New(configPath, func(entry ScheduleEntry) string {
+	sc, err := New(configPath, func(entry ScheduleEntry) (string, error) {
 		switch calls.Add(1) {
 		case 1:
 			close(firstStarted)
 			<-firstRelease
-			return "task-1"
+			return "task-1", nil
 		case 2:
 			close(secondStarted)
 			<-secondRelease
-			return "task-2"
+			return "task-2", nil
 		default:
 			t.Fatal("unexpected extra trigger")
-			return ""
+			return "", nil
 		}
 	})
 	if err != nil {
@@ -164,9 +165,9 @@ func TestStartIsIdempotent(t *testing.T) {
 	}
 
 	var calls atomic.Int32
-	sc, err := New(configPath, func(entry ScheduleEntry) string {
+	sc, err := New(configPath, func(entry ScheduleEntry) (string, error) {
 		calls.Add(1)
-		return "task-1"
+		return "task-1", nil
 	})
 	if err != nil {
 		t.Fatalf("new scheduler: %v", err)
@@ -202,9 +203,9 @@ func TestReloadDoesNotStartStoppedScheduler(t *testing.T) {
 	}
 
 	var calls atomic.Int32
-	sc, err := New(configPath, func(entry ScheduleEntry) string {
+	sc, err := New(configPath, func(entry ScheduleEntry) (string, error) {
 		calls.Add(1)
-		return "task-1"
+		return "task-1", nil
 	})
 	if err != nil {
 		t.Fatalf("new scheduler: %v", err)
@@ -237,9 +238,9 @@ func TestReloadDoesNotTriggerRunOnStart(t *testing.T) {
 	}
 
 	var calls atomic.Int32
-	sc, err := New(configPath, func(entry ScheduleEntry) string {
+	sc, err := New(configPath, func(entry ScheduleEntry) (string, error) {
 		calls.Add(1)
-		return "task-1"
+		return "task-1", nil
 	})
 	if err != nil {
 		t.Fatalf("new scheduler: %v", err)
@@ -281,9 +282,9 @@ func TestStopStartDoesNotTriggerRunOnStart(t *testing.T) {
 	}
 
 	var calls atomic.Int32
-	sc, err := New(configPath, func(entry ScheduleEntry) string {
+	sc, err := New(configPath, func(entry ScheduleEntry) (string, error) {
 		calls.Add(1)
-		return "task-1"
+		return "task-1", nil
 	})
 	if err != nil {
 		t.Fatalf("new scheduler: %v", err)
@@ -324,8 +325,8 @@ func TestStopIsIdempotent(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	sc, err := New(configPath, func(entry ScheduleEntry) string {
-		return "task-1"
+	sc, err := New(configPath, func(entry ScheduleEntry) (string, error) {
+		return "task-1", nil
 	})
 	if err != nil {
 		t.Fatalf("new scheduler: %v", err)
@@ -361,9 +362,9 @@ func TestIntervalDefaultDelaysFirstRun(t *testing.T) {
 	})
 
 	var calls atomic.Int32
-	sc, err := New(configPath, func(entry ScheduleEntry) string {
+	sc, err := New(configPath, func(entry ScheduleEntry) (string, error) {
 		calls.Add(1)
-		return "task-1"
+		return "task-1", nil
 	})
 	if err != nil {
 		t.Fatalf("new scheduler: %v", err)
@@ -394,8 +395,8 @@ func TestTriggerReturnsErrorWhenDownloadFuncReturnsEmptyTaskID(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	sc, err := New(configPath, func(entry ScheduleEntry) string {
-		return ""
+	sc, err := New(configPath, func(entry ScheduleEntry) (string, error) {
+		return "", nil
 	})
 	if err != nil {
 		t.Fatalf("new scheduler: %v", err)
@@ -434,8 +435,8 @@ func TestStatusChangeCallbackCanQuerySchedulerState(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	sc, err := New(configPath, func(entry ScheduleEntry) string {
-		return "task-1"
+	sc, err := New(configPath, func(entry ScheduleEntry) (string, error) {
+		return "task-1", nil
 	})
 	if err != nil {
 		t.Fatalf("new scheduler: %v", err)
@@ -483,8 +484,8 @@ func TestReloadRecoversAfterConfigError(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	sc, err := New(configPath, func(entry ScheduleEntry) string {
-		return "task-1"
+	sc, err := New(configPath, func(entry ScheduleEntry) (string, error) {
+		return "task-1", nil
 	})
 	if err != nil {
 		t.Fatalf("new scheduler: %v", err)
@@ -529,8 +530,8 @@ func TestStopAfterReloadRecoverDoesNotHang(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	sc, err := New(configPath, func(entry ScheduleEntry) string {
-		return "task-1"
+	sc, err := New(configPath, func(entry ScheduleEntry) (string, error) {
+		return "task-1", nil
 	})
 	if err != nil {
 		t.Fatalf("new scheduler: %v", err)
@@ -794,9 +795,9 @@ func TestParseScheduleAcceptsMaxDailyTimes(t *testing.T) {
 
 func TestRunLoopExitsOnInvalidIndex(t *testing.T) {
 	sc := &Scheduler{
-		downloadFunc: func(ScheduleEntry) string {
+		downloadFunc: func(ScheduleEntry) (string, error) {
 			t.Fatal("downloadFunc should not be called for invalid runLoop index")
-			return ""
+			return "", nil
 		},
 		entries: []ScheduleEntry{{
 			Type:     ScheduleTypeUser,
@@ -834,6 +835,13 @@ func TestNextDailyTrigger_ReturnsTodayIfTimeHasNotPassed(t *testing.T) {
 	if got.Hour() != trigger.Hour() || got.Minute() != trigger.Minute() {
 		t.Errorf("expected %02d:%02d, got %02d:%02d", trigger.Hour(), trigger.Minute(), got.Hour(), got.Minute())
 	}
+	// 判别 today 分支：候选在今天的未来时刻，结果必须落在今天（不能跳到明天）。
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	tomorrow := today.AddDate(0, 0, 1)
+	if got.Before(today) || !got.Before(tomorrow) {
+		t.Errorf("expected today (%v..%v), got %v", today, tomorrow, got)
+	}
 }
 
 func TestNextDailyTrigger_ReturnsTomorrowWhenAllTimesPassed(t *testing.T) {
@@ -850,6 +858,14 @@ func TestNextDailyTrigger_ReturnsTomorrowWhenAllTimesPassed(t *testing.T) {
 	}
 	if got.Hour() != past.Hour() || got.Minute() != past.Minute() {
 		t.Errorf("expected hour:minute %02d:%02d, got %02d:%02d", past.Hour(), past.Minute(), got.Hour(), got.Minute())
+	}
+	// 判别 tomorrow 分支：所有候选已过，结果必须落在明天。
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	tomorrow := today.AddDate(0, 0, 1)
+	dayAfter := tomorrow.AddDate(0, 0, 1)
+	if got.Before(tomorrow) || !got.Before(dayAfter) {
+		t.Errorf("expected tomorrow (%v..%v), got %v", tomorrow, dayAfter, got)
 	}
 }
 
@@ -881,4 +897,90 @@ func waitFor(t *testing.T, timeout time.Duration, condition func() bool) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("condition was not met before timeout")
+}
+
+// TestValidateEntryListRejectsAtPrefixedTarget 守护 list 目标不剥 @：
+// "@123" 不是合法数字 ID，必须拒绝（旧行为）；user/following 才允许 @ 前缀。
+func TestValidateEntryListRejectsAtPrefixedTarget(t *testing.T) {
+	if err := ValidateEntry(ScheduleEntry{Type: ScheduleTypeList, Target: "@123"}); err == nil {
+		t.Fatal("expected list target @123 to be invalid (list IDs are numeric)")
+	}
+	if err := ValidateEntry(ScheduleEntry{Type: ScheduleTypeUser, Target: "@alice"}); err != nil {
+		t.Fatalf("user target with @ prefix should be normalized and accepted, got %v", err)
+	}
+}
+
+// TestTriggerConcurrentSameEntryRejected 守护 Triggering 防重入 guard：
+// downloadFunc 阻塞期间，对同一 entry 的第二次 Trigger 必须被拒绝
+// （ErrScheduleAlreadyTriggering），且首次触发完成后 Triggering 释放。
+func TestTriggerConcurrentSameEntryRejected(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "schedules.yaml")
+	if err := os.WriteFile(configPath, []byte(`schedules:
+  - type: user
+    target: alice
+    name: Alice
+    schedule: "interval:1h"
+    enabled: true
+`), 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	sc, err := New(configPath, func(entry ScheduleEntry) (string, error) {
+		close(started)
+		<-release
+		return "task-1", nil
+	})
+	if err != nil {
+		t.Fatalf("new scheduler: %v", err)
+	}
+	t.Cleanup(sc.Stop)
+
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		_, _ = sc.Trigger(0)
+	}()
+
+	<-started // downloadFunc 已进入阻塞
+	_, secondErr := sc.Trigger(0)
+	if !errors.Is(secondErr, ErrScheduleAlreadyTriggering) {
+		t.Fatalf("second concurrent trigger: expected ErrScheduleAlreadyTriggering, got %v", secondErr)
+	}
+
+	close(release)
+	<-firstDone
+
+	statuses := sc.GetStatuses()
+	if len(statuses) != 1 {
+		t.Fatalf("expected one status, got %d", len(statuses))
+	}
+	if statuses[0].Triggering {
+		t.Fatal("expected Triggering to be released after the first trigger completed")
+	}
+	if statuses[0].LastTaskID != "task-1" {
+		t.Fatalf("expected first trigger result recorded, got %q", statuses[0].LastTaskID)
+	}
+}
+
+// TestFormatScheduleDisplayKeepsMinutesWhenDaysPresent 守护 T1 修复：
+// interval 天数>0 且含分钟时，展示不能丢分钟（24h30m → "每 1 天 30 分钟"）。
+func TestFormatScheduleDisplayKeepsMinutesWhenDaysPresent(t *testing.T) {
+	tests := []struct {
+		interval time.Duration
+		want     string
+	}{
+		{24 * time.Hour, "每 24 小时"},
+		{24*time.Hour + 30*time.Minute, "每 1 天 30 分钟"},
+		{49*time.Hour + 30*time.Minute, "每 2 天 1 小时 30 分钟"},
+		{25*time.Hour + 5*time.Minute, "每 1 天 1 小时 5 分钟"},
+	}
+	for _, tt := range tests {
+		got := FormatScheduleDisplay(&ParsedSchedule{Mode: ScheduleModeInterval, Interval: tt.interval}, "")
+		if got != tt.want {
+			t.Errorf("FormatScheduleDisplay(%v) = %q, want %q", tt.interval, got, tt.want)
+		}
+	}
 }

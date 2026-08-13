@@ -96,7 +96,9 @@ func TestTaskManager_CreateTask_ClonesTaskData(t *testing.T) {
 		Users:          []string{"user1"},
 		Lists:          []StringUint64{1},
 		FollowingNames: []string{"following1"},
-		AutoFollow:     true,
+		DownloadFlags: DownloadFlags{
+			AutoFollow: true,
+		},
 	}
 	markData := &MarkDownloadedTaskData{
 		ScreenName: "testuser",

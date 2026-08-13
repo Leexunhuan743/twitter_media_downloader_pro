@@ -1,5 +1,7 @@
 package naming
 
+import "github.com/unkmonster/tmd/internal/utils"
+
 // UserNaming builds a directory title while preserving the stable screen name.
 type UserNaming struct {
 	sanitized string
@@ -17,14 +19,14 @@ func NewUserNaming(name, screenName string, maxLen int) *UserNaming {
 		if title == "" {
 			title = "user"
 		}
-		title = truncateUTF8(title, maxLen)
+		title = utils.TruncateUTF8(title, maxLen)
 	} else {
 		suffix := parenthesizedIdentity(screenName, maxLen)
 		title = fitNameWithSuffix(name, suffix, maxLen)
 	}
 	title = finalizeName(title, maxLen)
 	if title == "" && maxLen > 0 {
-		title = truncateUTF8("user", maxLen)
+		title = utils.TruncateUTF8("user", maxLen)
 	}
 
 	return &UserNaming{
@@ -35,4 +37,11 @@ func NewUserNaming(name, screenName string, maxLen int) *UserNaming {
 // SanitizedTitle returns the Windows-compatible user directory component.
 func (un *UserNaming) SanitizedTitle() string {
 	return un.sanitized
+}
+
+// UserDirTitle 返回用户目录名（Windows 兼容的清洗后标题），
+// 等价于 NewUserNaming(name, screenName, maxLen).SanitizedTitle()，
+// 供各下载入口（service/downloading/profile）统一复用，避免内联重复。
+func UserDirTitle(name, screenName string, maxLen int) string {
+	return NewUserNaming(name, screenName, maxLen).SanitizedTitle()
 }

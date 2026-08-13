@@ -41,12 +41,13 @@ User and list entity models keep database records and their filesystem directori
 - List entity database deletion removes dependent `user_links` in the same transaction even when SQLite foreign-key enforcement is disabled; a missing list entity rolls the link deletion back.
 - User entity API metadata changes use [[internal/database/user_entity.go#UpdateUserEntityMetadata]] to update only requested statistics in one SQL statement, then perform any requested directory rename last. Missing rows return 404; target/name races return 409.
 - Database update helpers treat zero affected rows as an error so a missing record cannot make a filesystem change appear committed.
+- Entity-layer mutations translate database sentinels at the package boundary: [[internal/entity/errors.go#TranslateError]] maps `database.ErrEntityNotFound` onto `entity.ErrNotFound`, so callers match a single sentinel — the API 404 mapping checks `entity.ErrNotFound` only.
 
 `UserEntity` additionally owns latest-release-time and media-count state. Profile directory synchronization and API entity-name edits route through the same entity lifecycle rather than issuing independent filesystem and database mutations.
 
 Database API responses serialize valid latest-release times as UTC RFC3339 values. Web2 and Web3 use the executable shared helper in `web/shared/datetime.js` to convert that absolute instant to `datetime-local` only for editing, then convert the user's local value back to UTC RFC3339 on PATCH.
 
-`latest_release_time` values are stored in UTC on every write path (mark, batch statistics, API PATCH), because SQLite compares TEXT values lexically and mixed zone offsets would make `MAX()` comparisons keep an older baseline. [[internal/database/timestamps.go#NormalizeLegacyTimestamps]] rewrites values stored by older versions with a non-UTC offset into UTC at startup (after schema migration, before validation), so the stored text order equals the instant order. The service mark-time parser (`parseMarkTime`) accepts RFC3339 (absolute instant) or a zone-less local wall clock for CLI compatibility.
+`latest_release_time` values are stored in UTC on every write path (mark, batch statistics, API PATCH), because SQLite compares TEXT values lexically and mixed zone offsets would make `MAX()` comparisons keep an older baseline. [[internal/database/timestamps.go#NormalizeLegacyTimestamps]] rewrites values stored by older versions with a non-UTC offset into UTC at startup (after schema migration, before validation), so the stored text order equals the instant order. The service mark-time parser ([[internal/downloading/mark_downloaded.go#ParseMarkTimeValue]]) accepts RFC3339 (absolute instant) or a zone-less local wall clock for CLI compatibility, and treats `null`/`nil` as the full-mark sentinel.
 
 ## Migrations
 

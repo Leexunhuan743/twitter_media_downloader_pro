@@ -1038,12 +1038,7 @@ func (s *Server) buildTaskRunFunc(task *Task) (func(ctx context.Context, taskID 
 		if !ok || data == nil {
 			return nil, fmt.Errorf("invalid task data for user_download")
 		}
-		opts := service.DownloadOptions{
-			AutoFollow:    data.AutoFollow,
-			FollowMembers: data.FollowMembers,
-			SkipProfile:   data.SkipProfile,
-			NoRetry:       data.NoRetry,
-		}
+		opts := data.downloadOptions()
 		return func(ctx context.Context, taskID string, reporter service.ProgressReporter) error {
 			return s.downloadService.UserDownload(ctx, taskID, data.ScreenName, opts, reporter)
 		}, nil
@@ -1054,12 +1049,7 @@ func (s *Server) buildTaskRunFunc(task *Task) (func(ctx context.Context, taskID 
 			return nil, fmt.Errorf("invalid task data for list_download")
 		}
 		listID := uint64(data.ListID)
-		opts := service.DownloadOptions{
-			AutoFollow:    data.AutoFollow,
-			FollowMembers: data.FollowMembers,
-			SkipProfile:   data.SkipProfile,
-			NoRetry:       data.NoRetry,
-		}
+		opts := data.downloadOptions()
 		return func(ctx context.Context, taskID string, reporter service.ProgressReporter) error {
 			return s.downloadService.ListDownload(ctx, taskID, listID, opts, reporter)
 		}, nil
@@ -1069,12 +1059,7 @@ func (s *Server) buildTaskRunFunc(task *Task) (func(ctx context.Context, taskID 
 		if !ok || data == nil {
 			return nil, fmt.Errorf("invalid task data for following_download")
 		}
-		opts := service.DownloadOptions{
-			AutoFollow:    data.AutoFollow,
-			FollowMembers: data.FollowMembers,
-			SkipProfile:   data.SkipProfile,
-			NoRetry:       data.NoRetry,
-		}
+		opts := data.downloadOptions()
 		return func(ctx context.Context, taskID string, reporter service.ProgressReporter) error {
 			return s.downloadService.FollowingDownload(ctx, taskID, data.ScreenName, opts, reporter)
 		}, nil
@@ -1132,12 +1117,7 @@ func (s *Server) buildTaskRunFunc(task *Task) (func(ctx context.Context, taskID 
 			return nil, fmt.Errorf("invalid task data for batch_download")
 		}
 		listIDs := stringUint64SliceToUint64(data.Lists)
-		opts := service.DownloadOptions{
-			AutoFollow:    data.AutoFollow,
-			FollowMembers: data.FollowMembers,
-			SkipProfile:   data.SkipProfile,
-			NoRetry:       data.NoRetry,
-		}
+		opts := data.downloadOptions()
 		return func(ctx context.Context, taskID string, reporter service.ProgressReporter) error {
 			return s.downloadService.BatchDownload(ctx, taskID, data.Users, listIDs, data.FollowingNames, opts, reporter)
 		}, nil

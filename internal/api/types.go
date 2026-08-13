@@ -5,33 +5,73 @@ import (
 
 	"github.com/unkmonster/tmd/internal/downloading"
 	"github.com/unkmonster/tmd/internal/scheduler"
+	"github.com/unkmonster/tmd/internal/service"
 )
+
+// DownloadFlags 是四类下载任务共享的布尔开关集合，嵌入各 TaskData 结构体
+// 保证新开关自动传播到所有任务类型与 DownloadOptions 装配。
+type DownloadFlags struct {
+	AutoFollow    bool `json:"auto_follow"`
+	FollowMembers bool `json:"follow_members"`
+	SkipProfile   bool `json:"skip_profile"`
+	NoRetry       bool `json:"no_retry"`
+}
+
+// downloadOptions 将任务开关装配为服务层下载选项（装配的唯一实现）。
+func (f DownloadFlags) downloadOptions() service.DownloadOptions {
+	return service.DownloadOptions{
+		AutoFollow:    f.AutoFollow,
+		FollowMembers: f.FollowMembers,
+		SkipProfile:   f.SkipProfile,
+		NoRetry:       f.NoRetry,
+	}
+}
+
+// 下列构造器是 TaskData 的唯一程序化构造入口：scheduler 与全部 bot 平台
+// 必须经它们创建任务数据，禁止在各生产者内手写结构体字面量——新增任务
+// 字段只在此处与对应结构体定义处变更，杜绝跨平台漂移。
+
+// NewUserDownloadTask 构造用户下载任务数据。
+func NewUserDownloadTask(screenName string, flags DownloadFlags) *UserDownloadTaskData {
+	return &UserDownloadTaskData{ScreenName: screenName, DownloadFlags: flags}
+}
+
+// NewListDownloadTask 构造列表下载任务数据。
+func NewListDownloadTask(listID uint64, flags DownloadFlags) *ListDownloadTaskData {
+	return &ListDownloadTaskData{ListID: StringUint64(listID), DownloadFlags: flags}
+}
+
+// NewFollowingDownloadTask 构造关注下载任务数据。
+func NewFollowingDownloadTask(screenName string, flags DownloadFlags) *FollowingDownloadTaskData {
+	return &FollowingDownloadTaskData{ScreenName: screenName, DownloadFlags: flags}
+}
+
+// NewBatchDownloadTask 构造混合批量下载任务数据。
+func NewBatchDownloadTask(users []string, lists []StringUint64, followingNames []string, flags DownloadFlags) *BatchDownloadTaskData {
+	return &BatchDownloadTaskData{
+		Users:          users,
+		Lists:          lists,
+		FollowingNames: followingNames,
+		DownloadFlags:  flags,
+	}
+}
 
 // UserDownloadTaskData 用户下载任务数据
 type UserDownloadTaskData struct {
-	ScreenName    string `json:"screen_name"`
-	AutoFollow    bool   `json:"auto_follow"`
-	FollowMembers bool   `json:"follow_members"`
-	SkipProfile   bool   `json:"skip_profile"`
-	NoRetry       bool   `json:"no_retry"`
+	ScreenName string `json:"screen_name"`
+	DownloadFlags
 }
 
 // ListDownloadTaskData 列表下载任务数据
 type ListDownloadTaskData struct {
-	ListID        StringUint64 `json:"list_id"`
-	AutoFollow    bool         `json:"auto_follow"`
-	FollowMembers bool         `json:"follow_members"`
-	SkipProfile   bool         `json:"skip_profile"`
-	NoRetry       bool         `json:"no_retry"`
+	ListID StringUint64 `json:"list_id"`
+	DownloadFlags
 }
 
 // FollowingDownloadTaskData 关注下载任务数据
 type FollowingDownloadTaskData struct {
-	ScreenName    string `json:"screen_name"`
-	AutoFollow    bool   `json:"auto_follow"`
-	FollowMembers bool   `json:"follow_members"`
-	SkipProfile   bool   `json:"skip_profile"`
-	NoRetry       bool   `json:"no_retry"`
+	ScreenName string `json:"screen_name"`
+	DownloadFlags
 }
 
 // ProfileDownloadTaskData Profile 下载任务数据
@@ -84,10 +124,7 @@ type BatchDownloadTaskData struct {
 	Users          []string       `json:"users"`
 	Lists          []StringUint64 `json:"lists"`
 	FollowingNames []string       `json:"following_names"`
-	AutoFollow     bool           `json:"auto_follow"`
-	FollowMembers  bool           `json:"follow_members"`
-	SkipProfile    bool           `json:"skip_profile"`
-	NoRetry        bool           `json:"no_retry"`
+	DownloadFlags
 }
 
 // ListProfileTaskData 列表 Profile 下载任务数据
@@ -325,10 +362,10 @@ type ScheduleTriggerAllResult struct {
 }
 
 type ScheduleStatsResponse struct {
-	Total     int `json:"total"`
-	Enabled   int `json:"enabled"`
-	Disabled  int `json:"disabled"`
-	Failures  int `json:"failures"`
+	Total    int `json:"total"`
+	Enabled  int `json:"enabled"`
+	Disabled int `json:"disabled"`
+	Failures int `json:"failures"`
 }
 
 type QueueStatusResponse struct {
@@ -339,6 +376,6 @@ type QueueStatusResponse struct {
 }
 
 type ErrorSummaryResponse struct {
-	Regular map[int]int                    `json:"regular"`      // entity ID → 失败推文数
-	JSON    []downloading.JsonDumpSummary  `json:"json"`         // JSON 文件来源摘要
+	Regular map[int]int                   `json:"regular"` // entity ID → 失败推文数
+	JSON    []downloading.JsonDumpSummary `json:"json"`    // JSON 文件来源摘要
 }

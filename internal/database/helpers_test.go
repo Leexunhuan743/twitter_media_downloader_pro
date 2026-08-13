@@ -8,14 +8,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestHandleGetResult_WithResult(t *testing.T) {
+func TestHandleGetResultWithContext_WithResult(t *testing.T) {
 	type TestStruct struct {
 		ID   int
 		Name string
 	}
 
 	input := &TestStruct{ID: 1, Name: "test"}
-	result, err := handleGetResult(input, nil)
+	result, err := handleGetResultWithContext(input, nil, "get %s failed: %w", "row")
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -23,27 +23,28 @@ func TestHandleGetResult_WithResult(t *testing.T) {
 	assert.Equal(t, "test", result.Name)
 }
 
-func TestHandleGetResult_NoRows(t *testing.T) {
+func TestHandleGetResultWithContext_NoRows(t *testing.T) {
 	type TestStruct struct {
 		ID int
 	}
 
-	result, err := handleGetResult(&TestStruct{}, sql.ErrNoRows)
+	result, err := handleGetResultWithContext(&TestStruct{}, sql.ErrNoRows, "get failed: %w")
 
 	assert.NoError(t, err)
 	assert.Nil(t, result)
 }
 
-func TestHandleGetResult_OtherError(t *testing.T) {
+func TestHandleGetResultWithContext_OtherError(t *testing.T) {
 	type TestStruct struct {
 		ID int
 	}
 
 	testErr := errors.New("database connection failed")
-	result, err := handleGetResult(&TestStruct{}, testErr)
+	result, err := handleGetResultWithContext(&TestStruct{}, testErr, "get row failed: %w")
 
 	assert.Error(t, err)
-	assert.Equal(t, testErr, err)
+	assert.ErrorIs(t, err, testErr)
+	assert.Contains(t, err.Error(), "get row failed")
 	assert.Nil(t, result)
 }
 

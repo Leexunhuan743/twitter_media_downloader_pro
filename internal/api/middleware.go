@@ -2,7 +2,6 @@ package api
 
 import (
 	"bufio"
-	"encoding/json"
 	"net"
 	"net/http"
 	"strings"
@@ -232,7 +231,5 @@ func writeAuth401(w http.ResponseWriter, tokenType string) {
 		w.Header().Set("X-Token-Type", tokenType)
 	}
 	w.Header().Set("WWW-Authenticate", `Bearer realm="TMD API"`)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusUnauthorized)
-	json.NewEncoder(w).Encode(NewErrorResponse("unauthorized"))
+	writeJSONResponse(w, http.StatusUnauthorized, NewErrorResponse("unauthorized"))
 }

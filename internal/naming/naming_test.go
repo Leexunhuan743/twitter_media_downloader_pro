@@ -506,6 +506,30 @@ func TestUserNaming_SanitizedTitle(t *testing.T) {
 	}
 }
 
+func TestUserDirTitle_MatchesNewUserNaming(t *testing.T) {
+	// UserDirTitle 是 NewUserNaming().SanitizedTitle() 的统一入口，
+	// 必须与直接构造逐字节等价（含截断/清洗/屏幕名保留语义）。
+	cases := []struct {
+		name       string
+		userName   string
+		screenName string
+		maxLen     int
+	}{
+		{"plain", "Alice", "alice_1", testMaxFileNameLen},
+		{"path separators", "user/name", "screen\\name", 30},
+		{"unicode long", "🎉用户🎊", strings.Repeat("b", 50), 20},
+		{"empty screen name", "Bob", "", testMaxFileNameLen},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			want := NewUserNaming(tt.userName, tt.screenName, tt.maxLen).SanitizedTitle()
+			if got := UserDirTitle(tt.userName, tt.screenName, tt.maxLen); got != want {
+				t.Errorf("UserDirTitle() = %q, want %q (NewUserNaming equivalence)", got, want)
+			}
+		})
+	}
+}
+
 func TestUserNaming_Truncation(t *testing.T) {
 	// 测试长名称截断
 	const maxLen = 30
@@ -896,5 +920,23 @@ func BenchmarkNewTweetNaming(b *testing.B) {
 func BenchmarkNewUserNaming(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = NewUserNaming("Name", "screen", testMaxFileNameLen)
+	}
+}
+
+// TestUserNaming_NonPositiveMaxLen 守护 TruncateUTF8 迁移后的负值/零值守卫：
+// 旧命名包私有 truncateUTF8 有 maxLen<=0 返回空串的守卫，迁移到
+// utils.TruncateUTF8 后该契约必须保持（负值不得 panic）。
+func TestUserNaming_NonPositiveMaxLen(t *testing.T) {
+	if got := NewUserNaming("", "", 0).SanitizedTitle(); got != "" {
+		t.Errorf("NewUserNaming(maxLen=0) = %q, want empty", got)
+	}
+	if got := NewUserNaming("", "", -1).SanitizedTitle(); got != "" {
+		t.Errorf("NewUserNaming(maxLen=-1) = %q, want empty (no panic)", got)
+	}
+	if got := UserDirTitle("", "", 0); got != "" {
+		t.Errorf("UserDirTitle(maxLen=0) = %q, want empty", got)
+	}
+	if got := UserDirTitle("", "", -1); got != "" {
+		t.Errorf("UserDirTitle(maxLen=-1) = %q, want empty (no panic)", got)
 	}
 }

@@ -69,9 +69,13 @@ func BuildSearchCondition(fields []string, keyword string) (string, []interface{
 	return "(" + strings.Join(conditions, " OR ") + ")", args
 }
 
-// QueryUsers 分页查询用户
-func QueryUsers(db *sqlx.DB, where string, args []interface{}, orderBy string, limit, offset int) ([]User, error) {
-	query := "SELECT * FROM users"
+// queryPage 执行分页 SELECT * 查询。table 必须通过 countTableIdent 白名单
+// 校验（仅受信字面量表名），与 Count 使用同一套防注入约束。
+func queryPage[T any](db *sqlx.DB, table string, where string, args []interface{}, orderBy string, limit, offset int) ([]T, error) {
+	if !countTableIdent.MatchString(table) {
+		return nil, fmt.Errorf("invalid table name: %q", table)
+	}
+	query := "SELECT * FROM " + table
 	if where != "" {
 		query += " WHERE " + where
 	}
@@ -80,73 +84,34 @@ func QueryUsers(db *sqlx.DB, where string, args []interface{}, orderBy string, l
 	}
 	query += " LIMIT ? OFFSET ?"
 
-	var users []User
-	err := db.Select(&users, query, appendQueryArgs(args, limit, offset)...)
-	return users, err
+	var results []T
+	err := db.Select(&results, query, appendQueryArgs(args, limit, offset)...)
+	return results, err
+}
+
+// QueryUsers 分页查询用户
+func QueryUsers(db *sqlx.DB, where string, args []interface{}, orderBy string, limit, offset int) ([]User, error) {
+	return queryPage[User](db, "users", where, args, orderBy, limit, offset)
 }
 
 // QueryLists 分页查询列表
 func QueryLists(db *sqlx.DB, where string, args []interface{}, orderBy string, limit, offset int) ([]Lst, error) {
-	query := "SELECT * FROM lsts"
-	if where != "" {
-		query += " WHERE " + where
-	}
-	if orderBy != "" {
-		query += " " + orderBy
-	}
-	query += " LIMIT ? OFFSET ?"
-
-	var lists []Lst
-	err := db.Select(&lists, query, appendQueryArgs(args, limit, offset)...)
-	return lists, err
+	return queryPage[Lst](db, "lsts", where, args, orderBy, limit, offset)
 }
 
 // QueryUserEntities 分页查询用户实体
 func QueryUserEntities(db *sqlx.DB, where string, args []interface{}, orderBy string, limit, offset int) ([]UserEntity, error) {
-	query := "SELECT * FROM user_entities"
-	if where != "" {
-		query += " WHERE " + where
-	}
-	if orderBy != "" {
-		query += " " + orderBy
-	}
-	query += " LIMIT ? OFFSET ?"
-
-	var entities []UserEntity
-	err := db.Select(&entities, query, appendQueryArgs(args, limit, offset)...)
-	return entities, err
+	return queryPage[UserEntity](db, "user_entities", where, args, orderBy, limit, offset)
 }
 
 // QueryLstEntities 分页查询列表实体
 func QueryLstEntities(db *sqlx.DB, where string, args []interface{}, orderBy string, limit, offset int) ([]LstEntity, error) {
-	query := "SELECT * FROM lst_entities"
-	if where != "" {
-		query += " WHERE " + where
-	}
-	if orderBy != "" {
-		query += " " + orderBy
-	}
-	query += " LIMIT ? OFFSET ?"
-
-	var entities []LstEntity
-	err := db.Select(&entities, query, appendQueryArgs(args, limit, offset)...)
-	return entities, err
+	return queryPage[LstEntity](db, "lst_entities", where, args, orderBy, limit, offset)
 }
 
 // QueryUserLinks 查询用户链接
 func QueryUserLinks(db *sqlx.DB, where string, args []interface{}, orderBy string, limit, offset int) ([]UserLink, error) {
-	query := "SELECT * FROM user_links"
-	if where != "" {
-		query += " WHERE " + where
-	}
-	if orderBy != "" {
-		query += " " + orderBy
-	}
-	query += " LIMIT ? OFFSET ?"
-
-	var links []UserLink
-	err := db.Select(&links, query, appendQueryArgs(args, limit, offset)...)
-	return links, err
+	return queryPage[UserLink](db, "user_links", where, args, orderBy, limit, offset)
 }
 
 // QueryUserPreviousNames 查询用户历史名称

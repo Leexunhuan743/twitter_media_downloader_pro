@@ -54,6 +54,10 @@ type Scheduler struct {
 	firstStart     bool
 	hasEverStarted bool
 	stopRequested  bool
+	// OnStatusChange 在状态更新后的调度器 goroutine 内同步调用。回调不得
+	// 再调用 Scheduler 的生命周期方法（Start/Stop/Reload）：Stop 会
+	// wg.Wait 等待当前 goroutine，造成自等死锁。服务器实际回调只做
+	// eventBus 发布（非阻塞），不触生命周期。
 	OnStatusChange ScheduleStatusChangeFunc
 }
 
@@ -98,20 +102,16 @@ func (sc *Scheduler) readConfig() ([]ScheduleEntry, []*ParsedSchedule, []Schedul
 		return nil, nil, nil, err
 	}
 
-	parsed := make([]*ParsedSchedule, len(entries))
+	parsed, err := ValidateAndParseEntries(entries)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
 	statuses := make([]ScheduleStatus, len(entries))
 	for i, entry := range entries {
-		if err := ValidateEntry(entry); err != nil {
-			return nil, nil, nil, fmt.Errorf("schedule #%d (%s): %w", i+1, entry.Name, err)
-		}
-		p, err := ParseSchedule(entry.Schedule)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("schedule #%d (%s): %w", i+1, entry.Name, err)
-		}
-		parsed[i] = p
 		statuses[i] = ScheduleStatus{
 			Entry:           entry,
-			ScheduleDisplay: FormatScheduleDisplay(p, entry.Schedule),
+			ScheduleDisplay: FormatScheduleDisplay(parsed[i], entry.Schedule),
 		}
 	}
 
@@ -191,7 +191,7 @@ func (sc *Scheduler) launchGoroutinesLocked() int {
 		if !entry.Enabled {
 			continue
 		}
-		if i >= len(sc.parsed) || i >= len(sc.statuses) {
+		if i >= len(sc.parsed) || i >= len(sc.statuses) || sc.parsed[i] == nil {
 			log.Warnf("[scheduler] Launch skipped index=%d name=%q reason=inconsistent_state", i, entry.Name)
 			continue
 		}
@@ -316,7 +316,7 @@ func (sc *Scheduler) findEnabledEntry(index int) (int, ScheduleEntry, error) {
 	}
 	entry := sc.entries[index]
 	if !entry.Enabled {
-		return 0, ScheduleEntry{}, fmt.Errorf("schedule #%d (%s) is disabled", index+1, entry.Name)
+		return 0, ScheduleEntry{}, fmt.Errorf("%w: schedule #%d (%s)", ErrScheduleDisabled, index+1, entry.Name)
 	}
 	return index, entry, nil
 }
@@ -335,10 +335,10 @@ func (sc *Scheduler) findEnabledEntryByID(id string) (int, ScheduleEntry, error)
 		}
 	}
 	if index < 0 {
-		return 0, ScheduleEntry{}, fmt.Errorf("schedule %q not found", id)
+		return 0, ScheduleEntry{}, fmt.Errorf("%w: schedule %q", ErrScheduleNotFound, id)
 	}
 	if !entry.Enabled {
-		return 0, ScheduleEntry{}, fmt.Errorf("schedule %q (%s) is disabled", id, entry.Name)
+		return 0, ScheduleEntry{}, fmt.Errorf("%w: schedule %q (%s)", ErrScheduleDisabled, id, entry.Name)
 	}
 	return index, entry, nil
 }
@@ -346,53 +346,51 @@ func (sc *Scheduler) findEnabledEntryByID(id string) (int, ScheduleEntry, error)
 func (sc *Scheduler) triggerEntry(index int, entry ScheduleEntry) (taskID string, err error) {
 	gen, ok := sc.tryAcquireExecution(index, entry, nil)
 	if !ok {
-		return "", fmt.Errorf("schedule %q is already triggering, please wait for the current trigger to complete", entry.Name)
+		return "", fmt.Errorf("%w: schedule %q", ErrScheduleAlreadyTriggering, entry.Name)
 	}
 
 	var released bool
 	defer func() {
-		// 安全网：确保 Triggering 被释放
+		if r := recover(); r != nil {
+			// 与 execute 一致：panic 时在锁内原子写失败记录并清 Triggering，
+			// 不再先清标志再写记录（避免两次加锁间并发触发趁隙进入），
+			// 也不 re-panic（HTTP 调用方应收到结构化错误而非空连接）。
+			log.Errorf("[scheduler] Manual trigger panic index=%d name=%q error=%q", index, entry.Name, fmt.Sprint(r))
+			now := time.Now()
+			sc.releaseAndUpdateStatus(index, entry, gen, func(status *ScheduleStatus) {
+				status.LastRunAt = &now
+				status.RunCount++
+				status.LastError = fmt.Sprintf("panic: %v", r)
+				status.ConsecutiveFailures++
+			})
+			released = true
+			return
+		}
+		// 正常返回路径的安全网：releaseAndUpdateStatus 可能因 generation 变更
+		// 返回 false 而跳过清理，这里兜底释放 Triggering。
 		if !released {
 			sc.releaseTriggeringLocked(index, gen)
 		}
-		if r := recover(); r != nil {
-			if !released {
-				now := time.Now()
-				sc.releaseAndUpdateStatus(index, entry, gen, func(status *ScheduleStatus) {
-					status.LastRunAt = &now
-					status.RunCount++
-					status.LastError = fmt.Sprintf("panic: %v", r)
-					status.ConsecutiveFailures++
-				})
-				released = true
-			}
-			panic(r)
-		}
 	}()
 
-	taskID = sc.downloadFunc(entry)
+	taskID, taskErr := sc.downloadFunc(entry)
 	if taskID == "" {
 		released = sc.releaseAndUpdateStatus(index, entry, gen, func(status *ScheduleStatus) {
-			now := time.Now()
-			status.LastRunAt = &now
-			status.RunCount++
-			status.LastError = "download function returned empty task_id"
-			status.ConsecutiveFailures++
+			recordExecutionResult(status, "", taskErr)
 		})
 		if !released {
 			log.Warnf("[scheduler] Status update rejected index=%d name=%q reason=empty_task_id", index, entry.Name)
+		}
+		if taskErr != nil {
+			log.Warnf("[scheduler] Manual trigger failed type=%s target=%s name=%q error=%q", entry.Type, entry.Target, entry.Name, taskErr.Error())
+			return "", taskErr
 		}
 		log.Warnf("[scheduler] Manual trigger failed type=%s target=%s name=%q reason=empty_task_id", entry.Type, entry.Target, entry.Name)
 		return "", fmt.Errorf("download function returned empty task_id")
 	}
 
 	released = sc.releaseAndUpdateStatus(index, entry, gen, func(status *ScheduleStatus) {
-		now := time.Now()
-		status.LastRunAt = &now
-		status.LastTaskID = taskID
-		status.LastError = ""
-		status.RunCount++
-		status.ConsecutiveFailures = 0
+		recordExecutionResult(status, taskID, nil)
 	})
 	if !released {
 		log.Warnf("[scheduler] Status update rejected index=%d name=%q task_id=%s", index, entry.Name, taskID)
@@ -552,20 +550,10 @@ func (sc *Scheduler) execute(idx int, entry ScheduleEntry, gen int64) {
 		}
 	}()
 
-	taskID = sc.downloadFunc(entry)
+	taskID, taskErr := sc.downloadFunc(entry)
 
 	released = sc.releaseAndUpdateStatus(idx, entry, acquiredGen, func(status *ScheduleStatus) {
-		now := time.Now()
-		status.LastRunAt = &now
-		status.RunCount++
-		if taskID != "" {
-			status.LastTaskID = taskID
-			status.LastError = ""
-			status.ConsecutiveFailures = 0
-		} else {
-			status.LastError = "download function returned empty task_id"
-			status.ConsecutiveFailures++
-		}
+		recordExecutionResult(status, taskID, taskErr)
 	})
 	if !released {
 		log.Warnf("[scheduler] Status update rejected index=%d name=%q task_id=%s reason=status_mismatch", idx, entry.Name, taskID)
@@ -573,9 +561,32 @@ func (sc *Scheduler) execute(idx int, entry ScheduleEntry, gen int64) {
 
 	if taskID != "" {
 		log.Infof("[scheduler] Scheduled trigger type=%s target=%s name=%q task_id=%s", entry.Type, entry.Target, entry.Name, taskID)
+	} else if taskErr != nil {
+		log.Warnf("[scheduler] Scheduled trigger failed type=%s target=%s name=%q error=%q", entry.Type, entry.Target, entry.Name, taskErr.Error())
 	} else {
 		log.Warnf("[scheduler] Scheduled trigger failed type=%s target=%s name=%q reason=empty_task_id", entry.Type, entry.Target, entry.Name)
 	}
+}
+
+// recordExecutionResult 记录一次执行结果的状态字段：运行时间、taskID 与连续失败计数。
+// taskID 为空表示下载函数未返回任务 ID，按失败记录；runErr 携带真实失败原因
+// （如入队被拒），为空时回退到通用 "empty task_id" 文案。triggerEntry 与 execute 共用。
+func recordExecutionResult(status *ScheduleStatus, taskID string, runErr error) {
+	now := time.Now()
+	status.LastRunAt = &now
+	status.RunCount++
+	if taskID != "" {
+		status.LastTaskID = taskID
+		status.LastError = ""
+		status.ConsecutiveFailures = 0
+		return
+	}
+	if runErr != nil {
+		status.LastError = runErr.Error()
+	} else {
+		status.LastError = "download function returned empty task_id"
+	}
+	status.ConsecutiveFailures++
 }
 
 func (sc *Scheduler) updateStatus(idx int, entry ScheduleEntry, update func(*ScheduleStatus)) bool {
@@ -768,6 +779,9 @@ func FormatScheduleDisplay(parsed *ParsedSchedule, raw string) string {
 			parts := []string{fmt.Sprintf("%d 天", d)}
 			if h > 0 {
 				parts = append(parts, fmt.Sprintf("%d 小时", h))
+			}
+			if m > 0 {
+				parts = append(parts, fmt.Sprintf("%d 分钟", m))
 			}
 			return "每 " + strings.Join(parts, " ")
 		}

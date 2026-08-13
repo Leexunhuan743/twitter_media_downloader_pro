@@ -588,8 +588,12 @@ func (s *Server) writeEntityMutationError(w http.ResponseWriter, err error, reso
 // 附加一条用户安全的提示（例如"统计字段已保存但改名被拒绝"）。detail 只
 // 拼进 409 的用户文案，不包含原始错误。
 func (s *Server) writeEntityMutationErrorWithDetail(w http.ResponseWriter, err error, resource, pathConflictMessage, operation, detail string) {
+	// 统一哨兵：直连 database 的调用点（如 UpdateUserEntityMetadata）返回
+	// database.ErrEntityNotFound，与 entity 层错误在此一并翻译，switch 只需
+	// 匹配 entity.ErrNotFound。TranslateError 幂等，entity 层错误原样通过。
+	err = entitypkg.TranslateError(err)
 	switch {
-	case errors.Is(err, entitypkg.ErrNotFound), errors.Is(err, database.ErrEntityNotFound):
+	case errors.Is(err, entitypkg.ErrNotFound):
 		s.writeError(w, http.StatusNotFound, resource+" not found")
 	case errors.Is(err, entitypkg.ErrPathConflict):
 		message := pathConflictMessage

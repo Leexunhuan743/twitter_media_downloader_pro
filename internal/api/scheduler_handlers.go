@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -230,7 +231,9 @@ func (s *Server) handleUpdateSchedulesRaw(w http.ResponseWriter, r *http.Request
 	s.schedulesMu.Lock()
 	defer s.schedulesMu.Unlock()
 
-	backupName, err := s.writeScheduleConfigLocked(schedulesPath, testConf)
+	// 校验用 struct，写回原始字节：raw 编辑器保真（保留注释/未知字段/
+	// 排版），内存加载时仍走 NormalizeEntries 规范化——写盘与内存解耦。
+	backupName, err := s.writeScheduleRawLocked(schedulesPath, []byte(req.Content))
 	if err != nil {
 		logScheduleOperationFailed("save_config", schedulesPath, err)
 		s.writeErrorDetail(w, http.StatusInternalServerError, "Failed to save schedule configuration", err.Error())
@@ -457,7 +460,17 @@ func (s *Server) handleTriggerSchedule(w http.ResponseWriter, r *http.Request) {
 	taskID, err := sched.TriggerByID(id)
 	if err != nil {
 		log.Errorf("[schedules] Trigger failed schedule_id=%q error=%q", id, err.Error())
-		s.writeErrorDetail(w, http.StatusBadRequest, "Failed to trigger schedule", err.Error())
+		// 错误原因并入 error 字段（前端只展示 error 不读 detail）。
+		switch {
+		case errors.Is(err, scheduler.ErrScheduleNotFound):
+			s.writeErrorDetail(w, http.StatusNotFound, "Schedule not found", err.Error())
+		case errors.Is(err, scheduler.ErrScheduleDisabled):
+			s.writeErrorDetail(w, http.StatusConflict, "Schedule is disabled", err.Error())
+		case errors.Is(err, scheduler.ErrScheduleAlreadyTriggering):
+			s.writeErrorDetail(w, http.StatusConflict, "Schedule is already triggering", err.Error())
+		default:
+			s.writeErrorDetail(w, http.StatusInternalServerError, "Failed to trigger schedule: "+err.Error(), err.Error())
+		}
 		return
 	}
 
@@ -499,6 +512,20 @@ func (s *Server) writeScheduleConfigLocked(schedulesPath string, cfg scheduler.S
 	return backupName, nil
 }
 
+// writeScheduleRawLocked 写回原始字节（raw 编辑器路径），保留用户的注释、
+// 未知字段与排版；仅做备份+落盘，不做 struct 往返。
+func (s *Server) writeScheduleRawLocked(schedulesPath string, content []byte) (string, error) {
+	backupName, err := config.CreateBackup(schedulesPath)
+	if err != nil {
+		log.Warnf("[schedules] Backup create failed path=%q error=%q", logging.Path(schedulesPath), err.Error())
+	}
+
+	if err := os.WriteFile(schedulesPath, content, 0600); err != nil {
+		return backupName, fmt.Errorf("failed to write schedules: %w", err)
+	}
+	return backupName, nil
+}
+
 func (s *Server) reloadSchedulesLocked(schedulesPath string) error {
 	if sched := s.getScheduler(); sched != nil {
 		if err := sched.Reload(); err != nil {
@@ -516,12 +543,14 @@ func (s *Server) reloadSchedulesLocked(schedulesPath string) error {
 		return fmt.Errorf("scheduler initialization failed: %w", err)
 	}
 	newSched.OnStatusChange = s.handleScheduleStatusChange
-	newSched.Start()
 
 	s.schedulerMu.Lock()
 	if s.scheduler == nil {
 		s.scheduler = newSched
 		s.schedulerMu.Unlock()
+		// 安装成功后才启动，避免被并发安装者丢弃的孤儿调度器持有
+		// downloadFunc 继续触发（重复入队 + 陈旧 SSE 状态）。
+		newSched.Start()
 		return nil
 	}
 	existingSched := s.scheduler
@@ -551,13 +580,10 @@ func normalizeAndValidateScheduleConfig(cfg scheduler.ScheduleConfig) (scheduler
 	if err != nil {
 		return scheduler.ScheduleConfig{}, err
 	}
-	for i, entry := range entries {
-		if err := scheduler.ValidateEntry(entry); err != nil {
-			return scheduler.ScheduleConfig{}, fmt.Errorf("schedule #%d (%s): %w", i+1, entry.Name, err)
-		}
-		if _, err := scheduler.ParseSchedule(entry.Schedule); err != nil {
-			return scheduler.ScheduleConfig{}, fmt.Errorf("schedule #%d (%s): %w", i+1, entry.Name, err)
-		}
+	// 逐条 ValidateEntry + ParseSchedule 收敛到 scheduler 包共享函数，
+	// 错误文案与 scheduler.readConfig 保持一致。
+	if _, err := scheduler.ValidateAndParseEntries(entries); err != nil {
+		return scheduler.ScheduleConfig{}, err
 	}
 	return scheduler.ScheduleConfig{Schedules: entries}, nil
 }
@@ -578,6 +604,8 @@ func validateScheduleConfig(cfg scheduler.ScheduleConfig) error {
 		}
 		used[id] = struct{}{}
 
+		// 条目校验与解析收敛到 scheduler 权威函数；逐条调用并保留真实序号
+		//（不能用单条切片调 ValidateAndParseEntries，其内部恒报 #1）。
 		if err := scheduler.ValidateEntry(entry); err != nil {
 			return fmt.Errorf("schedule #%d (%s): %w", i+1, entry.Name, err)
 		}

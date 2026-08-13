@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/unkmonster/tmd/internal/database"
+	entitypkg "github.com/unkmonster/tmd/internal/entity"
 )
 
 // setupTestDB 创建测试数据库
@@ -28,7 +30,7 @@ func setupTestDB(t *testing.T) *sqlx.DB {
 	}
 
 	// 创建必要的表
-		require.NoError(t, database.CreateTables(db))
+	require.NoError(t, database.CreateTables(db))
 	return db
 }
 
@@ -1795,4 +1797,38 @@ func TestHandleDBUserLinks_URLQuery(t *testing.T) {
 	server.handleDBUserLinks(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
+}
+
+// TestWriteEntityMutationErrorTranslatesDatabaseSentinel 守护单哨兵契约：
+// 直连 database 的调用点（如 UpdateUserEntityMetadata 在并发删除后）返回裸
+// database.ErrEntityNotFound，经 writeEntityMutationError 的 TranslateError
+// 收口后必须映射 404 而非落入 default 变 500。
+func TestWriteEntityMutationErrorTranslatesDatabaseSentinel(t *testing.T) {
+	server, db := createTestServer(t)
+	defer db.Close()
+
+	raw := fmt.Errorf("%w: user entity 42", database.ErrEntityNotFound)
+	rr := httptest.NewRecorder()
+
+	server.writeEntityMutationError(rr, raw, "Entity", "Entity directory already exists", "UpdateUserEntityMetadata")
+
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+	assert.Contains(t, rr.Body.String(), `"success":false`)
+}
+
+// TestWriteEntityMutationErrorIdempotentTranslation entity 层已翻译的错误
+// 再次经过 TranslateError 保持单哨兵不变。
+func TestWriteEntityMutationErrorIdempotentTranslation(t *testing.T) {
+	server, db := createTestServer(t)
+	defer db.Close()
+
+	translated := entitypkg.TranslateError(fmt.Errorf("%w: user entity 42", database.ErrEntityNotFound))
+	if !errors.Is(translated, entitypkg.ErrNotFound) {
+		t.Fatalf("precondition: translated error should match entity.ErrNotFound")
+	}
+	rr := httptest.NewRecorder()
+
+	server.writeEntityMutationError(rr, translated, "Entity", "Entity directory already exists", "UpdateUserEntityMetadata")
+
+	assert.Equal(t, http.StatusNotFound, rr.Code)
 }

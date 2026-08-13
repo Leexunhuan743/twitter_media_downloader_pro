@@ -2,6 +2,8 @@ package twitter
 
 import (
 	"testing"
+
+	"github.com/tidwall/gjson"
 )
 
 // ==================== CheckApiResp 测试 ====================
@@ -238,5 +240,55 @@ func TestUserFollowing_Title_EmptyScreenName(t *testing.T) {
 	title := uf.Title()
 	if title == "" {
 		t.Error("Title() should not be empty even with empty ScreenName")
+	}
+}
+
+// ==================== bestVideoVariantURL 测试 ====================
+
+func TestBestVideoVariantURL_PicksMaxBitrate(t *testing.T) {
+	// 变体未按码率排序时，显式选择最高码率（旧 @reverse.0 会误选最后一项）。
+	variants := gjson.Parse(`[
+		{"bitrate": 832000, "content_type": "video/mp4", "url": "https://x.com/v/832k.mp4"},
+		{"bitrate": 256000, "content_type": "video/mp4", "url": "https://x.com/v/256k.mp4"},
+		{"content_type": "application/x-mpegURL", "url": "https://x.com/v/playlist.m3u8"}
+	]`)
+	got := bestVideoVariantURL(variants)
+	if got != "https://x.com/v/832k.mp4" {
+		t.Errorf("bestVideoVariantURL() = %q, want max-bitrate mp4", got)
+	}
+}
+
+func TestBestVideoVariantURL_SkipsPlaylistWhenBitratesExist(t *testing.T) {
+	// m3u8 播放列表（无 bitrate）在末尾且最大码率不在末位：旧 @reverse.0
+	// 会选中末尾的 m3u8；新逻辑必须跳过播放列表取最高码率 mp4。
+	variants := gjson.Parse(`[
+		{"bitrate": 1280000, "content_type": "video/mp4", "url": "https://x.com/v/1280k.mp4"},
+		{"bitrate": 832000, "content_type": "video/mp4", "url": "https://x.com/v/832k.mp4"},
+		{"content_type": "application/x-mpegURL", "url": "https://x.com/v/playlist.m3u8"}
+	]`)
+	got := bestVideoVariantURL(variants)
+	if got != "https://x.com/v/1280k.mp4" {
+		t.Errorf("bestVideoVariantURL() = %q, want highest-bitrate mp4 (not the trailing playlist)", got)
+	}
+}
+
+func TestBestVideoVariantURL_FallsBackToLastWithoutBitrate(t *testing.T) {
+	// 全无 bitrate（如仅播放列表）时兜底取最后一个 URL，复现旧 @reverse.0 行为。
+	variants := gjson.Parse(`[
+		{"content_type": "application/x-mpegURL", "url": "https://x.com/v/a.m3u8"},
+		{"content_type": "application/x-mpegURL", "url": "https://x.com/v/b.m3u8"}
+	]`)
+	got := bestVideoVariantURL(variants)
+	if got != "https://x.com/v/b.m3u8" {
+		t.Errorf("bestVideoVariantURL() = %q, want last variant URL", got)
+	}
+}
+
+func TestBestVideoVariantURL_Empty(t *testing.T) {
+	if got := bestVideoVariantURL(gjson.Parse(`[]`)); got != "" {
+		t.Errorf("bestVideoVariantURL(empty) = %q, want empty", got)
+	}
+	if got := bestVideoVariantURL(gjson.Parse(`[{"content_type": "video/mp4"}]`)); got != "" {
+		t.Errorf("bestVideoVariantURL(no urls) = %q, want empty", got)
 	}
 }

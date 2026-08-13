@@ -2,8 +2,6 @@ package downloading
 
 import (
 	"encoding/json"
-
-	"github.com/unkmonster/tmd/internal/utils"
 )
 
 // ========== Source 结构体（新格式 - 第三方工具导出）==========
@@ -585,9 +583,8 @@ func upgradeMediaToHighQuality(ee *extendedEntities) *extendedEntities {
 		return ee
 	}
 	for i := range ee.Media {
-		if ee.Media[i].Type == "photo" {
-			ee.Media[i].MediaURLHTTPS = utils.EnsurePhotoHighQuality(ee.Media[i].MediaURLHTTPS)
-		}
+		// 高清升级逻辑与 cleanMediaRecursive 共用 upgradePhotoMediaURL，避免双实现。
+		ee.Media[i].MediaURLHTTPS = upgradePhotoMediaURL(ee.Media[i].Type, ee.Media[i].MediaURLHTTPS)
 	}
 	return ee
 }

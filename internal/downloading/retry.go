@@ -2,6 +2,7 @@ package downloading
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 
 	"github.com/go-resty/resty/v2"
@@ -52,67 +53,33 @@ func RetryFailedTweets(ctx context.Context, dumper *TweetDumper, db *sqlx.DB, cl
 
 	log.Infof("[download] Retry start regular tweets=%d media=%d entities=%d", len(toretry), countTotalUrls(toretry), totalEntities)
 	totalTweets := len(toretry)
-	if progress != nil {
-		progress(RetryProgress{
-			Total:     totalTweets,
-			Completed: 0,
-			Failed:    totalTweets,
-		})
-	}
 
-	var completedTweets atomic.Int64
-	var remainingTweets atomic.Int64
-	remainingTweets.Store(int64(totalTweets))
+	failedSet, completed := downloadRetryBatch(ctx, client, dwn, fileWriter, opts, progress, toretry, totalTweets)
 
-	newFails := BatchDownloadTweet(ctx, client, true, dwn, fileWriter, opts, func(pt PackagedTweet, failed bool) {
-		if progress == nil {
-			return
-		}
-
-		completed := int(completedTweets.Add(1))
-		remaining := int(remainingTweets.Load())
-		if !failed {
-			remaining = int(remainingTweets.Add(-1))
-		}
-
-		progress(RetryProgress{
-			Total:     totalTweets,
-			Completed: completed,
-			Failed:    remaining,
-		})
-	}, toretry...)
-
-	// 注意：BatchDownloadTweet 内部的 downloadTweetMedia 会原地修改 tweet.Urls
-	// （只保留仍需重试的 URL），此处 te.Tweet 指向 dumper 内部的同一 *twitter.Tweet 指针。
-	// 因此下面对 te.Tweet.Urls 的读取反映的是已被 downloadTweetMedia 缩减后的结果。
-	failedSet := make(map[uint64]struct{}, len(newFails))
-	for _, pt := range newFails {
-		if te, ok := pt.(*TweetInEntity); ok && te != nil && te.Tweet != nil {
-			failedSet[te.Tweet.Id] = struct{}{}
-		}
-	}
-
-	for _, pt := range toretry {
-		te, ok := pt.(*TweetInEntity)
-		if !ok || te == nil || te.Tweet == nil || te.Entity == nil {
-			continue
-		}
-		eid, err := te.Entity.Id()
-		if err != nil {
-			log.Warnf("[download] Retry skipped tweet_id=%d reason=entity_id_error error=%q", te.Tweet.Id, err.Error())
-			continue
-		}
-
-		if _, isFailed := failedSet[te.Tweet.Id]; !isFailed {
-			dumper.Remove(eid, te.Tweet.Id)
-			log.Debugf("[download] Retry recovered tweet_id=%d", te.Tweet.Id)
-		} else if len(te.Tweet.Urls) > 0 {
-			log.Warnf("[download] Retry remaining tweet_id=%d media=%d", te.Tweet.Id, len(te.Tweet.Urls))
-		} else {
-			dumper.Remove(eid, te.Tweet.Id)
-			log.Debugf("[download] Retry handled non-retriable tweet_id=%d", te.Tweet.Id)
-		}
-	}
+	classifyRetryResults(toretry, failedSet, retryClassifier{
+		resolve: func(pt PackagedTweet) (any, bool, string) {
+			te, ok := pt.(*TweetInEntity)
+			if !ok || te == nil || te.Tweet == nil || te.Entity == nil {
+				return nil, true, ""
+			}
+			eid, err := te.Entity.Id()
+			if err != nil {
+				return nil, true, fmt.Sprintf("reason=entity_id_error error=%q", err.Error())
+			}
+			return eid, false, ""
+		},
+		remove: func(pt PackagedTweet, key any) bool {
+			te, ok := pt.(*TweetInEntity)
+			if !ok || te == nil || te.Tweet == nil {
+				return false
+			}
+			eid, ok := key.(int)
+			if !ok {
+				return false
+			}
+			return dumper.Remove(eid, te.Tweet.Id)
+		},
+	})
 
 	summary := RetrySummary{
 		TotalEntities:     totalEntities,
@@ -121,7 +88,7 @@ func RetryFailedTweets(ctx context.Context, dumper *TweetDumper, db *sqlx.DB, cl
 	if progress != nil {
 		progress(RetryProgress{
 			Total:     totalTweets,
-			Completed: int(completedTweets.Load()),
+			Completed: int(completed),
 			Failed:    dumper.Count(),
 		})
 	}
@@ -176,54 +143,34 @@ func RetryFailedJsonTweets(ctx context.Context, dumper *JsonTweetDumper, client 
 
 	log.Infof("[download] Retry start json tweets=%d media=%d entries=%d", len(toretry), countTotalUrls(toretry), totalEntries)
 	totalTweets := len(toretry)
-	if progress != nil {
-		progress(RetryProgress{
-			Total:     totalTweets,
-			Completed: 0,
-			Failed:    totalTweets,
-		})
-	}
 
-	var completedTweets atomic.Int64
+	failedSet, completed := downloadRetryBatch(ctx, client, dwn, fileWriter, opts, progress, toretry, totalTweets)
 
-	newFails := BatchDownloadTweet(ctx, client, true, dwn, fileWriter, opts, func(pt PackagedTweet, failed bool) {
-		if progress == nil {
-			return
-		}
-		completed := int(completedTweets.Add(1))
-		progress(RetryProgress{
-			Total:     totalTweets,
-			Completed: completed,
-			Failed:    totalTweets - completed,
-		})
-	}, toretry...)
-
-	failedSet := make(map[uint64]struct{}, len(newFails))
-	for _, pt := range newFails {
-		if pt.GetTweet() != nil {
-			failedSet[pt.GetTweet().Id] = struct{}{}
-		}
-	}
-
-	for _, pt := range toretry {
-		jpt, ok := pt.(JsonPackagedTweet)
-		if !ok || jpt.Tweet == nil {
-			continue
-		}
-		sourcePath, exists := tweetIDToSource[jpt.Tweet.Id]
-		if !exists {
-			continue
-		}
-		if _, isFailed := failedSet[jpt.Tweet.Id]; !isFailed {
-			dumper.Remove(sourcePath, jpt.Tweet.Id)
-			log.Debugf("[download] Retry recovered json tweet_id=%d", jpt.Tweet.Id)
-		} else if len(jpt.Tweet.Urls) > 0 {
-			log.Warnf("[download] Retry remaining json tweet_id=%d media=%d", jpt.Tweet.Id, len(jpt.Tweet.Urls))
-		} else {
-			dumper.Remove(sourcePath, jpt.Tweet.Id)
-			log.Debugf("[download] Retry handled non-retriable json tweet_id=%d", jpt.Tweet.Id)
-		}
-	}
+	classifyRetryResults(toretry, failedSet, retryClassifier{
+		kindLabel: " json",
+		resolve: func(pt PackagedTweet) (any, bool, string) {
+			jpt, ok := pt.(JsonPackagedTweet)
+			if !ok || jpt.Tweet == nil {
+				return nil, true, ""
+			}
+			sourcePath, exists := tweetIDToSource[jpt.Tweet.Id]
+			if !exists {
+				return nil, true, ""
+			}
+			return sourcePath, false, ""
+		},
+		remove: func(pt PackagedTweet, key any) bool {
+			jpt, ok := pt.(JsonPackagedTweet)
+			if !ok || jpt.Tweet == nil {
+				return false
+			}
+			sourcePath, ok := key.(string)
+			if !ok {
+				return false
+			}
+			return dumper.Remove(sourcePath, jpt.Tweet.Id)
+		},
+	})
 
 	for _, id := range noUrlTweetIDs {
 		if sp, ok := tweetIDToSource[id]; ok {
@@ -238,10 +185,97 @@ func RetryFailedJsonTweets(ctx context.Context, dumper *JsonTweetDumper, client 
 	if progress != nil {
 		progress(RetryProgress{
 			Total:     totalTweets,
-			Completed: int(completedTweets.Load()),
+			Completed: int(completed),
 			Failed:    dumper.Count(),
 		})
 	}
 	log.Infof("[download] Retry complete json tweets=%d remaining_tweets=%d entries=%d remaining_entries=%d", totalTweets, dumper.Count(), summary.TotalEntities, summary.RemainingEntities)
 	return summary, nil
+}
+
+// retryClassifier carries the kind-specific bookkeeping used by
+// classifyRetryResults after a retry pass: resolve maps each packaged tweet to
+// its dumper removal key (skipping tweets that cannot be resolved), remove
+// deletes a resolved tweet from the dumper.
+type retryClassifier struct {
+	kindLabel string // "" for regular, " json" for json — keeps legacy log text
+	resolve   func(pt PackagedTweet) (key any, skip bool, skipReason string)
+	remove    func(pt PackagedTweet, key any) bool
+}
+
+// downloadRetryBatch runs the shared retry download pass over toretry and
+// returns the set of tweet IDs that still fail plus the completed callback
+// count. Progress semantics are unified for both dumper kinds: Failed reports
+// tweets that still need retry (failures plus in-flight), decremented as
+// successes complete — previously the json variant reported only in-flight
+// tweets, under-counting failures mid-run.
+func downloadRetryBatch(ctx context.Context, client *resty.Client, dwn downloader.Downloader, fileWriter downloader.FileWriter, opts RuntimeOptions, progress RetryProgressFunc, toretry []PackagedTweet, totalTweets int) (map[uint64]struct{}, int64) {
+	if progress != nil {
+		progress(RetryProgress{
+			Total:     totalTweets,
+			Completed: 0,
+			Failed:    totalTweets,
+		})
+	}
+
+	var completed atomic.Int64
+	var remaining atomic.Int64
+	remaining.Store(int64(totalTweets))
+
+	newFails := BatchDownloadTweet(ctx, client, true, dwn, fileWriter, opts, func(pt PackagedTweet, failed bool) {
+		if progress == nil {
+			return
+		}
+
+		completed := int(completed.Add(1))
+		remainingCount := int(remaining.Load())
+		if !failed {
+			remainingCount = int(remaining.Add(-1))
+		}
+
+		progress(RetryProgress{
+			Total:     totalTweets,
+			Completed: completed,
+			Failed:    remainingCount,
+		})
+	}, toretry...)
+
+	// 注意：BatchDownloadTweet 内部的 downloadTweetMedia 会原地修改 tweet.Urls
+	// （只保留仍需重试的 URL），toretry 内的 Tweet 与 dumper 内部是同一
+	// *twitter.Tweet 指针，此处读取的 Urls 反映的是下载后的缩减结果。
+	failedSet := make(map[uint64]struct{}, len(newFails))
+	for _, pt := range newFails {
+		if tw := pt.GetTweet(); tw != nil {
+			failedSet[tw.Id] = struct{}{}
+		}
+	}
+	return failedSet, completed.Load()
+}
+
+// classifyRetryResults updates the dumper for each retried tweet: recovered
+// and non-retriable tweets are removed, tweets with remaining URLs are kept.
+func classifyRetryResults(toretry []PackagedTweet, failedSet map[uint64]struct{}, rc retryClassifier) {
+	for _, pt := range toretry {
+		tw := pt.GetTweet()
+		if tw == nil {
+			continue
+		}
+		key, skip, skipReason := rc.resolve(pt)
+		if skip {
+			if skipReason != "" {
+				log.Warnf("[download] Retry skipped%s tweet_id=%d %s", rc.kindLabel, tw.Id, skipReason)
+			}
+			continue
+		}
+
+		if _, isFailed := failedSet[tw.Id]; !isFailed {
+			rc.remove(pt, key)
+			log.Debugf("[download] Retry recovered%s tweet_id=%d", rc.kindLabel, tw.Id)
+		} else if len(tw.Urls) > 0 {
+			log.Warnf("[download] Retry remaining%s tweet_id=%d media=%d", rc.kindLabel, tw.Id, len(tw.Urls))
+		} else {
+			rc.remove(pt, key)
+			log.Debugf("[download] Retry handled non-retriable%s tweet_id=%d", rc.kindLabel, tw.Id)
+		}
+	}
 }

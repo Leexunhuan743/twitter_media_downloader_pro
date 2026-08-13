@@ -34,7 +34,7 @@ func (tn *TweetNaming) textPart() string {
 	}
 
 	text := tn.sanitized
-	text = truncateUTF8(text, maxTextLen)
+	text = utils.TruncateUTF8(text, maxTextLen)
 	if text == "" {
 		text = "tweet"
 	}

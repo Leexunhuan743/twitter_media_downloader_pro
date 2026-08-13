@@ -15,8 +15,7 @@ func syncUserAndEntity(db *sqlx.DB, user *twitter.User, dir string, maxLen int) 
 		log.Debugf("[download] User sync failed user=%q uid=%d error=%q", user.Title(), user.Id, err.Error())
 		return nil, err
 	}
-	userNaming := naming.NewUserNaming(user.Name, user.ScreenName, maxLen)
-	expectedTitle := userNaming.SanitizedTitle()
+	expectedTitle := naming.UserDirTitle(user.Name, user.ScreenName, maxLen)
 
 	ent, err := entity.NewUserEntity(db, user.Id, dir)
 	if err != nil {

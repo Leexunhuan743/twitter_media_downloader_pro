@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/unkmonster/tmd/internal/utils"
 )
 
 // ListNamer supplies the identity and display title needed for list naming.
@@ -43,12 +45,12 @@ func NewListNamingFromBase(lst ListNamer, maxLen int) *ListNaming {
 				title = fitNameWithSuffix(title, idSuffix, maxLen)
 			}
 		} else {
-			title = truncateUTF8(title, maxLen)
+			title = utils.TruncateUTF8(title, maxLen)
 		}
 	}
 	title = finalizeName(title, maxLen)
 	if title == "" && maxLen > 0 {
-		title = truncateUTF8("list", maxLen)
+		title = utils.TruncateUTF8("list", maxLen)
 	}
 
 	return &ListNaming{

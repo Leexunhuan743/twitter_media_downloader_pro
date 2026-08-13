@@ -38,12 +38,10 @@ func PathExists(path string) (bool, error) {
 // DefaultMaxFileNameLen reserves space for extensions and collision suffixes.
 const DefaultMaxFileNameLen = 158
 
-// WinFileNameWithMaxLen 将名称转换为有效的 Windows 文件名。
-// maxLen 指定 UTF-8 字节长度上限。
-func WinFileNameWithMaxLen(name string, maxLen int) string {
-	if maxLen <= 0 {
-		return ""
-	}
+// sanitizeFileNameCore 是 WinFileNameWithMaxLen 与 Stable 变体共享的清洗核心：
+// 剔除 URL/非法字符、控制字符归一，并按 UTF-8 字节预算截断。调用方决定
+// 是否裁剪首尾空白与做保留名检查（两个变体的历史分叉点）。
+func sanitizeFileNameCore(name string, maxLen int) string {
 	name = reURL.ReplaceAllString(name, "")
 	name = reWinNonSupport.ReplaceAllString(name, "")
 
@@ -65,12 +63,21 @@ func WinFileNameWithMaxLen(name string, maxLen int) string {
 		}
 		buffer.WriteRune(ch)
 	}
+	return buffer.String()
+}
 
-	result := strings.TrimRight(buffer.String(), " .")
+// WinFileNameWithMaxLen 将名称转换为有效的 Windows 文件名。
+// maxLen 指定 UTF-8 字节长度上限。
+func WinFileNameWithMaxLen(name string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	result := sanitizeFileNameCore(name, maxLen)
+	result = strings.TrimRight(result, " .")
 	if isWindowsReservedFileName(result) {
 		result = "_" + result
 	}
-	result = truncateUTF8(result, maxLen)
+	result = TruncateUTF8(result, maxLen)
 	return strings.TrimRight(result, " .")
 }
 
@@ -87,32 +94,17 @@ func WinFileNameWithMaxLenStable(name string, maxLen int) string {
 	if maxLen <= 0 {
 		return ""
 	}
-	name = reURL.ReplaceAllString(name, "")
-	name = reWinNonSupport.ReplaceAllString(name, "")
-
-	var buffer bytes.Buffer
-	for _, ch := range name {
-		switch ch {
-		case '\r':
-			continue
-		case '\n':
-			ch = ' '
-		default:
-			if ('\x00' <= ch && ch < '\x20') || ch == '\x7f' {
-				continue
-			}
-		}
-
-		if buffer.Len()+utf8.RuneLen(ch) > maxLen {
-			break
-		}
-		buffer.WriteRune(ch)
-	}
-
-	return buffer.String()
+	return sanitizeFileNameCore(name, maxLen)
 }
 
-func truncateUTF8(value string, maxLen int) string {
+// TruncateUTF8 truncates value to at most maxLen UTF-8 bytes without splitting
+// a rune. It is the single implementation shared across packages (the naming
+// package previously carried a private copy). A non-positive maxLen yields the
+// empty string; the caller must not rely on value being preserved for maxLen 0.
+func TruncateUTF8(value string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
 	if len(value) <= maxLen {
 		return value
 	}

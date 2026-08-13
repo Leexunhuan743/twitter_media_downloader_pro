@@ -55,9 +55,9 @@ type UserPreviousNameWithCurrent struct {
 }
 
 type Lst struct {
-	Id           uint64 `db:"id"`
-	Name         string `db:"name"`
-	OwnerUserId  uint64 `db:"owner_user_id"`
+	Id          uint64 `db:"id"`
+	Name        string `db:"name"`
+	OwnerUserId uint64 `db:"owner_user_id"`
 }
 
 type LstEntity struct {
@@ -67,18 +67,21 @@ type LstEntity struct {
 	ParentDir string        `db:"parent_dir"`
 }
 
-func (le *LstEntity) Path() (string, error) {
-	if le.ParentDir == "" || le.Name == "" {
-		return "", fmt.Errorf("no enough info to get path for lst entity: parentDir=%q, name=%q", le.ParentDir, le.Name)
+// joinRecordPath 拼接实体记录的文件系统路径；ParentDir/Name 缺失时返回错误
+// （kind 用于错误文案，如 "user"/"lst"）。
+func joinRecordPath(parentDir, name, kind string) (string, error) {
+	if parentDir == "" || name == "" {
+		return "", fmt.Errorf("no enough info to get path for %s entity: parentDir=%q, name=%q", kind, parentDir, name)
 	}
-	return filepath.Join(le.ParentDir, le.Name), nil
+	return filepath.Join(parentDir, name), nil
+}
+
+func (le *LstEntity) Path() (string, error) {
+	return joinRecordPath(le.ParentDir, le.Name, "lst")
 }
 
 func (ue *UserEntity) Path() (string, error) {
-	if ue.ParentDir == "" || ue.Name == "" {
-		return "", fmt.Errorf("no enough info to get path for user entity: parentDir=%q, name=%q", ue.ParentDir, ue.Name)
-	}
-	return filepath.Join(ue.ParentDir, ue.Name), nil
+	return joinRecordPath(ue.ParentDir, ue.Name, "user")
 }
 
 func (ul *UserLink) Path(db *sqlx.DB) (string, error) {
@@ -104,7 +107,9 @@ func (ul *UserLink) PathWithTx(queryer interface {
 	return filepath.Join(lePath, ul.Name), nil
 }
 
-// NullInt32 辅助函数：将 sql.NullInt32 转换为 int32
+// NullInt32 辅助函数：将 sql.NullInt32 转换为 int32，无效值取 0。
+// 注意与 sqlite_migration.go 的 nullInt32Value 语义不同：后者无效值返回 nil
+// （用于 INSERT 绑定，让 SQLite 存储 NULL），此处 0 用于内存计算。
 func NullInt32(n sql.NullInt32) int32 {
 	if n.Valid {
 		return n.Int32

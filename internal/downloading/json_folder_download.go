@@ -77,20 +77,27 @@ func parseFormattedEntry(entry *FormattedTweetEntry) *twitter.Tweet {
 						mediaType := getStringFromMap(mm, "type")
 						switch mediaType {
 						case "video", "animated_gif":
-							// 选择最高码率的视频变体
+							// 选择最高码率的视频变体；与 twitter.getUrlsFromMedia 的
+							// bestVideoVariantURL 语义一致：无码率的播放列表变体不优先，
+							// 全无码率时兜底取最后一个 URL。
 							if variants, ok := mm["video_info"].(map[string]any); ok {
 								if variantList, ok := variants["variants"].([]any); ok {
 									var bestURL string
+									var lastURL string
 									var maxBitrate int
 									for _, v := range variantList {
 										if vv, ok := v.(map[string]any); ok {
 											if url := getStringFromMap(vv, "url"); url != "" {
+												lastURL = url
 												if bitrate := getIntFromMap(vv, "bitrate"); bitrate > maxBitrate {
 													maxBitrate = bitrate
 													bestURL = url
 												}
 											}
 										}
+									}
+									if bestURL == "" {
+										bestURL = lastURL
 									}
 									if bestURL != "" {
 										tweet.Urls = append(tweet.Urls, bestURL)
@@ -299,8 +306,7 @@ func DownloadFromLoongTweetFolder(ctx context.Context, client *resty.Client, use
 				userDir := usersDir
 				if tw.Creator != nil {
 					// 构建用户目录：usersDir/{ sanitizedUserName }/
-					userNaming := naming.NewUserNaming(tw.Creator.Name, tw.Creator.ScreenName, opts.normalizedMaxFileNameLen())
-					userDir = filepath.Join(usersDir, userNaming.SanitizedTitle())
+					userDir = filepath.Join(usersDir, naming.UserDirTitle(tw.Creator.Name, tw.Creator.ScreenName, opts.normalizedMaxFileNameLen()))
 					if err := os.MkdirAll(userDir, 0755); err != nil {
 						log.Warnf("[jsonfolder] User directory failed path=%q error=%q", logging.Path(userDir), err.Error())
 					}

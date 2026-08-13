@@ -48,27 +48,46 @@ func (td *TweetDumper) Push(eid int, tweet ...*twitter.Tweet) int {
 	return td.count - oldCount
 }
 
-func (td *TweetDumper) Load(path string) error {
+// loadJSONFile 读取并反序列化 JSON 文件；文件不存在返回 (false, nil)，
+// dumper 持久化是 best-effort 语义，缺失文件不算错误。
+func loadJSONFile(path string, dest interface{}) (bool, error) {
 	file, err := os.OpenFile(path, os.O_RDONLY, 0)
 	if os.IsNotExist(err) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		log.Debugf("[download] Dumper open failed kind=regular path=%q error=%q", logging.Path(path), err.Error())
-		return err
+		return false, err
 	}
 	defer file.Close()
 
 	data, err := io.ReadAll(file)
 	if err != nil {
-		log.Debugf("[download] Dumper read failed kind=regular path=%q error=%q", logging.Path(path), err.Error())
+		return false, err
+	}
+	if err := json.Unmarshal(data, dest); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// dumpJSONFile 将 data 以缩进 JSON 写入 path（0600）。
+func dumpJSONFile(path string, data interface{}) error {
+	content, err := json.MarshalIndent(data, "", "    ")
+	if err != nil {
 		return err
 	}
+	return os.WriteFile(path, content, 0600)
+}
+
+func (td *TweetDumper) Load(path string) error {
 	loaded := make(map[int][]*twitter.Tweet)
-	err = json.Unmarshal(data, &loaded)
+	found, err := loadJSONFile(path, &loaded)
 	if err != nil {
-		log.Debugf("[download] Dumper parse failed kind=regular path=%q error=%q", logging.Path(path), err.Error())
+		log.Debugf("[download] Dumper load failed kind=regular path=%q error=%q", logging.Path(path), err.Error())
 		return err
+	}
+	if !found {
+		return nil
 	}
 
 	for k, v := range loaded {
@@ -77,12 +96,11 @@ func (td *TweetDumper) Load(path string) error {
 	return nil
 }
 func (td *TweetDumper) Dump(path string) error {
-	data, err := json.MarshalIndent(td.data, "", "    ")
-	if err != nil {
+	if err := dumpJSONFile(path, td.data); err != nil {
 		log.Debugf("[download] Dumper marshal failed kind=regular error=%q", err.Error())
 		return err
 	}
-	return os.WriteFile(path, data, 0600)
+	return nil
 }
 
 func (td *TweetDumper) Clear() {
@@ -226,24 +244,14 @@ func (d *JsonTweetDumper) PushWithDir(sourcePath string, entryType string, dir s
 }
 
 func (d *JsonTweetDumper) Load(path string) error {
-	file, err := os.OpenFile(path, os.O_RDONLY, 0)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		log.Debugf("[download] Dumper open failed kind=json path=%q error=%q", logging.Path(path), err.Error())
-		return err
-	}
-	defer file.Close()
-	data, err := io.ReadAll(file)
-	if err != nil {
-		log.Debugf("[download] Dumper read failed kind=json path=%q error=%q", logging.Path(path), err.Error())
-		return err
-	}
 	var loaded map[string]*JsonDumpEntry
-	if err := json.Unmarshal(data, &loaded); err != nil {
-		log.Debugf("[download] Dumper parse failed kind=json path=%q error=%q", logging.Path(path), err.Error())
+	found, err := loadJSONFile(path, &loaded)
+	if err != nil {
+		log.Debugf("[download] Dumper load failed kind=json path=%q error=%q", logging.Path(path), err.Error())
 		return err
+	}
+	if !found {
+		return nil
 	}
 	for k, v := range loaded {
 		d.Push(k, v.Type, v.Tweets...)
@@ -256,12 +264,11 @@ func (d *JsonTweetDumper) Load(path string) error {
 	return nil
 }
 func (d *JsonTweetDumper) Dump(path string) error {
-	data, err := json.MarshalIndent(d.data, "", "    ")
-	if err != nil {
+	if err := dumpJSONFile(path, d.data); err != nil {
 		log.Debugf("[download] Dumper marshal failed kind=json error=%q", err.Error())
 		return err
 	}
-	return os.WriteFile(path, data, 0600)
+	return nil
 }
 
 func (d *JsonTweetDumper) Clear() {
