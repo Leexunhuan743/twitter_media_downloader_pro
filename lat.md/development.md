@@ -53,6 +53,28 @@ TMDP uses diverse concurrency patterns across its components, each suited to its
 | Task cleanup | Hourly goroutine, deletes 24h+ terminal tasks |
 | TweetDumper | sync.Mutex in service layer |
 
+## X API Probe Tool
+
+Diagnostic CLI for probing Twitter/X GraphQL failures such as HTTP 429 `error code: 1015`; it reuses real config and never prints credentials.
+
+`tools/xapi-probe` checks whether failures are caused by API changes, request headers, proxy egress, account state, or burst load. It reuses `conf.yaml` credentials and `twitter.SetClientAuth`, and never prints `auth_token`, `ct0`, `Authorization`, `Cookie`, or `Set-Cookie`.
+
+```bash
+# Single requests: default headers vs browser-style headers, direct or via conf proxy
+go run ./tools/xapi-probe -user backdoorgf -uid 1620929133340495873
+
+# Concurrent burst against one user
+go run ./tools/xapi-probe -user backdoorgf -uid 1620929133340495873 -burst 100
+
+# Fetch a real List's members and burst UserMedia across different users
+go run ./tools/xapi-probe -user backdoorgf -uid 1620929133340495873 -list 2018637651323310440 -burst 242
+
+# One UserMedia request per configured account (master + additional_cookies.yaml)
+go run ./tools/xapi-probe -user backdoorgf -uid 1620929133340495873 -accounts
+```
+
+The tool prints status codes, `Retry-After`, `X-Rate-Limit-*`, `Cf-Ray`, server, and a truncated body. Entry point: [[tools/xapi-probe/main.go#main]].
+
 ## Testing & CI
 
 Standard Go testing commands and the current CI pipeline configuration.
