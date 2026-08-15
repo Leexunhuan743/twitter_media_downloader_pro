@@ -49,11 +49,13 @@ func syncListAndGetMembers(ctx context.Context, client *resty.Client, db *sqlx.D
 		return nil, nil, err
 	}
 
+	log.Debugf("[download] List members fetch start list=%q account=%s", lst.Title(), clientAccountForLog(client))
 	membersResult, err := lst.GetMembers(ctx, client)
 	if err != nil {
-		log.Debugf("[download] List members fetch failed list=%q error=%q", lst.Title(), err.Error())
+		log.Debugf("[download] List members fetch failed list=%q account=%s error=%q", lst.Title(), clientAccountForLog(client), err.Error())
 		return nil, nil, err
 	}
+	log.Debugf("[download] List members fetch done list=%q account=%s members=%d", lst.Title(), clientAccountForLog(client), len(membersResult.Users))
 
 	eid, err := ent.Id()
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
+	"github.com/unkmonster/tmd/internal/logging"
 	"github.com/unkmonster/tmd/internal/utils"
 )
 
@@ -59,6 +60,14 @@ func LoginWithOptions(ctx context.Context, authToken string, ct0 string, opts Lo
 
 	// 错误检查
 	client.OnAfterResponse(func(c *resty.Client, r *resty.Response) error {
+		if r.StatusCode() >= 400 {
+			body := string(r.Body())
+			if len(body) > 200 {
+				body = body[:200] + "...(truncated)"
+			}
+			log.Debugf("[twitter] Response error endpoint=%s account=%s status=%d retry_after=%s body=%q",
+				endpointForLog(r.Request.URL), clientNameForLog(c), r.StatusCode(), r.Header().Get("Retry-After"), logging.RedactSensitiveText(body))
+		}
 		if err := CheckApiResp(r.Body()); err != nil {
 			return err
 		}

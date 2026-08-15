@@ -253,9 +253,12 @@ func (u *User) GetMedias(ctx context.Context, client *resty.Client, timeRange *u
 		maxTime = &timeRange.Max
 	}
 
+	log.Debugf("[twitter] UserMedia start user=%s account=%s timerange=%t", u.ScreenName, clientNameForLog(client), timeRange != nil)
+
 	for {
 		currentTweets, next, err := u.getMediasOnePage(ctx, &api, client)
 		if err != nil {
+			log.Debugf("[twitter] UserMedia page failed user=%s account=%s error=%q", u.ScreenName, clientNameForLog(client), errorForLog(err))
 			return nil, err
 		}
 

@@ -57,6 +57,7 @@ temp/
 downloads/
 /config/
 data/
+tools/xapi-probe/saved-api-json/
 
 # === Migration / Temp Files ===
 *.backup.*

@@ -71,6 +71,12 @@ go run ./tools/xapi-probe -user backdoorgf -uid 1620929133340495873 -list 201863
 
 # One UserMedia request per configured account (master + additional_cookies.yaml)
 go run ./tools/xapi-probe -user backdoorgf -uid 1620929133340495873 -accounts
+
+# Save raw API response JSONs for inspection
+go run ./tools/xapi-probe -user backdoorgf -uid 1620929133340495873 -list 2033597792896069633 -save-dir tools/xapi-probe/saved-api-json
+
+# Stress ramp: find when 429/1015 appears (uses all configured accounts)
+go run ./tools/xapi-probe -stress 543 -list 2033597792896069633 -delay 2s
 ```
 
 The tool prints status codes, `Retry-After`, `X-Rate-Limit-*`, `Cf-Ray`, server, and a truncated body. Entry point: [[tools/xapi-probe/main.go#main]].

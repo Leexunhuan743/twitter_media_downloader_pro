@@ -96,6 +96,8 @@ Use `[twitter]` for account/login/API parsing context and `[rate-limit]` for req
 
 Rate-limit sleeps and no-client states are warnings because they explain stalled work. Per-request counts, client selection, response header refreshes, and parser skips stay debug-only.
 
+Debug-level Twitter traces include GraphQL request/response errors (status, `retry_after`, sanitized body), list info requests, and selected account names. Download-side debug traces include list member fetch start/done/error and per-user media fetch start/error with the selected account; successful per-request/page bodies are intentionally not logged.
+
 ## Peripheral Logs
 
 Peripheral logs should keep integrations and imports observable without competing with the core task and download timeline.

@@ -23,6 +23,17 @@ import (
 	"github.com/unkmonster/tmd/internal/utils"
 )
 
+func clientAccountForLog(cli *resty.Client) string {
+	if cli == nil {
+		return "unknown"
+	}
+	name := strings.TrimSpace(twitter.GetClientScreenName(cli))
+	if name == "" {
+		return "unknown"
+	}
+	return "@" + strings.TrimPrefix(name, "@")
+}
+
 func calcUserDepth(exist int, total int) int {
 	if exist >= total {
 		return 1
@@ -277,6 +288,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 		}
 
 		cli := twitter.SelectClientMFQ(ctx, client, additional, user, "/i/api/graphql/MOLbHrtk8Ovu7DUNOLcXiA/UserMedia")
+		log.Debugf("[batch] User media selected user=%q account=%s", user.Title(), clientAccountForLog(cli))
 		if ctx.Err() != nil {
 			userEntityHeap.Push(ent)
 			return
@@ -293,8 +305,10 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 			markUserDone(user.ScreenName)
 			return
 		}
+		log.Debugf("[batch] User media fetch start user=%q account=%s", user.Title(), clientAccountForLog(cli))
 		tweets, err := user.GetMedias(ctx, cli, &utils.TimeRange{Min: minTime})
 		if err == twitter.ErrWouldBlock {
+			log.Debugf("[batch] User media would block user=%q account=%s", user.Title(), clientAccountForLog(cli))
 			userEntityHeap.Push(ent)
 			return
 		}
@@ -316,6 +330,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 			return
 		}
 		if err != nil {
+			log.Debugf("[batch] User media fetch error user=%q account=%s error=%q", user.Title(), clientAccountForLog(cli), err.Error())
 			log.Warnf("[batch] User media fetch failed entity=%q error=%q", entityName, err.Error())
 			markUserDone(user.ScreenName)
 			return

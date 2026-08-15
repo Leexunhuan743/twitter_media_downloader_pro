@@ -33,13 +33,16 @@ func GetLst(ctx context.Context, client *resty.Client, id uint64) (*List, error)
 	api := listByRestId{}
 	api.id = id
 	url := makeUrl(&api)
+	log.Debugf("[twitter] List request list_id=%d account=%s endpoint=%s", id, clientNameForLog(client), endpointForLog(url))
 
 	resp, err := client.R().SetContext(ctx).Get(url)
 	if err != nil {
+		log.Debugf("[twitter] List response error list_id=%d account=%s error=%q", id, clientNameForLog(client), errorForLog(err))
 		return nil, err
 	}
 
 	if err := CheckApiResp(resp.Body()); err != nil {
+		log.Debugf("[twitter] List API error list_id=%d account=%s error=%q", id, clientNameForLog(client), errorForLog(err))
 		return nil, err
 	}
 
