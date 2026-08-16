@@ -37,6 +37,15 @@ TMDP supports one master account plus multiple additional accounts for rate limi
 
 Client selection logs use endpoint and account summaries only. They never log `auth_token`, `ct0`, Authorization headers, or raw response bodies.
 
+## 429 / 1015 Cooldown
+
+HTTP 429 responses put the affected client into a temporary cooldown so account selection skips it while Cloudflare/Twitter rate limits cool down.
+
+- `OnAfterResponse` sees HTTP 429 and calls `setClientCooldown` with `Retry-After` (default 60s).
+- `SelectClient` and `SelectClientMFQ` skip clients in cooldown; `SelectClientMFQ` treats them as temporarily rate-limited and waits/backs off when all are cooling.
+- 429 responses whose body contains `error code: 1015` are **not** retried by Resty, avoiding rapid re-requests that worsen the Cloudflare block.
+- Cooldown is temporary and expires automatically; it does not use permanent `SetClientError`.
+
 ## Error Types
 Typed errors and error codes returned by the Twitter API layer, each with distinct handling semantics.
 

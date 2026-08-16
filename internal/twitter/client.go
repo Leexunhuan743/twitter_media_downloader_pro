@@ -23,7 +23,10 @@ const bearer = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Z
 var clientScreenNames sync.Map
 var clientErrors sync.Map
 var clientRateLimiters sync.Map
+var clientCooldowns sync.Map
 var apiCounts sync.Map
+
+const defaultClientCooldown = 60 * time.Second
 
 func SetClientAuth(client *resty.Client, authToken string, ct0 string) {
 	client.SetAuthToken(bearer)
@@ -67,6 +70,9 @@ func LoginWithOptions(ctx context.Context, authToken string, ct0 string, opts Lo
 			}
 			log.Debugf("[twitter] Response error endpoint=%s account=%s status=%d retry_after=%s body=%q",
 				endpointForLog(r.Request.URL), clientNameForLog(c), r.StatusCode(), r.Header().Get("Retry-After"), logging.RedactSensitiveText(body))
+		}
+		if r.StatusCode() == http.StatusTooManyRequests {
+			setClientCooldown(c, parseRetryAfter(r.Header().Get("Retry-After")))
 		}
 		if err := CheckApiResp(r.Body()); err != nil {
 			return err
@@ -129,7 +135,17 @@ func LoginWithOptions(ctx context.Context, authToken string, ct0 string, opts Lo
 		}
 		// HTTP 429 速率限制
 		v, ok := err.(*utils.HttpStatusError)
-		return ok && r.Request != nil && r.Request.RawRequest != nil && r.Request.RawRequest.Host == "x.com" && v.Code == 429
+		if !ok || v.Code != 429 {
+			return false
+		}
+		if r.Request == nil || r.Request.RawRequest == nil || r.Request.RawRequest.Host != "x.com" {
+			return false
+		}
+		// Cloudflare 1015 是风控/限流，快速重试只会加重封锁，交给冷却熔断处理。
+		if strings.Contains(strings.ToLower(string(r.Body())), "error code: 1015") {
+			return false
+		}
+		return true
 	})
 
 	client.SetTransport(&http.Transport{
@@ -488,6 +504,49 @@ func SetClientError(cli *resty.Client, err error) {
 	}
 }
 
+func parseRetryAfter(header string) time.Duration {
+	if secs, err := strconv.Atoi(strings.TrimSpace(header)); err == nil && secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	return defaultClientCooldown
+}
+
+func setClientCooldown(cli *resty.Client, d time.Duration) {
+	if cli == nil || d <= 0 {
+		return
+	}
+	until := time.Now().Add(d)
+	setClientCooldownUntil(cli, until)
+	log.Warnf("[twitter] Account cooldown account=%s until=%s dur=%s", clientNameForLog(cli), until.Format(time.RFC3339), d.Round(time.Second))
+}
+
+func setClientCooldownUntil(cli *resty.Client, until time.Time) {
+	if cli == nil {
+		return
+	}
+	if until.IsZero() {
+		clientCooldowns.Delete(cli)
+		return
+	}
+	clientCooldowns.Store(cli, until)
+}
+
+func clientInCooldown(cli *resty.Client) bool {
+	if cli == nil {
+		return false
+	}
+	v, ok := clientCooldowns.Load(cli)
+	if !ok {
+		return false
+	}
+	until := v.(time.Time)
+	if time.Now().Before(until) {
+		return true
+	}
+	clientCooldowns.Delete(cli)
+	return false
+}
+
 func GetClientRateLimiter(cli *resty.Client) *rateLimiter {
 	if v, ok := clientRateLimiters.Load(cli); ok {
 		return v.(*rateLimiter)
@@ -504,6 +563,9 @@ func SelectClient(ctx context.Context, clients []*resty.Client, path string) *re
 		for _, client := range clients {
 			if GetClientError(client) != nil {
 				errs++
+				continue
+			}
+			if clientInCooldown(client) {
 				continue
 			}
 
@@ -555,6 +617,9 @@ func SelectClientMFQ(ctx context.Context, master *resty.Client, additional []*re
 		if GetClientError(cli) != nil {
 			continue
 		}
+		if clientInCooldown(cli) {
+			continue
+		}
 		rl := GetClientRateLimiter(cli)
 		if rl == nil || !rl.wouldBlock(path) {
 			log.Debugf("[rate-limit] Selected additional client endpoint=%s account=%s", endpointForLog(path), clientNameForLog(cli))
@@ -574,6 +639,10 @@ func SelectClientMFQ(ctx context.Context, master *resty.Client, additional []*re
 		for _, cli := range clients {
 			if GetClientError(cli) != nil {
 				errs++
+				continue
+			}
+			if clientInCooldown(cli) {
+				rateLimited++ // 冷却中的客户端视为临时限速，等待冷却结束
 				continue
 			}
 			rl := GetClientRateLimiter(cli)
