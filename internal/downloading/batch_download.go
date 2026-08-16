@@ -428,7 +428,8 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 		go tweetDownloader(&config, errChan, tweetChan)
 	}
 
-	producerPool, err := ants.NewPool(min(userTweetMaxConcurrent, userEntityHeap.Size()))
+	// 用 maxDownloadRoutine 同时限制 API 抓取并发，避免一开始就打出过多请求触发 Cloudflare 1015。
+	producerPool, err := ants.NewPool(min(userTweetMaxConcurrent, maxDownloadRoutine, userEntityHeap.Size()))
 	if err != nil {
 		return nil, summary, err
 	}

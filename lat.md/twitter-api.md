@@ -44,6 +44,7 @@ HTTP 429 responses put the affected client into a temporary cooldown so account 
 - `OnAfterResponse` sees HTTP 429 and calls `setClientCooldown` with `Retry-After` (default 60s).
 - `SelectClient` and `SelectClientMFQ` skip clients in cooldown; `SelectClientMFQ` treats them as temporarily rate-limited and waits/backs off when all are cooling.
 - 429 responses whose body contains `error code: 1015` are **not** retried by Resty, avoiding rapid re-requests that worsen the Cloudflare block.
+- 1015 also triggers a **global cooldown** because it usually applies to the shared proxy/IP; `SelectClient` and `SelectClientMFQ` wait until the global cooldown expires before selecting any client.
 - Cooldown is temporary and expires automatically; it does not use permanent `SetClientError`.
 
 ## Error Types

@@ -26,6 +26,9 @@ var clientRateLimiters sync.Map
 var clientCooldowns sync.Map
 var apiCounts sync.Map
 
+var globalCooldownMu sync.Mutex
+var globalCooldownUntil time.Time
+
 const defaultClientCooldown = 60 * time.Second
 
 func SetClientAuth(client *resty.Client, authToken string, ct0 string) {
@@ -72,7 +75,12 @@ func LoginWithOptions(ctx context.Context, authToken string, ct0 string, opts Lo
 				endpointForLog(r.Request.URL), clientNameForLog(c), r.StatusCode(), r.Header().Get("Retry-After"), logging.RedactSensitiveText(body))
 		}
 		if r.StatusCode() == http.StatusTooManyRequests {
-			setClientCooldown(c, parseRetryAfter(r.Header().Get("Retry-After")))
+			retryAfter := parseRetryAfter(r.Header().Get("Retry-After"))
+			setClientCooldown(c, retryAfter)
+			if strings.Contains(strings.ToLower(string(r.Body())), "error code: 1015") {
+				// 1015 通常按出口 IP 生效，所有走同一代理的账号都会被影响，因此触发全局冷却。
+				setGlobalCooldown(retryAfter)
+			}
 		}
 		if err := CheckApiResp(r.Body()); err != nil {
 			return err
@@ -547,6 +555,41 @@ func clientInCooldown(cli *resty.Client) bool {
 	return false
 }
 
+func setGlobalCooldown(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	until := time.Now().Add(d)
+	globalCooldownMu.Lock()
+	if until.After(globalCooldownUntil) {
+		globalCooldownUntil = until
+	}
+	globalCooldownMu.Unlock()
+	log.Warnf("[twitter] Global cooldown until=%s dur=%s", until.Format(time.RFC3339), d.Round(time.Second))
+}
+
+func setGlobalCooldownUntil(until time.Time) {
+	globalCooldownMu.Lock()
+	globalCooldownUntil = until
+	globalCooldownMu.Unlock()
+}
+
+func waitGlobalCooldown(ctx context.Context) error {
+	for {
+		globalCooldownMu.Lock()
+		until := globalCooldownUntil
+		globalCooldownMu.Unlock()
+		if until.IsZero() || !time.Now().Before(until) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Until(until)):
+		}
+	}
+}
+
 func GetClientRateLimiter(cli *resty.Client) *rateLimiter {
 	if v, ok := clientRateLimiters.Load(cli); ok {
 		return v.(*rateLimiter)
@@ -558,6 +601,9 @@ var showStateToken = make(chan struct{}, 1)
 
 // 选择一个请求指定端点不会阻塞的客户端
 func SelectClient(ctx context.Context, clients []*resty.Client, path string) *resty.Client {
+	if err := waitGlobalCooldown(ctx); err != nil {
+		return nil
+	}
 	for ctx.Err() == nil {
 		errs := 0
 		for _, client := range clients {
@@ -606,6 +652,9 @@ func SelectClient(ctx context.Context, clients []*resty.Client, path string) *re
 // Q2: 附加账户 + 主账户 + 指数退避
 // Q3: 受保护用户 → 主账户独占（仅在已知用户信息时生效）
 func SelectClientMFQ(ctx context.Context, master *resty.Client, additional []*resty.Client, user *User, path string) *resty.Client {
+	if err := waitGlobalCooldown(ctx); err != nil {
+		return nil
+	}
 	// Q3: 受保护用户 → 主账户独占（仅在已知用户信息时生效）
 	if user != nil && user.IsProtected {
 		log.Debugf("[rate-limit] Selected protected-user client endpoint=%s account=%s user=@%s", endpointForLog(path), clientNameForLog(master), user.ScreenName)

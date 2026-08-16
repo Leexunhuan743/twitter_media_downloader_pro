@@ -1,6 +1,7 @@
 package twitter
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -43,4 +44,22 @@ func TestClientInCooldownLifecycle(t *testing.T) {
 	if clientInCooldown(cli) {
 		t.Fatal("client with expired cooldown should not be in cooldown")
 	}
+}
+
+func TestWaitGlobalCooldown(t *testing.T) {
+	ctx := context.Background()
+
+	setGlobalCooldownUntil(time.Now().Add(-time.Second))
+	if err := waitGlobalCooldown(ctx); err != nil {
+		t.Fatalf("expired global cooldown should not block: %v", err)
+	}
+
+	setGlobalCooldownUntil(time.Now().Add(time.Hour))
+	ctx2, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
+	defer cancel()
+	if err := waitGlobalCooldown(ctx2); err == nil {
+		t.Fatal("active global cooldown should block until context is done")
+	}
+
+	setGlobalCooldownUntil(time.Time{})
 }

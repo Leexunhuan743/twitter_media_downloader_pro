@@ -38,7 +38,7 @@ Steps performed before media fetching begins.
 The download pipeline uses a producer-consumer pattern to parallelize fetching and writing.
 - **Producer**: pop user from priority queue → twitter API timeline fetch → push tweets into `tweetChan`
 - **Consumer**: N workers read from `tweetChan` → `downloadTweetMedia()` → `fileWriter.Write()`
-- Producer concurrency: ants.Pool (max 35)
+- Producer concurrency: ants.Pool (max min(35, MaxDownloadRoutine, entity count))
 - Consumer concurrency: MaxDownloadRoutine (default CPU*10, max 100)
 - Per-round limit: 1500 tweets worth of API requests (userTweetRateLimit)
 
