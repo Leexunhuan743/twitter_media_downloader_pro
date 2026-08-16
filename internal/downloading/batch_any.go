@@ -41,10 +41,18 @@ func BatchDownloadAny(ctx context.Context, client *resty.Client, db *sqlx.DB, li
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 
+	sem := make(chan struct{}, listCollectMaxConcurrent)
 	for _, lst := range lists {
 		wg.Add(1)
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			wg.Done()
+			continue
+		}
 		go func(lst twitter.ListBase) {
 			defer wg.Done()
+			defer func() { <-sem }()
 			res, members, e := syncListAndGetMembers(ctx, client, db, lst, dir, opts.normalizedMaxFileNameLen(), lsm)
 			if e != nil {
 				log.Errorf("[batch] Collect list sync failed list=%q error=%q", lst.Title(), e.Error())

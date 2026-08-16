@@ -110,4 +110,5 @@ type workerConfig struct {
 }
 
 const userTweetRateLimit = 1500
-const userTweetMaxConcurrent = 35
+const userTweetMaxConcurrent = 10
+const listCollectMaxConcurrent = 3
