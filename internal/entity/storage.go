@@ -392,6 +392,17 @@ func CleanupStagedDirectories(db *sqlx.DB, parentDirs ...string) (StagedDirector
 				if len(candidates) == 1 {
 					targetPath := candidates[0]
 					if _, err := os.Lstat(targetPath); os.IsNotExist(err) {
+						// 跨平台归一化：active 记录可能保留尾点/尾空格（如 Linux 上的
+						// "foo."），但磁盘目录已被 Windows 风格归一化为 "foo"。此时
+						// 不能把 staged 改名到不存在的记录路径，而应保留 staged 媒体。
+						trimmedBase := strings.TrimRight(filepath.Base(targetPath), " .")
+						if trimmedBase != filepath.Base(targetPath) {
+							altPath := filepath.Join(filepath.Dir(targetPath), trimmedBase)
+							if _, altErr := os.Lstat(altPath); altErr == nil {
+								cleanupErr = errors.Join(cleanupErr, fmt.Errorf("retain staged entity directory %q: active recovery target %q already exists (normalized)", stagedPath, altPath))
+								continue
+							}
+						}
 						if err := os.Rename(stagedPath, targetPath); err != nil {
 							cleanupErr = errors.Join(cleanupErr, fmt.Errorf("restore staged entity directory %q to %q: %w", stagedPath, targetPath, err))
 							continue
