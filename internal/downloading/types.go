@@ -3,6 +3,7 @@ package downloading
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/downloader"
@@ -112,3 +113,5 @@ type workerConfig struct {
 const userTweetRateLimit = 1500
 const userTweetMaxConcurrent = 3
 const listCollectMaxConcurrent = 3
+const maxUserFetchRetries = 2
+const userFetchRetryDelay = 60 * time.Second

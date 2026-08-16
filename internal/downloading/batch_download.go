@@ -34,6 +34,38 @@ func clientAccountForLog(cli *resty.Client) string {
 	return "@" + strings.TrimPrefix(name, "@")
 }
 
+func isRetryableUserFetchError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var httpErr *utils.HttpStatusError
+	if errors.As(err, &httpErr) {
+		if httpErr.Code == 429 || (httpErr.Code >= 500 && httpErr.Code < 600) {
+			return true
+		}
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "broken pipe") ||
+		strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "deadline exceeded") ||
+		strings.Contains(errStr, "unexpected EOF") ||
+		strings.Contains(errStr, "EOF")
+}
+
+func sleepContext(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return true
+	}
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(d):
+		return true
+	}
+}
+
 func calcUserDepth(exist int, total int) int {
 	if exist >= total {
 		return 1
@@ -252,6 +284,10 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 	userProgress := make(map[int]*userProgressState)
 	var progressMu sync.Mutex
 
+	retryMu := sync.Mutex{}
+	retryCounts := make(map[uint64]int)
+	retryEntities := make([]*entity.UserEntity, 0)
+
 	reportProgress := func(current string) {
 		if progress == nil {
 			return
@@ -331,6 +367,18 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 		}
 		if err != nil {
 			log.Debugf("[batch] User media fetch error user=%q account=%s error=%q", user.Title(), clientAccountForLog(cli), err.Error())
+			retryMu.Lock()
+			attempt := retryCounts[user.Id]
+			retryCounts[user.Id] = attempt + 1
+			retryMu.Unlock()
+
+			if attempt < maxUserFetchRetries && isRetryableUserFetchError(err) && ctx.Err() == nil {
+				retryMu.Lock()
+				retryEntities = append(retryEntities, ent)
+				retryMu.Unlock()
+				log.Warnf("[batch] User media fetch retry scheduled user=%q attempt=%d max=%d error=%q", user.Title(), attempt+1, maxUserFetchRetries, err.Error())
+				return
+			}
 			log.Warnf("[batch] User media fetch failed entity=%q error=%q", entityName, err.Error())
 			markUserDone(user.ScreenName)
 			return
@@ -436,27 +484,56 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 	defer producerPool.Release()
 
 	go func() {
-		for !userEntityHeap.Empty() && ctx.Err() == nil {
-			selected := []int{}
-			for count := 0; count < userTweetRateLimit && ctx.Err() == nil; {
-				entity, depth, ok := popNextBatchEntity(userEntityHeap, depthByEntity, count, userTweetRateLimit, markUserDone)
-				if !ok {
-					break
+		for ctx.Err() == nil {
+			retryMu.Lock()
+			if len(retryEntities) > 0 {
+				for _, ent := range retryEntities {
+					userEntityHeap.Push(ent)
 				}
-				if entity == nil {
-					continue
-				}
-
-				prodwg.Add(1)
-				producerPool.Submit(func() {
-					producer(entity)
-				})
-				selected = append(selected, depth)
-
-				count += depth
+				retryEntities = retryEntities[:0]
 			}
-			log.Debugf("[batch] Selected depths count=%d values=%q", len(selected), fmt.Sprint(selected))
-			prodwg.Wait()
+			retryMu.Unlock()
+
+			if userEntityHeap.Empty() {
+				break
+			}
+
+			for !userEntityHeap.Empty() && ctx.Err() == nil {
+				selected := []int{}
+				for count := 0; count < userTweetRateLimit && ctx.Err() == nil; {
+					entity, depth, ok := popNextBatchEntity(userEntityHeap, depthByEntity, count, userTweetRateLimit, markUserDone)
+					if !ok {
+						break
+					}
+					if entity == nil {
+						continue
+					}
+
+					prodwg.Add(1)
+					producerPool.Submit(func() {
+						producer(entity)
+					})
+					selected = append(selected, depth)
+
+					count += depth
+				}
+				log.Debugf("[batch] Selected depths count=%d values=%q", len(selected), fmt.Sprint(selected))
+				prodwg.Wait()
+			}
+			if ctx.Err() != nil {
+				break
+			}
+
+			retryMu.Lock()
+			retryCount := len(retryEntities)
+			retryMu.Unlock()
+			if retryCount == 0 {
+				break
+			}
+			log.Warnf("[batch] User media fetch retry round waiting dur=%s users=%d", userFetchRetryDelay, retryCount)
+			if !sleepContext(ctx, userFetchRetryDelay) {
+				break
+			}
 		}
 		close(tweetChan)
 		log.Debugf("[batch] Tweet fetch complete dur=%s", time.Since(start))

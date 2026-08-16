@@ -42,6 +42,7 @@ The download pipeline uses a producer-consumer pattern to parallelize fetching a
 - Producer concurrency: ants.Pool (max min(3, MaxDownloadRoutine, entity count))
 - Consumer concurrency: MaxDownloadRoutine (default CPU*10, max 100)
 - Per-round limit: 1500 tweets worth of API requests (userTweetRateLimit)
+- User timeline fetch retry: retryable errors (429/5xx/network) are retried up to `maxUserFetchRetries` (2) times after `userFetchRetryDelay` (60s) instead of dropping the user immediately
 
 Batch logs summarize collect/preprocess/complete counts. They avoid per-media success logs; single tweet completion is one compact event with succeeded/failed/skipped counts.
 
