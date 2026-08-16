@@ -330,6 +330,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 			return
 		}
 		if cli == nil {
+			log.Debugf("[batch] No client available user=%q", user.Title())
 			userEntityHeap.Push(ent)
 			cancel(fmt.Errorf("no client available"))
 			return
@@ -378,6 +379,9 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 				retryMu.Unlock()
 				log.Warnf("[batch] User media fetch retry scheduled user=%q attempt=%d max=%d error=%q", user.Title(), attempt+1, maxUserFetchRetries, err.Error())
 				return
+			}
+			if !isRetryableUserFetchError(err) {
+				log.Debugf("[batch] User media fetch non-retryable user=%q account=%s error=%q", user.Title(), clientAccountForLog(cli), err.Error())
 			}
 			log.Warnf("[batch] User media fetch failed entity=%q error=%q", entityName, err.Error())
 			markUserDone(user.ScreenName)
@@ -486,13 +490,17 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 	go func() {
 		for ctx.Err() == nil {
 			retryMu.Lock()
-			if len(retryEntities) > 0 {
+			retryStartCount := len(retryEntities)
+			if retryStartCount > 0 {
 				for _, ent := range retryEntities {
 					userEntityHeap.Push(ent)
 				}
 				retryEntities = retryEntities[:0]
 			}
 			retryMu.Unlock()
+			if retryStartCount > 0 {
+				log.Debugf("[batch] User media fetch retry round start users=%d", retryStartCount)
+			}
 
 			if userEntityHeap.Empty() {
 				break

@@ -582,6 +582,7 @@ func waitGlobalCooldown(ctx context.Context) error {
 		if until.IsZero() || !time.Now().Before(until) {
 			return nil
 		}
+		log.Debugf("[rate-limit] Global cooldown wait until=%s", until.Format(time.RFC3339))
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -612,6 +613,7 @@ func SelectClient(ctx context.Context, clients []*resty.Client, path string) *re
 				continue
 			}
 			if clientInCooldown(client) {
+				log.Debugf("[rate-limit] Skipping cooling client endpoint=%s account=%s", endpointForLog(path), clientNameForLog(client))
 				continue
 			}
 
@@ -667,6 +669,7 @@ func SelectClientMFQ(ctx context.Context, master *resty.Client, additional []*re
 			continue
 		}
 		if clientInCooldown(cli) {
+			log.Debugf("[rate-limit] Skipping cooling additional client endpoint=%s account=%s", endpointForLog(path), clientNameForLog(cli))
 			continue
 		}
 		rl := GetClientRateLimiter(cli)
@@ -691,6 +694,7 @@ func SelectClientMFQ(ctx context.Context, master *resty.Client, additional []*re
 				continue
 			}
 			if clientInCooldown(cli) {
+				log.Debugf("[rate-limit] Skipping cooling fallback client endpoint=%s account=%s", endpointForLog(path), clientNameForLog(cli))
 				rateLimited++ // 冷却中的客户端视为临时限速，等待冷却结束
 				continue
 			}
