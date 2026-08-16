@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite"
 )
@@ -24,7 +25,9 @@ func MemoryDSN(sharedCache bool) string {
 		query.Set("cache", "shared")
 	}
 	addSQLiteQueryDefaults(query)
-	return "file::memory:?" + query.Encode()
+	// 每个测试/调用使用独立的内存库名称，避免共享内存 DSN 在不同测试之间串扰。
+	name := "tmd-mem-" + uuid.NewString()
+	return "file:" + name + "?mode=memory&" + query.Encode()
 }
 
 func FileDSN(path string, sharedCache bool) (string, error) {

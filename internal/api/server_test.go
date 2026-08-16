@@ -114,7 +114,7 @@ func (f *fakeDownloadService) ClearErrors() error {
 
 // setupTestServer 创建测试服务器
 func setupTestServer(t *testing.T) (*Server, *sqlx.DB) {
-	return setupTestServerWithAppRoot(t, "/app")
+	return setupTestServerWithAppRoot(t, t.TempDir())
 }
 
 func setupTestServerWithAppRoot(t *testing.T, appRoot string) (*Server, *sqlx.DB) {

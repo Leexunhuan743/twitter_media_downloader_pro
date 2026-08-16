@@ -93,6 +93,8 @@ go vet ./...
 lat check
 ```
 
+Tests use `database.MemoryDSN` with a unique in-memory database name per call, so shared-cache SQLite state cannot leak between tests in the same package/process.
+
 CI (`.github/workflows/go.yml`) triggers on tag push (`v*`). Its `verify` gate runs `go test -race -count=1 ./...`, `go vet ./...`, and pinned `lat.md@0.12.2 check` on Ubuntu before the linux/windows/darwin amd64/arm64 release-build matrix starts. Release builds use `CGO_ENABLED=0`, `-trimpath`, and `-ldflags "-w -s ..."` to keep binaries compact and path-free. Ordinary branch/PR CI remains a separate delivery decision.
 
 ### Network Timeout Tests
