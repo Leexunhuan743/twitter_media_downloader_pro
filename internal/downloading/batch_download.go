@@ -388,6 +388,13 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 			return
 		}
 
+		retryMu.Lock()
+		retryAttempts := retryCounts[user.Id]
+		retryMu.Unlock()
+		if retryAttempts > 0 {
+			log.Infof("[batch] User media fetch retry succeeded user=%q attempts=%d", user.Title(), retryAttempts)
+		}
+
 		eid, idErr := ent.Id()
 		if idErr != nil {
 			log.Warnf("[batch] Entity id failed entity=%q error=%q", entityName, idErr.Error())
