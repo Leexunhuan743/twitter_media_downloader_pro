@@ -27,6 +27,8 @@ services:
       TMD_PROXY_URL: ${TMD_PROXY_URL:-}
       # 可选：下载并发数。机器较弱可调低，带宽较高可适当调高
       TMD_MAX_DOWNLOAD_ROUTINE: ${TMD_MAX_DOWNLOAD_ROUTINE:-8}
+      # 可选：UserMedia 抓取并发数。默认 3，范围 1-35；触发 Cloudflare 1015 时可调低
+      TMD_MAX_USER_FETCH_CONCURRENT: ${TMD_MAX_USER_FETCH_CONCURRENT:-3}
       # 可选：最大文件名长度。Windows 或深层目录场景可适当调低
       TMD_MAX_FILE_NAME_LEN: ${TMD_MAX_FILE_NAME_LEN:-158}
       # 可选：时区

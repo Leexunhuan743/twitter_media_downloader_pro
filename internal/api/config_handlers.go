@@ -12,16 +12,31 @@ import (
 
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/logging"
+	"github.com/unkmonster/tmd/internal/utils"
 )
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	s.configMu.RLock()
 	defer s.configMu.RUnlock()
 
+	maxDownloadRoutine := s.config.MaxDownloadRoutine
+	if maxDownloadRoutine == 0 {
+		maxDownloadRoutine = config.DefaultMaxDownloadRoutine()
+	}
+	maxUserFetchConcurrent := s.config.MaxUserFetchConcurrent
+	if maxUserFetchConcurrent == 0 {
+		maxUserFetchConcurrent = config.DefaultMaxUserFetchConcurrent()
+	}
+	maxFileNameLen := s.config.MaxFileNameLen
+	if maxFileNameLen == 0 {
+		maxFileNameLen = utils.DefaultMaxFileNameLen
+	}
+
 	resp := ConfigResponse{
-		RootPath:           s.config.RootPath,
-		MaxDownloadRoutine: s.config.MaxDownloadRoutine,
-		MaxFileNameLen:     s.config.MaxFileNameLen,
+		RootPath:               s.config.RootPath,
+		MaxDownloadRoutine:     maxDownloadRoutine,
+		MaxUserFetchConcurrent: maxUserFetchConcurrent,
+		MaxFileNameLen:         maxFileNameLen,
 	}
 	s.writeJSON(w, http.StatusOK, NewSuccessResponse(resp))
 }
@@ -157,6 +172,9 @@ func buildConfigFieldMeta(fieldDefs []config.FieldDef) []configFieldMeta {
 		case "max_download_routine":
 			meta.Label, meta.Type, meta.Group = "Max Concurrent Downloads", "number", "advanced"
 			meta.Placeholder = fmt.Sprintf("1-100, default %s", fd.Default)
+		case "max_user_fetch_concurrent":
+			meta.Label, meta.Type, meta.Group = "Max User Fetch Concurrent", "number", "advanced"
+			meta.Placeholder = fmt.Sprintf("1-%d, default %s", config.MaxUserFetchConcurrent, fd.Default)
 		case "max_file_name_len":
 			meta.Label, meta.Type, meta.Group = "Max File Name Length", "number", "advanced"
 			meta.Placeholder = fmt.Sprintf("%d-%d, default %s", config.MinFileNameLen, config.MaxFileNameLen, fd.Default)

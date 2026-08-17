@@ -2,6 +2,7 @@ package twitter
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -44,6 +45,150 @@ func TestClientInCooldownLifecycle(t *testing.T) {
 	if clientInCooldown(cli) {
 		t.Fatal("client with expired cooldown should not be in cooldown")
 	}
+}
+
+func TestAllAdditionalInCooldown(t *testing.T) {
+	if allAdditionalInCooldown(nil) {
+		t.Fatal("nil additional should not be considered all cooling")
+	}
+	if allAdditionalInCooldown([]*resty.Client{}) {
+		t.Fatal("empty additional should not be considered all cooling")
+	}
+
+	a := resty.New()
+	b := resty.New()
+	if allAdditionalInCooldown([]*resty.Client{a, b}) {
+		t.Fatal("fresh clients should not be all cooling")
+	}
+
+	setClientCooldownUntil(a, time.Now().Add(time.Hour))
+	if allAdditionalInCooldown([]*resty.Client{a, b}) {
+		t.Fatal("partially cooling clients should not be all cooling")
+	}
+
+	setClientCooldownUntil(b, time.Now().Add(time.Hour))
+	if !allAdditionalInCooldown([]*resty.Client{a, b}) {
+		t.Fatal("all cooling clients should be recognized")
+	}
+
+	setClientCooldownUntil(a, time.Now().Add(-time.Second))
+	setClientCooldownUntil(b, time.Now().Add(-time.Second))
+	if allAdditionalInCooldown([]*resty.Client{a, b}) {
+		t.Fatal("expired cooldowns should not count as all cooling")
+	}
+}
+
+func TestAllAdditionalInCooldownIgnoresHardErrors(t *testing.T) {
+	a := resty.New()
+	b := resty.New()
+	SetClientError(b, errors.New("hard error"))
+
+	if allAdditionalInCooldown([]*resty.Client{a, b}) {
+		t.Fatal("hard-error client without cooldown must not make all additional cooling")
+	}
+
+	setClientCooldownUntil(a, time.Now().Add(time.Hour))
+	if allAdditionalInCooldown([]*resty.Client{a, b}) {
+		t.Fatal("hard-error client without cooldown must not count as cooling even when other clients cool")
+	}
+
+	setClientCooldownUntil(b, time.Now().Add(time.Hour))
+	if !allAdditionalInCooldown([]*resty.Client{a, b}) {
+		t.Fatal("all additional cooling should be true when every client, including a hard-error client, is cooling")
+	}
+
+	setClientCooldownUntil(a, time.Now().Add(-time.Second))
+	setClientCooldownUntil(b, time.Now().Add(-time.Second))
+}
+
+func TestSelectClientMFQGlobalCooldownNotArmedWithHardError(t *testing.T) {
+	setGlobalCooldownUntil(time.Time{})
+	ctx := context.Background()
+	master := resty.New()
+	a := resty.New()
+	b := resty.New()
+	SetClientError(b, errors.New("hard error"))
+	additional := []*resty.Client{a, b}
+
+	setClientCooldownUntil(a, time.Now().Add(time.Hour))
+	SelectClientMFQ(ctx, master, additional, nil, "/i/api/graphql/UserMedia")
+
+	globalCooldownMu.Lock()
+	active := globalCooldownUntil.After(time.Now())
+	globalCooldownMu.Unlock()
+	if active {
+		t.Fatal("global cooldown must not be set when a hard-error client is not cooling")
+	}
+
+	setGlobalCooldownUntil(time.Time{})
+	setClientCooldownUntil(a, time.Now().Add(-time.Second))
+}
+
+func TestSelectClientMFQRoundRobin(t *testing.T) {
+	additionalClientCursor.Store(0)
+	ctx := context.Background()
+	master := resty.New()
+	a := resty.New()
+	b := resty.New()
+	c := resty.New()
+	additional := []*resty.Client{a, b, c}
+
+	for i := 0; i < 6; i++ {
+		got := SelectClientMFQ(ctx, master, additional, nil, "/i/api/graphql/UserMedia")
+		want := additional[i%len(additional)]
+		if got != want {
+			t.Fatalf("round-robin iteration %d: got client %p, want %p", i, got, want)
+		}
+	}
+}
+
+func TestSelectClientMFQGlobalCooldownOnlyWhenAllCooling(t *testing.T) {
+	setGlobalCooldownUntil(time.Time{})
+	ctx := context.Background()
+	master := resty.New()
+	a := resty.New()
+	b := resty.New()
+	additional := []*resty.Client{a, b}
+
+	SelectClientMFQ(ctx, master, additional, nil, "/i/api/graphql/UserMedia")
+	globalCooldownMu.Lock()
+	active := globalCooldownUntil.After(time.Now())
+	globalCooldownMu.Unlock()
+	if active {
+		t.Fatal("global cooldown should not be set when not all additional accounts are cooling")
+	}
+
+	setClientCooldownUntil(a, time.Now().Add(time.Hour))
+	setClientCooldownUntil(b, time.Now().Add(time.Hour))
+	SelectClientMFQ(ctx, master, additional, nil, "/i/api/graphql/UserMedia")
+	globalCooldownMu.Lock()
+	active = globalCooldownUntil.After(time.Now())
+	globalCooldownMu.Unlock()
+	if !active {
+		t.Fatal("global cooldown should be set when all additional accounts are cooling")
+	}
+
+	setGlobalCooldownUntil(time.Time{})
+	setClientCooldownUntil(a, time.Now().Add(-time.Second))
+	setClientCooldownUntil(b, time.Now().Add(-time.Second))
+}
+
+func TestArmGlobalCooldownIfIdleDoesNotExtend(t *testing.T) {
+	setGlobalCooldownUntil(time.Now().Add(30 * time.Second))
+	globalCooldownMu.Lock()
+	before := globalCooldownUntil
+	globalCooldownMu.Unlock()
+
+	armGlobalCooldownIfIdle(time.Minute)
+
+	globalCooldownMu.Lock()
+	after := globalCooldownUntil
+	globalCooldownMu.Unlock()
+	if !after.Equal(before) {
+		t.Fatal("armGlobalCooldownIfIdle must not extend an already active global cooldown")
+	}
+
+	setGlobalCooldownUntil(time.Time{})
 }
 
 func TestWaitGlobalCooldown(t *testing.T) {

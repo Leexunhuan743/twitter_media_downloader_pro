@@ -407,9 +407,9 @@ func (s *Server) Start(port int) error {
 		log.Warnf("[server] Listening on a non-loopback address without an API key — any host on the local network can reach delete/shutdown endpoints. Set api_key or bind to 127.0.0.1.")
 	}
 	blue := color.FgLightBlue.Render
-	log.Infof("[server] Visit url=%s", blue("http://localhost"+addr+"/"))
+	log.Infof("[server] Web UI at %s", blue("http://localhost"+addr+"/"))
 	if lanIP := getPrimaryIP(); lanIP != "" {
-		log.Infof("[server] Visit url=%s", blue("http://"+lanIP+addr+"/"))
+		log.Infof("[server] Web UI at %s", blue("http://"+lanIP+addr+"/"))
 	}
 
 	if sched := s.getScheduler(); sched != nil {

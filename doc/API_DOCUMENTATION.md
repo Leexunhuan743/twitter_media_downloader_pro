@@ -2025,6 +2025,7 @@ GET /api/v1/config
   "data": {
     "root_path": "twitter_downloads",
     "max_download_routine": 20,
+    "max_user_fetch_concurrent": 3,
     "max_file_name_len": 155
   }
 }
@@ -2034,6 +2035,7 @@ GET /api/v1/config
 
 - 返回脱敏后的配置信息（不包含敏感 Cookie 和代理地址）
 - `root_path` 返回配置中的完整路径
+- 未显式设置时，`max_download_routine` / `max_user_fetch_concurrent` / `max_file_name_len` 返回有效默认值（不是 `0`）
 - 完整配置请使用 `/api/v1/config/fields` 或 `/api/v1/config/raw`
 
 ***
@@ -2229,7 +2231,7 @@ Content-Type: application/json
   "data": {
     "message": "Configuration saved successfully. Please restart TMD manually for changes to take effect.",
     "backup": "backups/conf.yaml.backup.1705312345123456789",
-    "yaml_preview": "root_path: ./downloads\nmax_download_routine: 35"
+    "yaml_preview": "root_path: ./downloads\nmax_download_routine: 35\nmax_user_fetch_concurrent: 3"
   }
 }
 ```
@@ -2246,7 +2248,7 @@ Content-Type: application/json
 ```bash
 curl -X PUT http://localhost:25556/api/v1/config/raw \
   -H "Content-Type: application/json" \
-  -d '{"content": "root_path: ./downloads\nmax_download_routine: 35"}'
+  -d '{"content": "root_path: ./downloads\nmax_download_routine: 35\nmax_user_fetch_concurrent: 3"}'
 ```
 
 ***
@@ -2307,9 +2309,20 @@ GET /api/v1/config/fields
         "label": "Max Concurrent Downloads",
         "prompt": "enter max download routine",
         "value": "35",
-        "default": "min(100, GOMAXPROCS*10)",
+        "default": "min(50, GOMAXPROCS*10)",
         "type": "number",
-        "placeholder": "1-100, default min(100, GOMAXPROCS*10)",
+        "placeholder": "1-100, default min(50, GOMAXPROCS*10)",
+        "required": false,
+        "group": "advanced"
+      },
+      {
+        "name": "max_user_fetch_concurrent",
+        "label": "Max User Fetch Concurrent",
+        "prompt": "enter max user media fetch concurrent",
+        "value": "3",
+        "default": "3",
+        "type": "number",
+        "placeholder": "1-35, default 3",
         "required": false,
         "group": "advanced"
       },
@@ -2393,6 +2406,7 @@ Content-Type: application/json
     "auth_token": "__KEEP_OLD__",
     "ct0": "__KEEP_OLD__",
     "max_download_routine": "35",
+    "max_user_fetch_concurrent": "3",
     "max_file_name_len": "158",
     "proxy_url": "",
     "api_key": "__KEEP_OLD__"
@@ -2440,7 +2454,8 @@ curl -X PUT http://localhost:25556/api/v1/config/fields \
     "fields": {
       "auth_token": "__KEEP_OLD__",
       "ct0": "__KEEP_OLD__",
-      "max_download_routine": "40"
+      "max_download_routine": "40",
+      "max_user_fetch_concurrent": "5"
     }
   }'
 ```

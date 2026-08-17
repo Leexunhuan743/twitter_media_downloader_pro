@@ -31,7 +31,8 @@ TMDP supports one master account plus multiple additional accounts for rate limi
 - **Additional accounts**: list from `additional_cookies.yaml`
 - **Account selection**: `SelectClientMFQ()`
   - Protected user → master account only (must be following)
-  - Non-protected → prefer additional accounts (spread rate limit)
+  - Non-protected → use additional accounts in **round-robin order**, skipping cooling/error/rate-limited accounts
+  - If no additional account is available, fall back to master with exponential backoff
 - **List operations** (`GetLst`, `GetMembers`): master account only — lists are user-private
 - **User lookup**: `GetUserByScreenName` uses SelectClientMFQ with nil user (user isn't known yet)
 
@@ -44,7 +45,8 @@ HTTP 429 responses put the affected client into a temporary cooldown so account 
 - `OnAfterResponse` sees HTTP 429 and calls `setClientCooldown` with `Retry-After` (default 60s).
 - `SelectClient` and `SelectClientMFQ` skip clients in cooldown; `SelectClientMFQ` treats them as temporarily rate-limited and waits/backs off when all are cooling.
 - 429 responses whose body contains `error code: 1015` are **not** retried by Resty, avoiding rapid re-requests that worsen the Cloudflare block.
-- 1015 also triggers a **global cooldown** because it usually applies to the shared proxy/IP; `SelectClient` and `SelectClientMFQ` wait until the global cooldown expires before selecting any client.
+- A single 1015 only cools the affected account; **global cooldown is set only when all additional accounts are in cooldown**, and only when the global cooldown is currently idle (it is not extended by concurrent waiters). `SelectClient` and `SelectClientMFQ` wait until the global cooldown expires before selecting any client.
+- **Hard-error clients are not counted as cooling**: `allAdditionalInCooldown` only checks temporary cooldowns, so a `SetClientError` account without an active cooldown does not trigger global cooldown. This keeps hard errors (e.g. locked/disabled accounts) out of the rate-limit cooling decision.
 - Cooldown is temporary and expires automatically; it does not use permanent `SetClientError`.
 
 ## Error Types

@@ -43,8 +43,9 @@ type userInListEntity struct {
 }
 
 type RuntimeOptions struct {
-	MaxDownloadRoutine int
-	MaxFileNameLen     int
+	MaxDownloadRoutine     int
+	MaxUserFetchConcurrent int
+	MaxFileNameLen         int
 }
 
 func (o RuntimeOptions) normalizedMaxDownloadRoutine() int {
@@ -52,6 +53,13 @@ func (o RuntimeOptions) normalizedMaxDownloadRoutine() int {
 		return o.MaxDownloadRoutine
 	}
 	return config.DefaultMaxDownloadRoutine()
+}
+
+func (o RuntimeOptions) normalizedMaxUserFetchConcurrent() int {
+	if o.MaxUserFetchConcurrent > 0 {
+		return o.MaxUserFetchConcurrent
+	}
+	return config.DefaultMaxUserFetchConcurrent()
 }
 
 func (o RuntimeOptions) normalizedMaxFileNameLen() int {
@@ -111,7 +119,8 @@ type workerConfig struct {
 }
 
 const userTweetRateLimit = 1500
-const userTweetMaxConcurrent = 3
 const listCollectMaxConcurrent = 3
 const maxUserFetchRetries = 2
-const userFetchRetryDelay = 60 * time.Second
+
+// userFetchRetryDelay 用 var 而不是 const，便于端到端测试临时缩短重试等待。
+var userFetchRetryDelay = 60 * time.Second

@@ -39,10 +39,11 @@ The download pipeline uses a producer-consumer pattern to parallelize fetching a
 - **Producer**: pop user from priority queue → twitter API timeline fetch → push tweets into `tweetChan`
 - **Consumer**: N workers read from `tweetChan` → `downloadTweetMedia()` → `fileWriter.Write()`
 - List member collection: at most `listCollectMaxConcurrent` (3) concurrent lists
-- Producer concurrency: ants.Pool (max min(3, MaxDownloadRoutine, entity count))
-- Consumer concurrency: MaxDownloadRoutine (default CPU*10, max 100)
+- Producer concurrency: ants.Pool (max min(MaxUserFetchConcurrent, entity count))
+- Consumer concurrency: MaxDownloadRoutine (default CPU*10, max 50)
 - Per-round limit: 1500 tweets worth of API requests (userTweetRateLimit)
 - User timeline fetch retry: retryable errors (429/5xx/network) are retried up to `maxUserFetchRetries` (2) times after `userFetchRetryDelay` (60s) instead of dropping the user immediately
+- `userFetchRetryDelay` is a package variable (not a const) so the end-to-end retry test can temporarily shorten the 60s wait. `TestBatchUserDownloadRetryMainLoop` drives the real producer/retry loop: the first UserMedia request fails with a retryable network error, the retry round re-queues the user, and the second request succeeds.
 
 Batch logs summarize collect/preprocess/complete counts. They avoid per-media success logs; single tweet completion is one compact event with succeeded/failed/skipped counts.
 

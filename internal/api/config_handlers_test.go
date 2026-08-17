@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/unkmonster/tmd/internal/config"
 )
 
 func TestMaskSensitive(t *testing.T) {
@@ -31,6 +32,36 @@ func TestMaskSensitive(t *testing.T) {
 			got := maskSensitive(tt.input)
 			assert.Equal(t, tt.output, got)
 		})
+	}
+}
+
+func TestConfigFieldItemsPlacesUserFetchNextToDownloadRoutine(t *testing.T) {
+	items := buildConfigFieldItems(&config.Config{})
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		names = append(names, item.Name)
+	}
+
+	assert.Contains(t, names, "max_download_routine")
+	assert.Contains(t, names, "max_user_fetch_concurrent")
+
+	downloadIdx := -1
+	userFetchIdx := -1
+	for i, name := range names {
+		if name == "max_download_routine" {
+			downloadIdx = i
+		}
+		if name == "max_user_fetch_concurrent" {
+			userFetchIdx = i
+		}
+	}
+
+	assert.Equal(t, downloadIdx+1, userFetchIdx,
+		"max_user_fetch_concurrent should be rendered immediately after max_download_routine")
+	if userFetchIdx >= 0 {
+		assert.Equal(t, "Max User Fetch Concurrent", items[userFetchIdx].Label)
+		assert.Equal(t, "advanced", items[userFetchIdx].Group)
+		assert.Equal(t, "number", items[userFetchIdx].Type)
 	}
 }
 
@@ -127,7 +158,7 @@ func TestHandleSaveConfigFields_APIKeyChangedMessage(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp struct {
-		Success bool   `json:"success"`
+		Success bool `json:"success"`
 		Data    struct {
 			Message string `json:"message"`
 		} `json:"data"`
@@ -153,7 +184,7 @@ func TestHandleSaveConfigFields_OtherFieldChangedMessage(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp struct {
-		Success bool   `json:"success"`
+		Success bool `json:"success"`
 		Data    struct {
 			Message string `json:"message"`
 		} `json:"data"`
@@ -166,7 +197,7 @@ func TestHandleSaveConfigFields_OtherFieldChangedMessage(t *testing.T) {
 
 func buildRawConfigYAML(t *testing.T, apiKey string, maxRoutine int) string {
 	t.Helper()
-	return "root_path: " + t.TempDir() + "\ncookie:\n  auth_token: test\n  ct0: test\napi_key: " + apiKey + "\nmax_download_routine: " + fmt.Sprintf("%d", maxRoutine) + "\nmax_file_name_len: 158"
+	return "root_path: " + t.TempDir() + "\ncookie:\n  auth_token: test\n  ct0: test\napi_key: " + apiKey + "\nmax_download_routine: " + fmt.Sprintf("%d", maxRoutine) + "\nmax_user_fetch_concurrent: 3\nmax_file_name_len: 158"
 }
 
 func TestHandleUpdateConfigRaw_APIKeyChangedMessage(t *testing.T) {
@@ -184,7 +215,7 @@ func TestHandleUpdateConfigRaw_APIKeyChangedMessage(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code, "raw config update should succeed")
 
 	var resp struct {
-		Success bool   `json:"success"`
+		Success bool `json:"success"`
 		Data    struct {
 			Message string `json:"message"`
 		} `json:"data"`
@@ -211,7 +242,7 @@ func TestHandleUpdateConfigRaw_OtherFieldChangedMessage(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code, "raw config update should succeed")
 
 	var resp struct {
-		Success bool   `json:"success"`
+		Success bool `json:"success"`
 		Data    struct {
 			Message string `json:"message"`
 		} `json:"data"`

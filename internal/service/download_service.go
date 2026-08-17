@@ -53,13 +53,22 @@ func (s *downloadServiceImpl) maxFileNameLen() int {
 	return utils.DefaultMaxFileNameLen
 }
 
+// maxUserFetchConcurrent 返回 UserMedia 抓取并发数，未配置时回退到默认值。
+func (s *downloadServiceImpl) maxUserFetchConcurrent() int {
+	if s.deps != nil && s.deps.Config != nil && s.deps.Config.MaxUserFetchConcurrent > 0 {
+		return s.deps.Config.MaxUserFetchConcurrent
+	}
+	return config.DefaultMaxUserFetchConcurrent()
+}
+
 // runtimeOptions 构造下载运行时参数。字段已在 service 层归一化（见
-// maxDownloadRoutine/maxFileNameLen），downloading 包消费时还会通过
-// normalizedMaxDownloadRoutine/normalizedMaxFileNameLen 兜底一次，双层防御。
+// maxDownloadRoutine/maxUserFetchConcurrent/maxFileNameLen），downloading 包消费时还会通过
+// normalizedMaxDownloadRoutine/normalizedMaxUserFetchConcurrent/normalizedMaxFileNameLen 兜底一次，双层防御。
 func (s *downloadServiceImpl) runtimeOptions() downloading.RuntimeOptions {
 	return downloading.RuntimeOptions{
-		MaxDownloadRoutine: s.maxDownloadRoutine(),
-		MaxFileNameLen:     s.maxFileNameLen(),
+		MaxDownloadRoutine:     s.maxDownloadRoutine(),
+		MaxUserFetchConcurrent: s.maxUserFetchConcurrent(),
+		MaxFileNameLen:         s.maxFileNameLen(),
 	}
 }
 

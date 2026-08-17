@@ -246,9 +246,10 @@ type DBUserPreviousNameItem struct {
 
 // ConfigResponse 配置响应（脱敏）
 type ConfigResponse struct {
-	RootPath           string `json:"root_path"`
-	MaxDownloadRoutine int    `json:"max_download_routine"`
-	MaxFileNameLen     int    `json:"max_file_name_len"`
+	RootPath               string `json:"root_path"`
+	MaxDownloadRoutine     int    `json:"max_download_routine"`
+	MaxUserFetchConcurrent int    `json:"max_user_fetch_concurrent"`
+	MaxFileNameLen         int    `json:"max_file_name_len"`
 }
 
 // ConfigRawResponse 原始配置响应

@@ -40,6 +40,25 @@ func TestWriteDefaultBotConfig(t *testing.T) {
 	assert.Empty(t, tempFiles)
 }
 
+func TestFieldDefsOrderPlacesUserFetchNextToDownloadRoutine(t *testing.T) {
+	fields := GetFieldDefs()
+	downloadIdx := -1
+	userFetchIdx := -1
+	for i, f := range fields {
+		switch f.Name {
+		case "max_download_routine":
+			downloadIdx = i
+		case "max_user_fetch_concurrent":
+			userFetchIdx = i
+		}
+	}
+
+	assert.GreaterOrEqual(t, downloadIdx, 0, "max_download_routine should exist")
+	assert.GreaterOrEqual(t, userFetchIdx, 0, "max_user_fetch_concurrent should exist")
+	assert.Equal(t, downloadIdx+1, userFetchIdx,
+		"max_user_fetch_concurrent should appear immediately after max_download_routine in Web field order")
+}
+
 func TestMaxDownloadRoutineFieldUsesConfigDefault(t *testing.T) {
 	want := strconv.Itoa(DefaultMaxDownloadRoutine())
 
@@ -58,6 +77,26 @@ func TestMaxDownloadRoutineFieldUsesConfigDefault(t *testing.T) {
 	}
 
 	t.Fatal("max_download_routine field not found")
+}
+
+func TestMaxUserFetchConcurrentFieldUsesConfigDefault(t *testing.T) {
+	want := strconv.Itoa(DefaultMaxUserFetchConcurrent())
+
+	for _, field := range GetFieldDefs() {
+		if field.Name != "max_user_fetch_concurrent" {
+			continue
+		}
+
+		assert.Equal(t, want, field.Default)
+		assert.Equal(t, want, field.Getter(&Config{}))
+
+		conf := &Config{}
+		assert.NoError(t, field.Setter(conf, ""))
+		assert.Equal(t, DefaultMaxUserFetchConcurrent(), conf.MaxUserFetchConcurrent)
+		return
+	}
+
+	t.Fatal("max_user_fetch_concurrent field not found")
 }
 
 func TestMaxFileNameLenFieldUsesUtilsDefault(t *testing.T) {
@@ -136,14 +175,16 @@ func TestApplyEnvOverridesConfig(t *testing.T) {
 	t.Setenv("TMD_CT0", "env-ct0")
 	t.Setenv("TMD_PROXY_URL", "  http://127.0.0.1:7897  ")
 	t.Setenv("TMD_MAX_DOWNLOAD_ROUTINE", "8")
+	t.Setenv("TMD_MAX_USER_FETCH_CONCURRENT", "7")
 	t.Setenv("TMD_MAX_FILE_NAME_LEN", "999")
 
 	conf := &Config{
-		RootPath:           "old-root",
-		Cookie:             Cookie{AuthToken: "old-auth", Ct0: "old-ct0"},
-		MaxDownloadRoutine: 1,
-		MaxFileNameLen:     50,
-		ProxyURL:           "socks5://127.0.0.1:7890",
+		RootPath:               "old-root",
+		Cookie:                 Cookie{AuthToken: "old-auth", Ct0: "old-ct0"},
+		MaxDownloadRoutine:     1,
+		MaxUserFetchConcurrent: 2,
+		MaxFileNameLen:         50,
+		ProxyURL:               "socks5://127.0.0.1:7890",
 	}
 
 	applied, err := ApplyEnv(conf)
@@ -157,6 +198,7 @@ func TestApplyEnvOverridesConfig(t *testing.T) {
 	assert.Equal(t, "env-ct0", conf.Cookie.Ct0)
 	assert.Equal(t, "http://127.0.0.1:7897", conf.ProxyURL)
 	assert.Equal(t, 8, conf.MaxDownloadRoutine)
+	assert.Equal(t, 7, conf.MaxUserFetchConcurrent)
 	assert.Equal(t, MaxFileNameLen, conf.MaxFileNameLen)
 }
 

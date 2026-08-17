@@ -20,15 +20,22 @@ import (
 )
 
 const (
-	MinFileNameLen     = 50
-	MaxFileNameLen     = 245
-	MaxDownloadRoutine = 100
+	MinFileNameLen        = 50
+	MaxFileNameLen        = 245
+	MaxDownloadRoutine    = 100
+	MinUserFetchConcurrent = 1
+	MaxUserFetchConcurrent = 35
 )
 
 // DefaultMaxDownloadRoutine 返回默认的最大下载并发数
-// 基于 CPU 核心数计算，但不超过 100
+// 基于 CPU 核心数计算，但不超过 50
 func DefaultMaxDownloadRoutine() int {
-	return min(100, runtime.GOMAXPROCS(0)*10)
+	return min(50, runtime.GOMAXPROCS(0)*10)
+}
+
+// DefaultMaxUserFetchConcurrent 返回默认的 UserMedia 抓取并发数
+func DefaultMaxUserFetchConcurrent() int {
+	return 3
 }
 
 type Cookie struct {
@@ -37,13 +44,14 @@ type Cookie struct {
 }
 
 type Config struct {
-	RootPath           string `yaml:"root_path"`
-	Cookie             Cookie `yaml:"cookie"`
-	MaxDownloadRoutine int    `yaml:"max_download_routine"`
-	MaxFileNameLen     int    `yaml:"max_file_name_len"`
-	ProxyURL           string `yaml:"proxy_url"`
-	APIKey             string `yaml:"api_key"`
-	BindAddress        string `yaml:"bind_address"`
+	RootPath              string `yaml:"root_path"`
+	Cookie                Cookie `yaml:"cookie"`
+	MaxDownloadRoutine    int    `yaml:"max_download_routine"`
+	MaxUserFetchConcurrent int   `yaml:"max_user_fetch_concurrent"`
+	MaxFileNameLen        int    `yaml:"max_file_name_len"`
+	ProxyURL              string `yaml:"proxy_url"`
+	APIKey                string `yaml:"api_key"`
+	BindAddress           string `yaml:"bind_address"`
 }
 type BotConfig struct {
 	Telegram *TelegramBotConfig `yaml:"telegram,omitempty"`
@@ -158,6 +166,33 @@ func GetFieldDefs() []FieldDef {
 					return fmt.Errorf("must not exceed %d", MaxDownloadRoutine)
 				}
 				c.MaxDownloadRoutine = n
+				return nil
+			},
+		},
+		{
+			Name:    "max_user_fetch_concurrent",
+			EnvName: "TMD_MAX_USER_FETCH_CONCURRENT",
+			Prompt:  "enter max user media fetch concurrent",
+			Default: strconv.Itoa(DefaultMaxUserFetchConcurrent()),
+			Getter: func(c *Config) string {
+				if c.MaxUserFetchConcurrent == 0 {
+					return strconv.Itoa(DefaultMaxUserFetchConcurrent())
+				}
+				return strconv.Itoa(c.MaxUserFetchConcurrent)
+			},
+			Setter: func(c *Config, v string) error {
+				n, err := parseIntWithDefault(v, DefaultMaxUserFetchConcurrent())
+				if err != nil {
+					return fmt.Errorf("invalid number: %w", err)
+				}
+				if n < 0 {
+					return fmt.Errorf("must not be negative")
+				}
+				if n > MaxUserFetchConcurrent {
+					return fmt.Errorf("must not exceed %d", MaxUserFetchConcurrent)
+				}
+				// 0 表示使用默认值，与 YAML 中 0=默认 的语义保持一致。
+				c.MaxUserFetchConcurrent = n
 				return nil
 			},
 		},
@@ -402,6 +437,9 @@ func NormalizeLoadedConf(conf *Config) error {
 
 	// 规范化 MaxDownloadRoutine：0 表示"使用默认值"；负数归零；超大值截断到上限
 	conf.MaxDownloadRoutine = normalizeInt(conf.MaxDownloadRoutine, 0, 0, MaxDownloadRoutine)
+
+	// 规范化 MaxUserFetchConcurrent：0 表示"使用默认值"；负数归零；低于下限或高于上限时截断
+	conf.MaxUserFetchConcurrent = normalizeInt(conf.MaxUserFetchConcurrent, 0, MinUserFetchConcurrent, MaxUserFetchConcurrent)
 
 	// 规范化 MaxFileNameLen：0 表示"使用默认值"；负数归零；低于下限或高于上限时截断
 	conf.MaxFileNameLen = normalizeInt(conf.MaxFileNameLen, 0, MinFileNameLen, MaxFileNameLen)

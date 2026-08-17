@@ -461,14 +461,15 @@ func TestDBUserPreviousNameItem(t *testing.T) {
 
 func TestConfigResponse(t *testing.T) {
 	resp := ConfigResponse{
-		RootPath:           "/data",
-		MaxDownloadRoutine: 5,
-		MaxFileNameLen:     100,
+		RootPath:               "/data",
+		MaxDownloadRoutine:     5,
+		MaxUserFetchConcurrent: 3,
+		MaxFileNameLen:         100,
 	}
 
 	bytes, err := json.Marshal(resp)
 	assert.NoError(t, err)
-	assert.JSONEq(t, `{"root_path":"/data","max_download_routine":5,"max_file_name_len":100}`, string(bytes))
+	assert.JSONEq(t, `{"root_path":"/data","max_download_routine":5,"max_user_fetch_concurrent":3,"max_file_name_len":100}`, string(bytes))
 }
 
 func TestAPIResponse_JSONMarshalUnmarshal(t *testing.T) {

@@ -34,7 +34,6 @@ import (
 	"github.com/unkmonster/tmd/internal/path"
 	"github.com/unkmonster/tmd/internal/service"
 	"github.com/unkmonster/tmd/internal/twitter"
-	"github.com/unkmonster/tmd/internal/utils"
 )
 
 func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
@@ -157,15 +156,7 @@ func run(args []string) (runErr error) {
 	if err := config.Validate(conf); err != nil {
 		return fmt.Errorf("[startup] config validation failed path=%q: %w", logging.Path(confPath), err)
 	}
-	maxDownloadRoutine := conf.MaxDownloadRoutine
-	if maxDownloadRoutine <= 0 {
-		maxDownloadRoutine = config.DefaultMaxDownloadRoutine()
-	}
-	maxFileNameLen := conf.MaxFileNameLen
-	if maxFileNameLen <= 0 {
-		maxFileNameLen = utils.DefaultMaxFileNameLen
-	}
-	log.Infof("[startup] Config loaded root=%q max_download_routine=%d max_file_name_len=%d", logging.Path(conf.RootPath), maxDownloadRoutine, maxFileNameLen)
+	log.Infof("[startup] Config loaded root=%q", logging.Path(conf.RootPath))
 
 	if conf.ProxyURL != "" {
 		os.Setenv("HTTP_PROXY", conf.ProxyURL)

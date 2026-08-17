@@ -46,7 +46,7 @@ TMDP uses diverse concurrency patterns across its components, each suited to its
 | Component | Model |
 |-----------|-------|
 | DownloadQueue | Single worker goroutine, sync.Cond |
-| Tweet producers | ants.Pool (max 35) |
+| Tweet producers | ants.Pool (max = Min(MaxUserFetchConcurrent, entity count), default 3, bound 1-35) |
 | Tweet consumers | N goroutines (N = MaxDownloadRoutine) |
 | FileWriter | 256-slot hash mutex |
 | Scheduler | Single goroutine, periodic ticker |

@@ -91,6 +91,17 @@ func TestNormalizeMaxDownloadRoutine_CustomValue(t *testing.T) {
 	assert.Equal(t, 7, (RuntimeOptions{MaxDownloadRoutine: 7}).normalizedMaxDownloadRoutine())
 }
 
+func TestNormalizeMaxUserFetchConcurrent_DefaultValue(t *testing.T) {
+	got := (RuntimeOptions{}).normalizedMaxUserFetchConcurrent()
+	assert.Equal(t, config.DefaultMaxUserFetchConcurrent(), got)
+	assert.Greater(t, got, 0, "MaxUserFetchConcurrent should be greater than 0")
+	assert.LessOrEqual(t, got, config.MaxUserFetchConcurrent, "MaxUserFetchConcurrent should be <= upper bound")
+}
+
+func TestNormalizeMaxUserFetchConcurrent_CustomValue(t *testing.T) {
+	assert.Equal(t, 5, (RuntimeOptions{MaxUserFetchConcurrent: 5}).normalizedMaxUserFetchConcurrent())
+}
+
 // ==================== workerConfig 测试 ====================
 
 func TestWorkerConfig_Fields(t *testing.T) {
@@ -166,15 +177,11 @@ func TestConstants(t *testing.T) {
 	t.Run("速率限制常量", func(t *testing.T) {
 		assert.Greater(t, userTweetRateLimit, 0, "userTweetRateLimit should be positive")
 		assert.GreaterOrEqual(t, userTweetRateLimit, 100, "userTweetRateLimit seems too low")
-
-		assert.Greater(t, userTweetMaxConcurrent, 0, "userTweetMaxConcurrent should be positive")
-		assert.GreaterOrEqual(t, userTweetMaxConcurrent, 1, "userTweetMaxConcurrent should be at least 1")
 	})
 
 	t.Run("合理值范围", func(t *testing.T) {
 		// 验证速率限制在合理范围内
 		assert.LessOrEqual(t, userTweetRateLimit, 10000, "userTweetRateLimit seems too high")
-		assert.LessOrEqual(t, userTweetMaxConcurrent, 100, "userTweetMaxConcurrent seems too high")
 	})
 }
 

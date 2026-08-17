@@ -25,6 +25,7 @@ import (
 	"github.com/unkmonster/tmd/internal/database"
 	"github.com/unkmonster/tmd/internal/scheduler"
 	"github.com/unkmonster/tmd/internal/service"
+	"github.com/unkmonster/tmd/internal/utils"
 )
 
 type batchDownloadCall struct {
@@ -1211,6 +1212,7 @@ func TestServer_QueueWildcardTargetBlocksSpecificTarget(t *testing.T) {
 func TestHandleConfig_Success(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer db.Close()
+	server.config.MaxUserFetchConcurrent = 3
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
 	rr := httptest.NewRecorder()
@@ -1229,7 +1231,35 @@ func TestHandleConfig_Success(t *testing.T) {
 	assert.True(t, ok)
 	assert.NotEmpty(t, data["root_path"])
 	assert.Equal(t, float64(5), data["max_download_routine"])
+	assert.Equal(t, float64(3), data["max_user_fetch_concurrent"])
 	assert.Equal(t, float64(100), data["max_file_name_len"])
+}
+
+func TestHandleConfig_ReturnsEffectiveDefaults(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer db.Close()
+	server.config.MaxDownloadRoutine = 0
+	server.config.MaxUserFetchConcurrent = 0
+	server.config.MaxFileNameLen = 0
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	rr := httptest.NewRecorder()
+
+	server.handleConfig(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var resp APIResponse
+	err := json.Unmarshal(rr.Body.Bytes(), &resp)
+	assert.NoError(t, err)
+	assert.True(t, resp.Success)
+
+	data, ok := resp.Data.(map[string]interface{})
+	assert.True(t, ok)
+	assert.NotEmpty(t, data["root_path"])
+	assert.Equal(t, float64(config.DefaultMaxDownloadRoutine()), data["max_download_routine"])
+	assert.Equal(t, float64(config.DefaultMaxUserFetchConcurrent()), data["max_user_fetch_concurrent"])
+	assert.Equal(t, float64(utils.DefaultMaxFileNameLen), data["max_file_name_len"])
 }
 
 func TestServer_PutRoutesForConfigFieldsAndCookies(t *testing.T) {
@@ -1250,7 +1280,7 @@ func TestServer_PutRoutesForConfigFieldsAndCookies(t *testing.T) {
 	defer server.taskManager.Close()
 	handler := server.buildHandler()
 
-	configBody := `{"fields":{"root_path":"` + strings.ReplaceAll(appRoot, `\`, `\\`) + `","auth_token":"new-auth","ct0":"new-ct0","max_download_routine":"6","max_file_name_len":"120","proxy_url":""}}`
+	configBody := `{"fields":{"root_path":"` + strings.ReplaceAll(appRoot, `\`, `\\`) + `","auth_token":"new-auth","ct0":"new-ct0","max_download_routine":"6","max_user_fetch_concurrent":"7","max_file_name_len":"120","proxy_url":""}}`
 	configReq := httptest.NewRequest(http.MethodPut, "/api/v1/config/fields", bytes.NewBufferString(configBody))
 	configReq.Header.Set("Content-Type", "application/json")
 	configRR := httptest.NewRecorder()
@@ -1264,6 +1294,7 @@ func TestServer_PutRoutesForConfigFieldsAndCookies(t *testing.T) {
 	assert.Contains(t, configData["message"], "restart TMD manually")
 	_, hasApplied := configData["applied"]
 	assert.False(t, hasApplied)
+	assert.Equal(t, 7, server.config.MaxUserFetchConcurrent)
 	if _, err := os.Stat(filepath.Join(appRoot, "conf.yaml")); err != nil {
 		t.Fatalf("expected conf.yaml to be written: %v", err)
 	}

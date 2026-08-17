@@ -125,6 +125,7 @@ func saveResponse(name string, resp *resty.Response) {
 		ext = ".txt"
 	}
 	path := filepath.Join(saveDir, safeFileName(name)+ext)
+	fmt.Printf("Warning: raw API response body may contain sensitive data; saved to %q\n", path)
 	if err := os.WriteFile(path, resp.Body(), 0644); err != nil {
 		fmt.Printf("Save response failed name=%q path=%q error=%v\n", name, path, err)
 		return

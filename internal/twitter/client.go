@@ -28,6 +28,7 @@ var apiCounts sync.Map
 
 var globalCooldownMu sync.Mutex
 var globalCooldownUntil time.Time
+var additionalClientCursor atomic.Uint64
 
 const defaultClientCooldown = 60 * time.Second
 
@@ -75,12 +76,7 @@ func LoginWithOptions(ctx context.Context, authToken string, ct0 string, opts Lo
 				endpointForLog(r.Request.URL), clientNameForLog(c), r.StatusCode(), r.Header().Get("Retry-After"), logging.RedactSensitiveText(body))
 		}
 		if r.StatusCode() == http.StatusTooManyRequests {
-			retryAfter := parseRetryAfter(r.Header().Get("Retry-After"))
-			setClientCooldown(c, retryAfter)
-			if strings.Contains(strings.ToLower(string(r.Body())), "error code: 1015") {
-				// 1015 通常按出口 IP 生效，所有走同一代理的账号都会被影响，因此触发全局冷却。
-				setGlobalCooldown(retryAfter)
-			}
+			setClientCooldown(c, parseRetryAfter(r.Header().Get("Retry-After")))
 		}
 		if err := CheckApiResp(r.Body()); err != nil {
 			return err
@@ -555,6 +551,21 @@ func clientInCooldown(cli *resty.Client) bool {
 	return false
 }
 
+func allAdditionalInCooldown(additional []*resty.Client) bool {
+	if len(additional) == 0 {
+		return false
+	}
+	for _, cli := range additional {
+		if cli == nil {
+			continue
+		}
+		if !clientInCooldown(cli) {
+			return false
+		}
+	}
+	return true
+}
+
 func setGlobalCooldown(d time.Duration) {
 	if d <= 0 {
 		return
@@ -566,6 +577,21 @@ func setGlobalCooldown(d time.Duration) {
 	}
 	globalCooldownMu.Unlock()
 	log.Warnf("[twitter] Global cooldown until=%s dur=%s", until.Format(time.RFC3339), d.Round(time.Second))
+}
+
+func armGlobalCooldownIfIdle(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	now := time.Now()
+	globalCooldownMu.Lock()
+	if globalCooldownUntil.After(now) {
+		globalCooldownMu.Unlock()
+		return
+	}
+	globalCooldownUntil = now.Add(d)
+	globalCooldownMu.Unlock()
+	log.Warnf("[twitter] Global cooldown until=%s dur=%s", globalCooldownUntil.Format(time.RFC3339), d.Round(time.Second))
 }
 
 func setGlobalCooldownUntil(until time.Time) {
@@ -657,25 +683,33 @@ func SelectClientMFQ(ctx context.Context, master *resty.Client, additional []*re
 	if err := waitGlobalCooldown(ctx); err != nil {
 		return nil
 	}
+	// 只有全部附加账号都进入冷却/触发过限流时，才设置全局冷却；只在空闲时设置一次，避免被并发等待者反复顺延。
+	if allAdditionalInCooldown(additional) {
+		armGlobalCooldownIfIdle(defaultClientCooldown)
+	}
 	// Q3: 受保护用户 → 主账户独占（仅在已知用户信息时生效）
 	if user != nil && user.IsProtected {
 		log.Debugf("[rate-limit] Selected protected-user client endpoint=%s account=%s user=@%s", endpointForLog(path), clientNameForLog(master), user.ScreenName)
 		return master
 	}
 
-	// Q1: 只用附加账户
-	for _, cli := range additional {
-		if GetClientError(cli) != nil {
-			continue
-		}
-		if clientInCooldown(cli) {
-			log.Debugf("[rate-limit] Skipping cooling additional client endpoint=%s account=%s", endpointForLog(path), clientNameForLog(cli))
-			continue
-		}
-		rl := GetClientRateLimiter(cli)
-		if rl == nil || !rl.wouldBlock(path) {
-			log.Debugf("[rate-limit] Selected additional client endpoint=%s account=%s", endpointForLog(path), clientNameForLog(cli))
-			return cli
+	// Q1: 顺序轮询附加账号，避免每次都把压力集中到第一个账号。
+	if len(additional) > 0 {
+		start := int(additionalClientCursor.Add(1)-1) % len(additional)
+		for i := 0; i < len(additional); i++ {
+			cli := additional[(start+i)%len(additional)]
+			if GetClientError(cli) != nil {
+				continue
+			}
+			if clientInCooldown(cli) {
+				log.Debugf("[rate-limit] Skipping cooling additional client endpoint=%s account=%s", endpointForLog(path), clientNameForLog(cli))
+				continue
+			}
+			rl := GetClientRateLimiter(cli)
+			if rl == nil || !rl.wouldBlock(path) {
+				log.Debugf("[rate-limit] Selected additional client endpoint=%s account=%s", endpointForLog(path), clientNameForLog(cli))
+				return cli
+			}
 		}
 	}
 
@@ -713,10 +747,6 @@ func SelectClientMFQ(ctx context.Context, master *resty.Client, additional []*re
 		}
 
 		// 有客户端只是被限速，等待后重试
-		if rateLimited == 0 {
-			break
-		}
-
 		// 本轮全部失败，指数退避等待
 		log.Debugf(
 			"[rate-limit] All clients blocked endpoint=%s rate_limited=%d errors=%d total=%d backoff=%s",

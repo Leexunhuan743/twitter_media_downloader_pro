@@ -1,7 +1,9 @@
 package downloading
 
 import (
+	"context"
 	"errors"
+	"io"
 	"testing"
 
 	"github.com/unkmonster/tmd/internal/utils"
@@ -18,8 +20,10 @@ func TestIsRetryableUserFetchError(t *testing.T) {
 		{name: "500", err: &utils.HttpStatusError{Code: 500}, want: true},
 		{name: "404", err: &utils.HttpStatusError{Code: 404}, want: false},
 		{name: "connection reset", err: errors.New("connection reset by peer"), want: true},
-		{name: "timeout", err: errors.New("context deadline exceeded"), want: true},
-		{name: "unexpected EOF", err: errors.New("unexpected EOF"), want: true},
+		{name: "deadline exceeded", err: context.DeadlineExceeded, want: true},
+		{name: "EOF", err: io.EOF, want: true},
+		{name: "unexpected EOF", err: io.ErrUnexpectedEOF, want: true},
+		{name: "end of file string", err: errors.New("end of file reached"), want: false},
 		{name: "other", err: errors.New("user unavailable"), want: false},
 	}
 	for _, tt := range tests {

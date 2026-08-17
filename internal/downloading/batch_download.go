@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -45,13 +47,17 @@ func isRetryableUserFetchError(err error) bool {
 		}
 		return false
 	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
 	errStr := err.Error()
 	return strings.Contains(errStr, "connection reset") ||
 		strings.Contains(errStr, "broken pipe") ||
-		strings.Contains(errStr, "timeout") ||
-		strings.Contains(errStr, "deadline exceeded") ||
-		strings.Contains(errStr, "unexpected EOF") ||
-		strings.Contains(errStr, "EOF")
+		strings.Contains(errStr, "unexpected EOF")
 }
 
 func sleepContext(ctx context.Context, d time.Duration) bool {
@@ -346,6 +352,9 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 		tweets, err := user.GetMedias(ctx, cli, &utils.TimeRange{Min: minTime})
 		if err == twitter.ErrWouldBlock {
 			log.Debugf("[batch] User media would block user=%q account=%s", user.Title(), clientAccountForLog(cli))
+			if !sleepContext(ctx, time.Second) {
+				return
+			}
 			userEntityHeap.Push(ent)
 			return
 		}
@@ -354,10 +363,16 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 			switch apiErr.Code {
 			case twitter.ErrExceedPostLimit:
 				twitter.SetClientError(cli, fmt.Errorf("reached the limit for seeing posts today"))
+				if !sleepContext(ctx, time.Second) {
+					return
+				}
 				userEntityHeap.Push(ent)
 				return
 			case twitter.ErrAccountLocked:
 				twitter.SetClientError(cli, fmt.Errorf("account is locked"))
+				if !sleepContext(ctx, time.Second) {
+					return
+				}
 				userEntityHeap.Push(ent)
 				return
 			}
@@ -487,8 +502,8 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 		go tweetDownloader(&config, errChan, tweetChan)
 	}
 
-	// 用 maxDownloadRoutine 同时限制 API 抓取并发，避免一开始就打出过多请求触发 Cloudflare 1015。
-	producerPool, err := ants.NewPool(min(userTweetMaxConcurrent, maxDownloadRoutine, userEntityHeap.Size()))
+	// Producer 并发由 max_user_fetch_concurrent 控制，避免一开始就打出过多请求触发 Cloudflare 1015。
+	producerPool, err := ants.NewPool(min(opts.normalizedMaxUserFetchConcurrent(), userEntityHeap.Size()))
 	if err != nil {
 		return nil, summary, err
 	}
@@ -525,9 +540,14 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 					}
 
 					prodwg.Add(1)
-					producerPool.Submit(func() {
+					if err := producerPool.Submit(func() {
 						producer(entity)
-					})
+					}); err != nil {
+						prodwg.Done()
+						log.Errorf("[batch] Producer submit failed error=%q", err.Error())
+						cancel(err)
+						break
+					}
 					selected = append(selected, depth)
 
 					count += depth

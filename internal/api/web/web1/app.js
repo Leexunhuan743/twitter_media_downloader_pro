@@ -2595,14 +2595,11 @@ async function runTaskButtonAction(button, actionKey, work) {
   if (_state._pendingTaskActions.has(actionKey)) return false;
   _state._pendingTaskActions.add(actionKey);
 
-  const originalHTML = button ? button.innerHTML : '';
   const originalDisabled = button ? button.disabled : false;
   const originalAriaDisabled = button ? button.getAttribute('aria-disabled') : null;
   if (button) {
     button.disabled = true;
     button.setAttribute('aria-disabled', 'true');
-    button.classList.add('is-busy');
-    button.innerHTML = '<span class="loading-spinner"></span>处理中...';
   }
 
   try {
@@ -2613,8 +2610,6 @@ async function runTaskButtonAction(button, actionKey, work) {
       button.disabled = originalDisabled;
       if (originalAriaDisabled === null) button.removeAttribute('aria-disabled');
       else button.setAttribute('aria-disabled', originalAriaDisabled);
-      button.classList.remove('is-busy');
-      button.innerHTML = originalHTML;
     }
   }
 }
@@ -3429,7 +3424,7 @@ function renderConfigForm(fields, saving, exists, loading = false) {
         <input type="${inputType}" class="form-input config-input" id="cf_${escapeAttr(f.name)}"
           name="${escapeAttr(f.name)}" value="${escapeAttr(f.type === 'password' ? '' : f.value)}"
           placeholder="${placeholder}"
-          ${f.type === 'number' ? `min="1" max="${f.name === 'max_download_routine' ? '100' : '245'}"` : ''}>
+          ${f.type === 'number' ? `min="1" max="${f.name === 'max_download_routine' ? '100' : f.name === 'max_user_fetch_concurrent' ? '35' : '245'}"` : ''}>
       </div>
     `;
   };
@@ -4461,6 +4456,7 @@ async function triggerSchedule(id, button = null) {
     try {
       const data = await api.triggerSchedule(id);
       toast.show('已触发定时任务: ' + data.task_id);
+      await loadSchedules();
     } catch (e) {
       toast.show('触发失败: ' + e.message, 'error');
     }
@@ -4501,6 +4497,7 @@ async function triggerAllSchedules() {
       } else {
         toast.show(`已全部触发成功 (${data.succeeded})`);
       }
+      await loadSchedules();
     } catch (e) {
       toast.show('触发失败: ' + e.message, 'error');
     }
@@ -6245,22 +6242,27 @@ function updateTaskListUI(tasks) {
       if (id) existing.set(id, el);
     });
     const seen = new Set();
+    const fragment = document.createDocumentFragment();
     for (const t of filtered) {
       const id = String(t.task_id);
       seen.add(id);
-      const el = existing.get(id);
+      let el = existing.get(id);
       if (el) {
         updateTaskItemDynamic(el, t);
       } else {
         const tmp = document.createElement('div');
         tmp.innerHTML = renderTaskItem(t);
-        taskList.appendChild(tmp.firstElementChild);
+        el = tmp.firstElementChild;
+        existing.set(id, el);
       }
+      fragment.appendChild(el);
     }
     // 移除已消失（取消/删除/筛选变化）的行
     for (const [id, el] of existing) {
       if (!seen.has(id)) el.remove();
     }
+    // 按后端快照顺序（created_at 倒序）重排 DOM，保证新任务出现在最上面
+    taskList.appendChild(fragment);
   }
   
   // Update task count subtitle

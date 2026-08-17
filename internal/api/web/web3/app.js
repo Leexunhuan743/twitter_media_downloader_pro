@@ -1377,7 +1377,8 @@ const CONFIG_FIELD_LABELS = {
   root_path: 'Download root',
   auth_token: 'Primary auth token',
   ct0: 'Primary CT0 token',
-  max_download_routine: 'Concurrent downloads',
+  max_download_routine: 'Max Concurrent Downloads',
+  max_user_fetch_concurrent: 'Max User Fetch Concurrent',
   max_file_name_len: 'Maximum file name length',
   proxy_url: 'Proxy URL',
   api_key: 'API key',
@@ -1396,7 +1397,7 @@ async function renderConfigFields(body) {
             ? `<div><input type="password" id="cf-${i}" data-fname="${esc(f.name)}" autocomplete="off" placeholder="${f.value ? 'Leave empty to keep current' : ''}">
                ${f.name === 'api_key' && f.value ? `<label class="checkbox-line mt-1" style="font-size:12px"><input type="checkbox" id="cf-clear-${i}"> Clear API key (disables auth)</label>` : ''}</div>`
             : f.type === 'number'
-              ? `<input type="number" id="cf-${i}" data-fname="${esc(f.name)}" value="${esc(f.value ?? '')}">`
+              ? `<input type="number" id="cf-${i}" data-fname="${esc(f.name)}" value="${esc(f.value ?? '')}" min="1" max="${f.name === 'max_download_routine' ? '100' : f.name === 'max_user_fetch_concurrent' ? '35' : '245'}">`
               : f.type === 'bool'
                 ? `<label class="checkbox-line"><input type="checkbox" id="cf-${i}" data-fname="${esc(f.name)}" ${f.value ? 'checked' : ''}> Enabled</label>`
                 : `<input type="text" id="cf-${i}" data-fname="${esc(f.name)}" value="${esc(f.value ?? '')}">`}

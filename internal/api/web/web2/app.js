@@ -2424,7 +2424,7 @@ async function renderConfigFields(content) {
         <div class="form-group">
           <label>${esc(f.label || f.name)}</label>
           ${f.type === 'number'
-            ? `<input type="number" id="cf-${esc(f.name)}" value="${esc(f.value||f.default||'')}" placeholder="${esc(f.placeholder||'')}">`
+            ? `<input type="number" id="cf-${esc(f.name)}" value="${esc(f.value||f.default||'')}" placeholder="${esc(f.placeholder||'')}" min="1" max="${f.name === 'max_download_routine' ? '100' : f.name === 'max_user_fetch_concurrent' ? '35' : '245'}">`
             : f.type === 'password'
               ? `<input type="password" id="cf-${esc(f.name)}" value="" placeholder="${f.value ? 'Leave empty to keep current' : ''}" autocomplete="off">`
               : `<input type="text" id="cf-${esc(f.name)}" value="${esc(f.value||f.default||'')}" placeholder="${esc(f.placeholder||'')}">`

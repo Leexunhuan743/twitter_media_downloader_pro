@@ -141,6 +141,7 @@ cookie:
   ct0: "..."
 api_key: "your-secret-api-key"    # 空字符串 = 不启用认证
 max_download_routine: 20
+max_user_fetch_concurrent: 3
 proxy_url: "http://127.0.0.1:7897"
 ```
 

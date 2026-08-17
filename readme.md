@@ -210,6 +210,7 @@ TMD_CT0=your_ct0
 TMD_API_KEY=your-api-key          # 可选：开启 API Key 认证
 TMD_PROXY_URL=
 TMD_MAX_DOWNLOAD_ROUTINE=8
+TMD_MAX_USER_FETCH_CONCURRENT=3
 TMD_MAX_FILE_NAME_LEN=158
 TZ=Asia/Shanghai
 ```
@@ -246,6 +247,7 @@ services:
       TMD_API_KEY: ${TMD_API_KEY:-}
       TMD_PROXY_URL: ${TMD_PROXY_URL:-}
       TMD_MAX_DOWNLOAD_ROUTINE: ${TMD_MAX_DOWNLOAD_ROUTINE:-8}
+      TMD_MAX_USER_FETCH_CONCURRENT: ${TMD_MAX_USER_FETCH_CONCURRENT:-3}
       TMD_MAX_FILE_NAME_LEN: ${TMD_MAX_FILE_NAME_LEN:-158}
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
@@ -277,6 +279,7 @@ docker run -d \
   -e TMD_API_KEY=your-api-key \
   -e TMD_PROXY_URL= \
   -e TMD_MAX_DOWNLOAD_ROUTINE=8 \
+  -e TMD_MAX_USER_FETCH_CONCURRENT=3 \
   -e TMD_MAX_FILE_NAME_LEN=158 \
   -e TZ=Asia/Shanghai \
   leeexx00/tmdp:latest -server
@@ -304,7 +307,9 @@ http://localhost:25556/api/v1/health
 
 - `TMD_PROXY_URL`：可选，使用代理时设置，例如 `http://host.docker.internal:7897`
 
-- `TMD_MAX_DOWNLOAD_ROUTINE`：可选，默认 `8`
+- `TMD_MAX_DOWNLOAD_ROUTINE`：可选，默认由程序按 `min(50, CPU×10)` 计算；示例中设为 `8`
+
+- `TMD_MAX_USER_FETCH_CONCURRENT`：可选，默认 `3`，范围 `1-35`，控制 UserMedia 抓取并发
 
 - `TMD_MAX_FILE_NAME_LEN`：可选，默认 `158`
 
@@ -1799,6 +1804,7 @@ lists/新闻/users/   -> ../../users/Elon Musk(elonmusk)/
 | 瓶颈                   | 表现                   | 解决方案                                   |
 | -------------------- | -------------------- | -------------------------------------- |
 | **Twitter API 速率限制** | 日志显示 `rate limit` 提示 | 添加备用 Cookie（`additional_cookies.yaml`） |
+| **UserMedia 抓取并发过高** | 日志出现 429 / `error code: 1015` | 降低 `max_user_fetch_concurrent`（默认 `3`，范围 `1-35`） |
 | **磁盘 I/O 瓶颈**        | 下载速度远低于带宽            | 使用 SSD 存储，或降低并发数                       |
 | **网络延迟高**            | 单个文件下载时间长            | 检查代理设置，或启用调试模式 (`-dbg`) 查看请求耗时         |
 | **内存不足**             | 系统卡顿或 OOM            | 降低 `max_download_routine` 到 10-20      |

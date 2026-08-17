@@ -411,13 +411,6 @@ ul, ol {
   cursor: not-allowed;
 }
 
-.btn.is-busy,
-[aria-disabled="true"].is-busy {
-  opacity: 0.65;
-  cursor: wait;
-  pointer-events: none;
-}
-
 .btn-primary {
   background: var(--accent-primary);
   color: white;
