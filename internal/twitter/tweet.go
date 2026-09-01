@@ -10,13 +10,12 @@ import (
 )
 
 type Tweet struct {
-	Id         uint64
-	Text       string
-	CreatedAt  time.Time
-	Creator    *User
-	Urls       []string
-	LegacyURLs []string `json:"legacy_urls,omitempty"`
-	RawJSON    string
+	Id        uint64
+	Text      string
+	CreatedAt time.Time
+	Creator   *User
+	Urls      []string
+	RawJSON   string
 }
 
 func parseTweetResults(tweet_results *gjson.Result) (*Tweet, error) {
@@ -51,7 +50,7 @@ func parseTweetResults(tweet_results *gjson.Result) (*Tweet, error) {
 	}
 	media := legacy.Get("extended_entities.media")
 	if media.Exists() {
-		tweet.Urls, tweet.LegacyURLs = getUrlsFromMedia(&media)
+		tweet.Urls = getUrlsFromMedia(&media)
 	}
 	return &tweet, nil
 }
@@ -73,20 +72,17 @@ func TweetCreatedAtFromResult(result *gjson.Result) (time.Time, error) {
 	return time.Parse(time.RubyDate, result.Get("legacy.created_at").String())
 }
 
-func getUrlsFromMedia(media *gjson.Result) (urls []string, legacyURLs []string) {
+func getUrlsFromMedia(media *gjson.Result) []string {
+	var urls []string
 	for _, m := range media.Array() {
 		switch m.Get("type").String() {
 		case "video", "animated_gif":
-			url, legacyURL := videoVariantURLs(m.Get("video_info.variants"))
-			urls = append(urls, url)
-			legacyURLs = append(legacyURLs, legacyURL)
+			urls = append(urls, videoVariantURLs(m.Get("video_info.variants")))
 		case "photo":
-			url := m.Get("media_url_https").String()
-			urls = append(urls, url)
-			legacyURLs = append(legacyURLs, url)
+			urls = append(urls, m.Get("media_url_https").String())
 		}
 	}
-	return urls, legacyURLs
+	return urls
 }
 
 // VideoVariant is the minimal source-independent representation used to make
@@ -96,14 +92,13 @@ type VideoVariant struct {
 	Bitrate int64
 }
 
-// SelectVideoVariantURLs returns the preferred highest-bitrate URL and the
-// exact final-array URL selected by releases before bitrate-aware selection.
-// The latter is retained only to locate existing filenames during an upgrade.
-func SelectVideoVariantURLs(variants []VideoVariant) (preferredURL, legacyURL string) {
+// SelectVideoVariantURLs returns the preferred variant URL: the highest declared
+// bitrate, or the last usable variant when none declares a bitrate.
+func SelectVideoVariantURLs(variants []VideoVariant) string {
 	var lastUsableURL string
 	var maxBitrate int64
+	var preferredURL string
 	for _, variant := range variants {
-		legacyURL = variant.URL
 		if variant.URL == "" {
 			continue
 		}
@@ -114,12 +109,12 @@ func SelectVideoVariantURLs(variants []VideoVariant) (preferredURL, legacyURL st
 		}
 	}
 	if preferredURL == "" {
-		preferredURL = lastUsableURL
+		return lastUsableURL
 	}
-	return preferredURL, legacyURL
+	return preferredURL
 }
 
-func videoVariantURLs(variants gjson.Result) (string, string) {
+func videoVariantURLs(variants gjson.Result) string {
 	parsed := make([]VideoVariant, 0, len(variants.Array()))
 	for _, variant := range variants.Array() {
 		parsed = append(parsed, VideoVariant{
@@ -136,6 +131,5 @@ func videoVariantURLs(variants gjson.Result) (string, string) {
 // bitrate are never preferred. Falls back to the last variant when none
 // declares a bitrate, which reproduces the legacy @reverse.0 selection.
 func bestVideoVariantURL(variants gjson.Result) string {
-	bestURL, _ := videoVariantURLs(variants)
-	return bestURL
+	return videoVariantURLs(variants)
 }

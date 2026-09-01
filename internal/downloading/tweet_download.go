@@ -5,11 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -286,47 +282,17 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 		saveLoongTweet(cfg, dir, tweet, tweetNaming)
 	}
 
-	// tweet.Urls 最终只保留需要进入重试链路的 URL。LegacyURLs keeps
-	// the same positional contract when a retry must still find a pre-upgrade
-	// filename after the process restarts.
+	// tweet.Urls 最终只保留需要进入重试链路的 URL。
 	urls := append([]string(nil), tweet.Urls...)
-	legacyURLs := append([]string(nil), tweet.LegacyURLs...)
-	retainLegacyURLs := len(urls) > 0 && len(legacyURLs) == len(urls)
-	legacyMediaIndex := cfg.legacyMediaIndexForBatch()
 	tweet.Urls = tweet.Urls[:0]
-	tweet.LegacyURLs = tweet.LegacyURLs[:0]
 	skippedUrls := make([]string, 0)
 	successUrls := make([]string, 0)
-	usedLegacyPaths := make(map[string]struct{})
 	var firstRetryableErr error
 
-	for index, u := range urls {
-		ext, err := utils.GetExtFromUrl(u)
+	for _, u := range urls {
+		ext, err := utils.MediaExtFromUrl(u)
 		if err != nil || ext == "" {
 			ext = ".jpg"
-		}
-		legacyURL := u
-		if retainLegacyURLs && legacyURLs[index] != "" {
-			legacyURL = legacyURLs[index]
-		}
-		legacyExt, legacyExtErr := utils.GetExtFromUrl(legacyURL)
-		if legacyExtErr != nil || legacyExt == "" {
-			legacyExt = ".jpg"
-		}
-
-		allowCurrentFileName := legacyURL != u
-		if legacyPath, found, lookupErr := existingLegacyMediaPath(legacyMediaIndex, dir, tweetNaming.FileName(ext), tweetNaming.LegacyFileNames(legacyExt), allowCurrentFileName, usedLegacyPaths); lookupErr != nil {
-			log.Warnf("[download] Media compatibility lookup failed tweet_id=%d url=%s error=%q", tweet.Id, logging.SanitizeURL(u), logging.RedactSensitiveText(lookupErr.Error()))
-			appendRetryableTweetURL(tweet, u, legacyURL, retainLegacyURLs)
-			if firstRetryableErr == nil {
-				firstRetryableErr = lookupErr
-			}
-			continue
-		} else if found {
-			usedLegacyPaths[legacyMediaPathKey(legacyPath)] = struct{}{}
-			log.Debugf("[download] Reused compatible media tweet_id=%d", tweet.Id)
-			successUrls = append(successUrls, u)
-			continue
 		}
 
 		downloadURL := utils.EnsurePhotoHighQuality(u)
@@ -334,7 +300,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 		path, err := tweetNaming.FilePathWithResolver(dir, ext, cfg.pathResolver)
 		if err != nil {
 			log.Warnf("[download] Media path build failed tweet_id=%d url=%s error=%q", tweet.Id, logging.SanitizeURL(u), logging.RedactSensitiveText(err.Error()))
-			appendRetryableTweetURL(tweet, u, legacyURL, retainLegacyURLs)
+			appendRetryableTweetURL(tweet, u)
 			if firstRetryableErr == nil {
 				firstRetryableErr = err
 			}
@@ -361,7 +327,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 				continue
 			}
 			log.Warnf("[download] Failed media tweet_id=%d url=%s error=%q", tweet.Id, logging.SanitizeURL(u), logging.RedactSensitiveText(err.Error()))
-			appendRetryableTweetURL(tweet, u, legacyURL, retainLegacyURLs)
+			appendRetryableTweetURL(tweet, u)
 			if firstRetryableErr == nil {
 				firstRetryableErr = err
 			}
@@ -370,7 +336,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 		if result == nil {
 			err = fmt.Errorf("download returned nil result")
 			log.Warnf("[download] Media returned nil result tweet_id=%d url=%s", tweet.Id, logging.SanitizeURL(u))
-			appendRetryableTweetURL(tweet, u, legacyURL, retainLegacyURLs)
+			appendRetryableTweetURL(tweet, u)
 			if firstRetryableErr == nil {
 				firstRetryableErr = err
 			}
@@ -387,7 +353,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 				errorText = logging.RedactSensitiveText(result.Error.Error())
 			}
 			log.Warnf("[download] Media reported failure tweet_id=%d url=%s error=%q", tweet.Id, logging.SanitizeURL(u), errorText)
-			appendRetryableTweetURL(tweet, u, legacyURL, retainLegacyURLs)
+			appendRetryableTweetURL(tweet, u)
 			if firstRetryableErr == nil {
 				if result.Error != nil {
 					firstRetryableErr = result.Error
@@ -422,194 +388,8 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 	return nil
 }
 
-func appendRetryableTweetURL(tweet *twitter.Tweet, url, legacyURL string, retainLegacyURL bool) {
+func appendRetryableTweetURL(tweet *twitter.Tweet, url string) {
 	tweet.Urls = append(tweet.Urls, url)
-	if retainLegacyURL {
-		tweet.LegacyURLs = append(tweet.LegacyURLs, legacyURL)
-	}
-}
-
-func (cfg *workerConfig) legacyMediaIndexForBatch() *legacyMediaPathIndex {
-	cfg.legacyMediaIndexOnce.Do(func() {
-		if cfg.legacyMediaIndex == nil {
-			cfg.legacyMediaIndex = newLegacyMediaPathIndex()
-		}
-	})
-	return cfg.legacyMediaIndex
-}
-
-type legacyMediaPathIndex struct {
-	mu          sync.Mutex
-	directories map[string]*legacyMediaDirectory
-	readDir     func(string) ([]os.DirEntry, error)
-}
-
-type legacyMediaDirectory struct {
-	once           sync.Once
-	collisionNames map[string][]string
-	err            error
-}
-
-type legacyMediaCollision struct {
-	name  string
-	index int
-}
-
-func newLegacyMediaPathIndex() *legacyMediaPathIndex {
-	return &legacyMediaPathIndex{
-		directories: make(map[string]*legacyMediaDirectory),
-		readDir:     os.ReadDir,
-	}
-}
-
-func (index *legacyMediaPathIndex) directory(dir string) (*legacyMediaDirectory, func(string) ([]os.DirEntry, error)) {
-	index.mu.Lock()
-	defer index.mu.Unlock()
-	if index.directories == nil {
-		index.directories = make(map[string]*legacyMediaDirectory)
-	}
-	key := filepath.Clean(dir)
-	directory := index.directories[key]
-	if directory == nil {
-		directory = &legacyMediaDirectory{}
-		index.directories[key] = directory
-	}
-	reader := index.readDir
-	if reader == nil {
-		reader = os.ReadDir
-	}
-	return directory, reader
-}
-
-func (directory *legacyMediaDirectory) load(dir string, readDir func(string) ([]os.DirEntry, error)) {
-	directory.once.Do(func() {
-		entries, err := readDir(dir)
-		if os.IsNotExist(err) {
-			directory.collisionNames = make(map[string][]string)
-			return
-		}
-		if err != nil {
-			directory.err = fmt.Errorf("scan media directory %q: %w", dir, err)
-			return
-		}
-
-		collisions := make(map[string][]legacyMediaCollision)
-		for _, entry := range entries {
-			baseName, collisionIndex, ok := legacyMediaCollisionBase(entry.Name())
-			if !ok {
-				continue
-			}
-			collisions[baseName] = append(collisions[baseName], legacyMediaCollision{name: entry.Name(), index: collisionIndex})
-		}
-
-		directory.collisionNames = make(map[string][]string, len(collisions))
-		for baseName, candidates := range collisions {
-			sort.Slice(candidates, func(i, j int) bool {
-				if candidates[i].index != candidates[j].index {
-					return candidates[i].index < candidates[j].index
-				}
-				return candidates[i].name < candidates[j].name
-			})
-			names := make([]string, 0, len(candidates))
-			for _, candidate := range candidates {
-				names = append(names, candidate.name)
-			}
-			directory.collisionNames[baseName] = names
-		}
-	})
-}
-
-func legacyMediaCollisionBase(name string) (string, int, bool) {
-	ext := filepath.Ext(name)
-	if ext == name {
-		ext = ""
-	}
-	stem := strings.TrimSuffix(name, ext)
-	if !strings.HasSuffix(stem, ")") {
-		return "", 0, false
-	}
-	left := strings.LastIndex(stem, "(")
-	if left <= 0 {
-		return "", 0, false
-	}
-	index, err := strconv.Atoi(stem[left+1 : len(stem)-1])
-	if err != nil || index < 1 {
-		return "", 0, false
-	}
-	return stem[:left] + ext, index, true
-}
-
-// existingLegacyMediaPath looks only for names written by an earlier naming
-// policy. A differing legacy URL proves that the old variant may have used the
-// current filename too (for example two different .mp4 bitrates), so that
-// filename is reusable only for that migration case. Other current-policy
-// names retain their normal collision-suffix behavior.
-func existingLegacyMediaPath(index *legacyMediaPathIndex, dir, currentFileName string, legacyFileNames []string, allowCurrentFileName bool, used map[string]struct{}) (string, bool, error) {
-	if index == nil {
-		index = newLegacyMediaPathIndex()
-	}
-	for _, legacyFileName := range legacyFileNames {
-		if legacyFileName == currentFileName && !allowCurrentFileName {
-			continue
-		}
-		path, found, err := index.findExistingLegacyMediaPath(dir, legacyFileName, used)
-		if err != nil || found {
-			return path, found, err
-		}
-	}
-	return "", false, nil
-}
-
-func (index *legacyMediaPathIndex) findExistingLegacyMediaPath(dir, fileName string, used map[string]struct{}) (string, bool, error) {
-	path := filepath.Join(dir, fileName)
-	if regular, err := isRegularMediaFile(path); err != nil {
-		return "", false, err
-	} else if regular && !legacyMediaPathIsUsed(path, used) {
-		return path, true, nil
-	}
-
-	directory, reader := index.directory(dir)
-	directory.load(dir, reader)
-	if directory.err != nil {
-		return "", false, directory.err
-	}
-	for _, candidateName := range directory.collisionNames[fileName] {
-		candidate := filepath.Join(dir, candidateName)
-		if legacyMediaPathIsUsed(candidate, used) {
-			continue
-		}
-		regular, statErr := isRegularMediaFile(candidate)
-		if statErr != nil {
-			return "", false, statErr
-		}
-		if regular {
-			return candidate, true, nil
-		}
-	}
-	return "", false, nil
-}
-
-func isRegularMediaFile(path string) (bool, error) {
-	info, err := os.Lstat(path)
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("inspect compatible media path %q: %w", path, err)
-	}
-	return info.Mode()&os.ModeSymlink == 0 && info.Mode().IsRegular(), nil
-}
-
-func legacyMediaPathIsUsed(path string, used map[string]struct{}) bool {
-	if used == nil {
-		return false
-	}
-	_, exists := used[legacyMediaPathKey(path)]
-	return exists
-}
-
-func legacyMediaPathKey(path string) string {
-	return filepath.Clean(path)
 }
 
 func tweetDownloader(config *workerConfig, errch chan<- PackagedTweet, twech <-chan PackagedTweet) {

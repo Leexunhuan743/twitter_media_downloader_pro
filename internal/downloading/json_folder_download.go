@@ -89,20 +89,15 @@ func parseFormattedEntry(entry *FormattedTweetEntry) *twitter.Tweet {
 											})
 										}
 									}
-									bestURL, legacyURL := twitter.SelectVideoVariantURLs(parsed)
+									bestURL := twitter.SelectVideoVariantURLs(parsed)
 									if bestURL != "" {
-										if legacyURL == "" {
-											legacyURL = bestURL
-										}
 										tweet.Urls = append(tweet.Urls, bestURL)
-										tweet.LegacyURLs = append(tweet.LegacyURLs, legacyURL)
 									}
 								}
 							}
 						case "photo":
 							if url := getStringFromMap(mm, "media_url_https"); url != "" {
 								tweet.Urls = append(tweet.Urls, url)
-								tweet.LegacyURLs = append(tweet.LegacyURLs, url)
 							}
 						}
 					}

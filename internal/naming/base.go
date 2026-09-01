@@ -32,13 +32,6 @@ func sanitizeTweetPart(value string, maxLen int) string {
 	return strings.TrimPrefix(utils.WinFileNameWithMaxLenStable("x"+value, maxLen+1), "x")
 }
 
-// legacyTweetPart retains the pre-hardening tweet-text transformation for
-// compatibility lookup only. New media names must continue to use
-// sanitizeTweetPart.
-func legacyTweetPart(value string, maxLen int) string {
-	return utils.WinFileNameWithMaxLenLegacy(value, maxLen)
-}
-
 func finalizeName(value string, maxLen int) string {
 	if maxLen <= 0 {
 		return ""

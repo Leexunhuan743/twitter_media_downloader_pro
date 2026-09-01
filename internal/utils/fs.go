@@ -97,34 +97,6 @@ func WinFileNameWithMaxLenStable(name string, maxLen int) string {
 	return sanitizeFileNameCore(name, maxLen)
 }
 
-// WinFileNameWithMaxLenLegacy reproduces the tweet filename sanitization used
-// before control characters were removed. It exists solely to locate an
-// already-written POSIX filename during an upgrade; new filenames must use the
-// current sanitizers above.
-func WinFileNameWithMaxLenLegacy(name string, maxLen int) string {
-	if maxLen <= 0 {
-		return ""
-	}
-	name = reURL.ReplaceAllString(name, "")
-	name = reWinNonSupport.ReplaceAllString(name, "")
-
-	var buffer bytes.Buffer
-	for _, ch := range name {
-		switch ch {
-		case '\r':
-			continue
-		case '\n':
-			ch = ' '
-		}
-
-		if buffer.Len()+utf8.RuneLen(ch) > maxLen {
-			break
-		}
-		buffer.WriteRune(ch)
-	}
-	return buffer.String()
-}
-
 // TruncateUTF8 truncates value to at most maxLen UTF-8 bytes without splitting
 // a rune. It is the single implementation shared across packages (the naming
 // package previously carried a private copy). A non-positive maxLen yields the
@@ -274,4 +246,30 @@ func GetExtFromUrl(u string) (string, error) {
 	// 使用 path.Ext 而不是 filepath.Ext，因为 URL path 总是使用正斜杠
 	// filepath.Ext 在 Windows 上会使用反斜杠作为分隔符，导致无法正确提取扩展名
 	return path.Ext(pu.Path), nil
+}
+
+// @lat: [[download-pipeline#Tweet Download#Media extension selection]]
+// MediaExtFromUrl returns the extension a downloaded media file should use.
+// GetExtFromUrl also returns the legacy twimg size tag that old exports append
+// after the real extension ("/media/xyz.jpg:large" -> ".jpg:large"); name
+// normalization keeps only [alnum . - _], so the colon drops out and both
+// words merge into a bogus extension (".jpglarg"). Truncating at the colon
+// restores ".jpg". Extensions without a colon pass through unchanged, and a
+// colon outside the extension (scheme, query, earlier path segment, or before
+// the dot) never reaches path.Ext in the first place. A URL that carries no
+// path extension at all (modern pbs URLs use "/media/xyz?format=png&name=large")
+// falls back to the twimg "format" query parameter, and returns "" when that
+// is absent too so the caller keeps its own default.
+func MediaExtFromUrl(u string) (string, error) {
+	ext, err := GetExtFromUrl(u)
+	if err != nil {
+		return "", err
+	}
+	if i := strings.IndexByte(ext, ':'); i >= 0 {
+		return ext[:i], nil
+	}
+	if ext == "" {
+		return twimgFormatExt(u), nil
+	}
+	return ext, nil
 }

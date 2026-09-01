@@ -105,17 +105,15 @@ func (s *batchSyncState) markListUser(listEntityID int, userID uint64) bool {
 }
 
 type workerConfig struct {
-	ctx                  context.Context
-	wg                   *sync.WaitGroup
-	cancel               context.CancelCauseFunc
-	skipLoongTweet       bool
-	downloader           downloader.Downloader
-	fileWriter           downloader.FileWriter
-	onTweetDone          func(pt PackagedTweet, failed bool)
-	pathResolver         *utils.UniquePathResolver
-	legacyMediaIndexOnce sync.Once
-	legacyMediaIndex     *legacyMediaPathIndex
-	maxFileNameLen       int
+	ctx            context.Context
+	wg             *sync.WaitGroup
+	cancel         context.CancelCauseFunc
+	skipLoongTweet bool
+	downloader     downloader.Downloader
+	fileWriter     downloader.FileWriter
+	onTweetDone    func(pt PackagedTweet, failed bool)
+	pathResolver   *utils.UniquePathResolver
+	maxFileNameLen int
 }
 
 const userTweetRateLimit = 1500

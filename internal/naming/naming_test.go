@@ -371,30 +371,6 @@ func TestTweetNaming_FilePathWithResolver(t *testing.T) {
 	}
 }
 
-func TestTweetNaming_LegacyFileNamesCoverSupersededPolicies(t *testing.T) {
-	tn := NewTweetNaming("a\x01b", 123, "creator", testMaxFileNameLen)
-	names := tn.legacyFileNamesForPlatform(".jpg:large", false)
-
-	if !containsString(names, "ab_123.jpglarg") {
-		t.Fatalf("legacy candidates = %q, want normalized historical filename", names)
-	}
-	if !containsString(names, "a\x01b_123.jpg:large") {
-		t.Fatalf("legacy candidates = %q, want pre-hardening POSIX filename", names)
-	}
-	for _, name := range tn.legacyFileNamesForPlatform(".jpg:large", true) {
-		if strings.ContainsAny(name, ":\x01") {
-			t.Fatalf("Windows compatibility candidate must be addressable: %q", name)
-		}
-	}
-}
-
-func TestTweetNaming_LegacyFileNamesIncludePreviousVideoExtension(t *testing.T) {
-	tn := NewTweetNaming("video", 456, "creator", testMaxFileNameLen)
-	if !containsString(tn.LegacyFileNames(".m3u8"), "video_456.m3u8") {
-		t.Fatalf("legacy candidates = %q, want previous video extension", tn.LegacyFileNames(".m3u8"))
-	}
-}
-
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

@@ -2,7 +2,7 @@ package downloading
 
 import "testing"
 
-func TestParseFormattedEntryKeepsLegacyVideoVariantForCompatibility(t *testing.T) {
+func TestParseFormattedEntryPrefersHighestBitrateVariant(t *testing.T) {
 	entry := FormattedTweetEntry{
 		"rest_id": "1000000000000000003",
 		"legacy": map[string]any{
@@ -29,8 +29,5 @@ func TestParseFormattedEntryKeepsLegacyVideoVariantForCompatibility(t *testing.T
 	}
 	if len(tweet.Urls) != 1 || tweet.Urls[0] != "https://example.invalid/video.mp4" {
 		t.Fatalf("preferred URLs = %v", tweet.Urls)
-	}
-	if len(tweet.LegacyURLs) != 1 || tweet.LegacyURLs[0] != "https://example.invalid/playlist.m3u8" {
-		t.Fatalf("legacy URLs = %v", tweet.LegacyURLs)
 	}
 }

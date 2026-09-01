@@ -624,6 +624,117 @@ func TestGetExtFromUrl(t *testing.T) {
 	}
 }
 
+func TestMediaExtFromUrl(t *testing.T) {
+	tests := []struct {
+		name        string
+		url         string
+		expectedExt string
+		expectError bool
+	}{
+		{
+			name:        "legacy large size tag",
+			url:         "https://pbs.twimg.com/media/xyz.jpg:large",
+			expectedExt: ".jpg",
+		},
+		{
+			name:        "legacy orig size tag",
+			url:         "https://pbs.twimg.com/media/xyz.png:orig",
+			expectedExt: ".png",
+		},
+		{
+			name:        "legacy size tag with quality query",
+			url:         "https://pbs.twimg.com/media/xyz.jpg:large?name=4096x4096",
+			expectedExt: ".jpg",
+		},
+		{
+			name:        "现代 URL 不带尺寸尾缀",
+			url:         "https://pbs.twimg.com/media/HID747dbgAAjl4P.png?name=4096x4096",
+			expectedExt: ".png",
+		},
+		{
+			name:        "mp4 视频不受影响",
+			url:         "https://video.twimg.com/amplify/1/vid/1280x720/abc.mp4",
+			expectedExt: ".mp4",
+		},
+		{
+			name:        "扩展名在 query 且 path 无扩展名（取 format 参数）",
+			url:         "https://pbs.twimg.com/media/xyz?format=jpg&name=medium",
+			expectedExt: ".jpg",
+		},
+		{
+			name:        "冒号出现在点之前不属于尺寸尾缀",
+			url:         "https://example.com/a:name.with:colons.jpg",
+			expectedExt: ".jpg",
+		},
+		{
+			name:        "扩展名在 format 查询参数",
+			url:         "https://pbs.twimg.com/media/xyz?format=png&name=large",
+			expectedExt: ".png",
+		},
+		{
+			name:        "format 参数值大写",
+			url:         "https://pbs.twimg.com/media/xyz?format=JPG&name=medium",
+			expectedExt: ".jpg",
+		},
+		{
+			name:        "format 查询参数为 webp",
+			url:         "https://pbs.twimg.com/media/xyz?format=webp&name=4096x4096",
+			expectedExt: ".webp",
+		},
+		{
+			name:        "非 twimg 主机的 format 参数不生效",
+			url:         "https://example.com/media/xyz?format=png",
+			expectedExt: "",
+		},
+		{
+			name:        "format 参数含非法字符",
+			url:         "https://pbs.twimg.com/media/xyz?format=../evil",
+			expectedExt: "",
+		},
+		{
+			name:        "format 参数为空",
+			url:         "https://pbs.twimg.com/media/xyz?format=&name=large",
+			expectedExt: "",
+		},
+		{
+			name:        "path 扩展名优先于 format 参数",
+			url:         "https://pbs.twimg.com/media/xyz.png?format=jpg&name=large",
+			expectedExt: ".png",
+		},
+		{
+			name:        "冒号出现在非末段路径不影响扩展名",
+			url:         "https://example.com/a:b/xyz.jpg",
+			expectedExt: ".jpg",
+		},
+		{
+			name:        "无扩展名",
+			url:         "https://example.com/media/xyz",
+			expectedExt: "",
+		},
+		{
+			name:        "无效 URL 格式",
+			url:         "://invalid-url",
+			expectedExt: "",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ext, err := MediaExtFromUrl(tt.url)
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expectedExt, ext)
+			if tt.expectedExt != "" {
+				assert.NotContains(t, ext, ":")
+			}
+		})
+	}
+}
+
 // ==================== Heap 测试 ====================
 
 func TestHeap(t *testing.T) {

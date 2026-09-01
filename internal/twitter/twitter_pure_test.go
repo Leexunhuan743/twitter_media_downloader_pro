@@ -293,7 +293,7 @@ func TestBestVideoVariantURL_Empty(t *testing.T) {
 	}
 }
 
-func TestGetUrlsFromMediaKeepsLegacyVideoVariantForCompatibility(t *testing.T) {
+func TestGetUrlsFromMediaPrefersHighestBitrateVariant(t *testing.T) {
 	media := gjson.Parse(`[
 		{
 			"type": "video",
@@ -305,21 +305,15 @@ func TestGetUrlsFromMediaKeepsLegacyVideoVariantForCompatibility(t *testing.T) {
 		{"type": "photo", "media_url_https": "https://example.invalid/photo.jpg"}
 	]`)
 
-	urls, legacyURLs := getUrlsFromMedia(&media)
+	urls := getUrlsFromMedia(&media)
 
 	if got, want := len(urls), 2; got != want {
 		t.Fatalf("URLs length = %d, want %d", got, want)
 	}
-	if got, want := len(legacyURLs), len(urls); got != want {
-		t.Fatalf("legacy URLs length = %d, want %d", got, want)
-	}
 	if urls[0] != "https://example.invalid/video.mp4" {
 		t.Fatalf("preferred video URL = %q", urls[0])
 	}
-	if legacyURLs[0] != "https://example.invalid/playlist.m3u8" {
-		t.Fatalf("legacy video URL = %q", legacyURLs[0])
-	}
-	if legacyURLs[1] != urls[1] {
-		t.Fatalf("photo legacy URL = %q, want %q", legacyURLs[1], urls[1])
+	if urls[1] != "https://example.invalid/photo.jpg" {
+		t.Fatalf("photo URL = %q", urls[1])
 	}
 }
