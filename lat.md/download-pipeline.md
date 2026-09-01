@@ -57,11 +57,29 @@ Batch logs summarize collect/preprocess/complete counts. They avoid per-media su
 4. On failure: keep URL, retry later (skip 403/404 — permanent)
 5. Fire-and-forget: save `.loongtweet/{TweetId}.txt` + `.json`
 
-**Key behavior**: `downloadTweetMedia` mutates `tweet.Urls` in place — callers check `len(tweet.Urls)` for complete success. When present, `tweet.LegacyURLs` has the same positional retry-only contract, so an interrupted retry still retains the historical media-name alias after JSON persistence and reload.
+**Key behavior**: `downloadTweetMedia` mutates `tweet.Urls` in place — callers check `len(tweet.Urls)` for complete success, and the surviving URLs are exactly the ones a later retry must re-attempt.
 
 Tweet field extraction is shared: [[internal/twitter/tweet.go#TweetTextFromResult]] selects the display text (note-tweet body preferred over `legacy.full_text`, HTML-unescaped) and [[internal/twitter/tweet.go#TweetCreatedAtFromResult]] parses `legacy.created_at`; both `parseTweetResults` and the `.loongtweet/.txt` writer use them. The txt writer deliberately tolerates a malformed timestamp (zero time, file still written) where `parseTweetResults` hard-fails — a metadata file must not be dropped over a bad date.
 
-Video variant selection is unified: [[internal/twitter/tweet.go#SelectVideoVariantURLs]] picks the highest-bitrate variant for both the GraphQL path and formatted-entry parsing (`json_folder_download`), never preferring bitrate-less playlists, and falls back to the last usable variant when none declares a bitrate. It also carries the exact final-array URL used by older releases as a compatibility alias. Before a new media write, `downloadTweetMedia` asks [[internal/naming/tweet_naming.go#TweetNaming#LegacyFileNames]] for safe historical filenames and reuses a regular existing alias. When the legacy URL differs from the selected URL, the same filename is also a valid migration candidate because two bitrate variants can both be `.mp4`; otherwise current-name matches retain normal collision behavior. The batch keeps one lazily loaded directory collision index, so this compatibility path does not rescan a large media directory for every item. This prevents a bitrate or extension policy upgrade from silently creating a second download and orphaning the first.
+Video variant selection is unified: [[internal/twitter/tweet.go#SelectVideoVariantURLs]] picks the highest-bitrate variant for both the GraphQL path and formatted-entry parsing (`json_folder_download`), never preferring bitrate-less playlists, and falls back to the last usable variant when none declares a bitrate.
+
+### Media extension selection
+
+Every media name is derived from its URL by one rule, and nothing looks for files written by an earlier rule.
+
+`downloadTweetMedia` derives the extension with [[internal/utils/fs.go#MediaExtFromUrl]], which truncates it at the first colon: old exports store photo URLs as `.../xyz.jpg:large`, and `path.Ext` returns `.jpg:large`, which the name normalizer (keeping only `[alnum . - _]`) merges into the bogus `.jpglarg`, itself truncated to the 8-byte extension budget. There is no compatibility lookup: a media file is written at the name the current rule computes, so re-processing already-downloaded tweets re-downloads them and overwrites in place rather than leaving duplicates.
+
+| URL | Extension |
+|-----|-----------|
+| `.../xyz.jpg:large` | `.jpg` |
+| `.../xyz.png:orig` | `.png` |
+| `.../xyz.png?name=4096x4096` | `.png` |
+| `.../xyz?format=jpg&name=medium` | `.jpg` (from the `format` query parameter) |
+| `.../xyz?name=large` (no format) | `""` → the caller falls back to `.jpg` |
+
+The `format` fallback is [[internal/utils/twitter_media.go#twimgFormatExt]]: it applies only to twimg hosts and only to lowercase-alphanumeric values of a plausible extension length, so an unexpected value leaves the caller's `.jpg` default in place rather than inventing a suffix.
+
+The historical-name machinery was deliberately removed: `TweetNaming.LegacyFileNames`, the per-directory collision index, the pre-hardening text sanitizers, and `twitter.Tweet.LegacyURLs` (the positional retry alias persisted as `legacy_urls`) are all gone. The cost is that a naming-policy upgrade re-downloads affected media once and orphans the old file; the benefit is one naming rule and one URL list instead of a shadow copy of each.
 
 ## Single-File Download
 
