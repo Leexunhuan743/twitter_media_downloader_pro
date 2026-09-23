@@ -10,6 +10,17 @@ import (
 )
 
 func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
+	// 查询参数必须在 setupSSE 之前校验：setupSSE 会写出 200 + ": connected" 帧，
+	// 之后再 writeError 只会把 400 当普通正文写进已建立的 event-stream，
+	// EventSource 侧静默失效（浏览器既不触发 error 也拿不到状态码）。
+	query := r.URL.Query()
+	levelStr := query.Get("level")
+	if levelStr != "" && !isValidLogLevel(levelStr) {
+		log.Debugf("[sse] Invalid log level requested level=%q", levelStr)
+		s.writeError(w, http.StatusBadRequest, "Invalid log level: "+levelStr)
+		return
+	}
+
 	flusher, err := setupSSE(w)
 	if err != nil {
 		log.Errorf("[sse] Log stream setup failed error=%q", err.Error())
@@ -17,14 +28,8 @@ func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	levelStr := r.URL.Query().Get("level")
-	if levelStr != "" && !isValidLogLevel(levelStr) {
-		log.Debugf("[sse] Invalid log level requested level=%q", levelStr)
-		s.writeError(w, http.StatusBadRequest, "Invalid log level: "+levelStr)
-		return
-	}
-	search := r.URL.Query().Get("q")
-	domain := r.URL.Query().Get("domain")
+	search := query.Get("q")
+	domain := query.Get("domain")
 	ctx := r.Context()
 	ch, unsubscribe := s.logHub.Subscribe()
 	defer unsubscribe()

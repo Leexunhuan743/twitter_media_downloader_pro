@@ -2,11 +2,16 @@ package wechat
 
 import (
 	"context"
-	"github.com/SpellingDragon/wechat-robot-go/wechat"
-	log "github.com/sirupsen/logrus"
+	"encoding/base64"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/SpellingDragon/wechat-robot-go/wechat"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/unkmonster/tmd/internal/api"
 	"github.com/unkmonster/tmd/internal/config"
@@ -14,9 +19,13 @@ import (
 	"github.com/unkmonster/tmd/internal/logging"
 )
 
+// loginQRFileName 是扫码登录二维码落到 app root 下的文件名。
+const loginQRFileName = "wechat-qr.png"
+
 // Bot 是微信 iLink bot 实现
 type Bot struct {
 	config      *config.WeChatBotConfig
+	appRootPath string
 	taskManager *api.TaskManager
 	eventBus    *api.EventBus
 	logHub      *consolelog.Hub
@@ -33,10 +42,38 @@ type Bot struct {
 	stopOnce   sync.Once
 }
 
+// writeLoginQR 把 SDK 回调收到的登录二维码写到 app root 下。
+// 二维码等价于登录凭据：只写盘（0600）并把**路径**交给日志，内容绝不进日志、
+// 终端或 Web 面板。SDK 传入的可能是 data URI，也可能是裸 base64。
+// 返回写入路径，调用方负责在登录窗口结束后删除。
+func writeLoginQR(appRootPath, qrCode string) (string, error) {
+	if appRootPath == "" {
+		return "", fmt.Errorf("app root path is empty")
+	}
+	payload := qrCode
+	if i := strings.Index(payload, ";base64,"); i >= 0 {
+		payload = payload[i+len(";base64,"):]
+	}
+	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(payload))
+	if err != nil {
+		return "", fmt.Errorf("decode login QR: %w", err)
+	}
+	if len(data) == 0 {
+		return "", fmt.Errorf("login QR payload is empty")
+	}
+
+	path := filepath.Join(appRootPath, loginQRFileName)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return "", fmt.Errorf("write login QR: %w", err)
+	}
+	return path, nil
+}
+
 // NewBot 创建微信 bot 实例
-func NewBot(cfg *config.WeChatBotConfig, tm *api.TaskManager, eb *api.EventBus, lh *consolelog.Hub, enqueueTask func(*api.Task) error) *Bot {
+func NewBot(cfg *config.WeChatBotConfig, appRootPath string, tm *api.TaskManager, eb *api.EventBus, lh *consolelog.Hub, enqueueTask func(*api.Task) error) *Bot {
 	return &Bot{
 		config:      cfg,
+		appRootPath: appRootPath,
 		taskManager: tm,
 		eventBus:    eb,
 		logHub:      lh,
@@ -94,12 +131,32 @@ func (b *Bot) runWithReconnect(ctx context.Context) {
 		}
 
 		loginCtx, loginCancel := context.WithTimeout(ctx, 2*time.Minute)
+		var qrMu sync.Mutex
+		qrPath := ""
 		err := b.wechatBot.Login(loginCtx, func(qrCode string) {
-			// 二维码是可直接渲染扫描的 base64 图像（登录凭据），绝不能进日志
-			// （终端/文件/Web 面板）。只记录接收到的数据大小，便于排查。
-			log.Infof("[bot-wechat] Login QR received bytes=%d hint=scan_to_login", len(qrCode))
+			// 二维码是可直接渲染扫描的登录凭据：写盘 0600，日志只给路径。
+			// 内容绝不进日志/终端/Web 面板。
+			path, writeErr := writeLoginQR(b.appRootPath, qrCode)
+			if writeErr != nil {
+				log.Warnf("[bot-wechat] Login QR unavailable bytes=%d error=%q hint=scan_to_login",
+					len(qrCode), logging.RedactSensitiveText(writeErr.Error()))
+				return
+			}
+			qrMu.Lock()
+			qrPath = path
+			qrMu.Unlock()
+			log.Infof("[bot-wechat] Login QR written path=%q bytes=%d hint=scan_to_login", logging.Path(path), len(qrCode))
 		})
 		loginCancel()
+		// 登录窗口结束即删除二维码：它是登录凭据，不应在磁盘上留存。
+		qrMu.Lock()
+		written := qrPath
+		qrMu.Unlock()
+		if written != "" {
+			if removeErr := os.Remove(written); removeErr != nil && !os.IsNotExist(removeErr) {
+				log.Warnf("[bot-wechat] Login QR cleanup failed path=%q error=%q", logging.Path(written), removeErr.Error())
+			}
+		}
 		if err != nil {
 			log.Warnf("[bot-wechat] Login failed retry_after=30s error=%q", err.Error())
 			select {

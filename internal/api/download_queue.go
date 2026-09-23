@@ -19,6 +19,9 @@ type downloadJob struct {
 	taskID string
 	run    func(ctx context.Context, taskID string, reporter service.ProgressReporter) error
 	keys   []targetKey
+	// discard 在该任务的 run 永远不会执行时调用（排队中被取消、关停被丢弃），
+	// 用于回收只有 run 才会清理的临时资源（例如上传的 JSON 临时目录）。
+	discard func()
 }
 
 type detachedRun struct {
@@ -62,15 +65,23 @@ func NewDownloadQueue(server *Server) *DownloadQueue {
 var ErrQueueClosed = errors.New("download queue is closed")
 
 func (q *DownloadQueue) Enqueue(task *Task, run func(ctx context.Context, taskID string, reporter service.ProgressReporter) error) error {
+	return q.EnqueueWithDiscard(task, run, nil)
+}
+
+// EnqueueWithDiscard 与 Enqueue 相同，但额外登记一个"永不执行"回调：
+// 任务在排队期间被取消、或关停时被丢弃（run 不会跑）时会调用它，
+// 避免只有 run 才负责的临时资源泄漏。
+func (q *DownloadQueue) EnqueueWithDiscard(task *Task, run func(ctx context.Context, taskID string, reporter service.ProgressReporter) error, discard func()) error {
 	if task == nil || run == nil {
 		return errors.New("download queue: nil task or run function")
 	}
 
 	job := &downloadJob{
-		task:   task,
-		taskID: task.ID,
-		run:    run,
-		keys:   taskTargetKeys(task),
+		task:    task,
+		taskID:  task.ID,
+		run:     run,
+		keys:    taskTargetKeys(task),
+		discard: discard,
 	}
 
 	q.mu.Lock()
@@ -144,10 +155,6 @@ func (q *DownloadQueue) nextJob() *downloadJob {
 	defer q.mu.Unlock()
 
 	for {
-		if q.closed && len(q.pending) == 0 {
-			return nil
-		}
-
 		idx, job := q.nextRunnableLocked()
 		if job != nil {
 			q.pending = append(q.pending[:idx], q.pending[idx+1:]...)
@@ -155,6 +162,13 @@ func (q *DownloadQueue) nextJob() *downloadJob {
 				q.heldTargets[key] = job.taskID
 			}
 			return job
+		}
+		// nextRunnableLocked 已丢弃失效（已取消/非 queued）条目，因此排空判定
+		// 必须放在它之后：否则关停时 pending 只剩已取消任务、worker 会在
+		// Wait 上永久睡死（Enqueue 已拒绝新任务，不会再有 Broadcast），
+		// workerDone 不再关闭，关停只能等满整个预算。
+		if q.closed && len(q.pending) == 0 {
+			return nil
 		}
 		q.cond.Wait()
 	}
@@ -167,7 +181,18 @@ func (q *DownloadQueue) nextRunnableLocked() (int, *downloadJob) {
 		job := q.pending[i]
 		snapshot, ok := q.server.taskManager.GetTask(job.taskID)
 		if !ok || snapshot.Status != TaskStatusQueued {
-			q.pending = append(q.pending[:i], q.pending[i+1:]...)
+			// 该任务的 run 永远不会执行：回收只有 run 负责的临时资源。
+			// 在锁内同步执行是有意的——调用方（workerLoop）退出后
+			// CloseAndWait 会等 workerDone，这样回收一定在关停完成前结束。
+			if job.discard != nil {
+				job.discard()
+			}
+			// 用 copy + 置空尾部槽位删除，避免 backing array 继续持有已丢弃
+			// job 的指针（append(s[:i], s[i+1:]...) 会把最后一个元素复制一份
+			// 留在尾部槽位里）。
+			copy(q.pending[i:], q.pending[i+1:])
+			q.pending[len(q.pending)-1] = nil
+			q.pending = q.pending[:len(q.pending)-1]
 			continue
 		}
 		if q.conflictsLocked(job.keys) {

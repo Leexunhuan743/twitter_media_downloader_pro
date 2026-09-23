@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/jmoiron/sqlx"
 	log "github.com/sirupsen/logrus"
@@ -48,9 +49,20 @@ func (td *TweetDumper) Push(eid int, tweet ...*twitter.Tweet) int {
 	return td.count - oldCount
 }
 
+// dumperFileMu 串行化 dumper 文件（errors.json / json_errors.json）的读写。
+//
+// 写入是原地截断重写，并发读者可能读到半个 JSON。service 层的 dumperMu 只覆盖
+// service 自身的 load/save；而 API 层的 GET /api/v1/errors 会自建 TweetDumper 直接
+// Load 同一个文件，因此必须在这一层收口。这里不用「临时文件 + rename」：Windows 上
+// 目标文件被任何读者打开时 rename 会 ACCESS_DENIED，写会直接丢失。
+var dumperFileMu sync.Mutex
+
 // loadJSONFile 读取并反序列化 JSON 文件；文件不存在返回 (false, nil)，
 // dumper 持久化是 best-effort 语义，缺失文件不算错误。
 func loadJSONFile(path string, dest interface{}) (bool, error) {
+	dumperFileMu.Lock()
+	defer dumperFileMu.Unlock()
+
 	file, err := os.OpenFile(path, os.O_RDONLY, 0)
 	if os.IsNotExist(err) {
 		return false, nil
@@ -76,6 +88,9 @@ func dumpJSONFile(path string, data interface{}) error {
 	if err != nil {
 		return err
 	}
+
+	dumperFileMu.Lock()
+	defer dumperFileMu.Unlock()
 	return os.WriteFile(path, content, 0600)
 }
 

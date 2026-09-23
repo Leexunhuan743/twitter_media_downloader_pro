@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMaskSecretDoesNotExposeOriginal(t *testing.T) {
@@ -294,6 +296,39 @@ func TestSanitizeURLMasksEncodedKeyCarryingSensitiveValue(t *testing.T) {
 	assert.NotContains(t, got, "SECRET123")
 	assert.Contains(t, got, "redacted")
 	assert.Contains(t, got, "q=keep")
+}
+
+// TestRedactSensitiveTextCoversEverySensitiveFieldName 守护敏感字段名表的
+// 完整覆盖：表里每个名字都必须在常见文本形态下被真正掩码。若新增字段名
+// 而掩码链路未覆盖，凭据会原样进入日志。值使用合成 canary（非真实凭据）。
+func TestRedactSensitiveTextCoversEverySensitiveFieldName(t *testing.T) {
+	require.NotEmpty(t, sensitiveFieldNames)
+
+	for name := range sensitiveFieldNames {
+		t.Run(name, func(t *testing.T) {
+			canary := "canary-" + name + "-value"
+			forms := map[string]string{
+				"logfmt": fmt.Sprintf("level=info %s=%s", name, canary),
+				"json":   fmt.Sprintf(`{"%s":"%s"}`, name, canary),
+				"header": fmt.Sprintf("%s: %s", name, canary),
+			}
+			if strings.Contains(name, "_") {
+				// 字段名表的匹配允许 "-" 代替 "_"（如 HTTP header 的 x-api-key）。
+				forms["dashed"] = fmt.Sprintf("%s=%s", strings.ReplaceAll(name, "_", "-"), canary)
+			}
+
+			for form, input := range forms {
+				t.Run(form, func(t *testing.T) {
+					got := RedactSensitiveText(input)
+
+					assert.NotContains(t, got, canary, "sensitive field %q leaked in %s form", name, form)
+					assert.Contains(t, got, MaskSecret(canary))
+					// 幂等：已掩码文本再次处理必须稳定，不二次改写指纹。
+					assert.Equal(t, got, RedactSensitiveText(got))
+				})
+			}
+		})
+	}
 }
 
 func TestSanitizeHeadersHandlesNonCanonicalSensitiveNames(t *testing.T) {

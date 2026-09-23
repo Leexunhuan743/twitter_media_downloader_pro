@@ -34,7 +34,9 @@ const iconSVG = (name, size = 16) => `<svg class="inline-icon" width="${size}" h
 
 /* ---------- API 层 ---------- */
 const apiBase = () => ((window.TMD_DEV_BASE) || '');
-async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+const API_REQUEST_TIMEOUT_MS = 60000;
+const API_UPLOAD_TIMEOUT_MS = 5 * 60 * 1000; // multipart 上传（JSON 文件/目录）与 web1 一致放宽
+async function fetchWithTimeout(url, options = {}, timeoutMs = API_REQUEST_TIMEOUT_MS) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -55,15 +57,17 @@ const API = {
     const jwt = localStorage.getItem('tmd_jwt_token');
     // 仅在调用方未显式提供 Authorization 时附加 JWT（如 authLogin 用输入的 key 探测）
     if (jwt && !headers['Authorization']) headers['Authorization'] = 'Bearer ' + jwt;
-    if (body && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
+    const isUpload = body instanceof FormData;
+    if (body && !isUpload) headers['Content-Type'] = 'application/json';
+    const timeoutMs = isUpload ? API_UPLOAD_TIMEOUT_MS : API_REQUEST_TIMEOUT_MS;
 
-    const res = await fetchWithTimeout(url, { method, headers, body: body instanceof FormData ? body : (body ? JSON.stringify(body) : undefined) });
+    const res = await fetchWithTimeout(url, { method, headers, body: isUpload ? body : (body ? JSON.stringify(body) : undefined) }, timeoutMs);
     if (res.status === 401 && jwt) {
       const refreshed = await this._tryRefreshJWT();
       if (refreshed) {
         const headers2 = { ...(options.headers || {}), 'Authorization': 'Bearer ' + localStorage.getItem('tmd_jwt_token') };
-        if (body && !(body instanceof FormData)) headers2['Content-Type'] = 'application/json';
-        const res2 = await fetchWithTimeout(url, { method, headers: headers2, body: body instanceof FormData ? body : (body ? JSON.stringify(body) : undefined) });
+        if (body && !isUpload) headers2['Content-Type'] = 'application/json';
+        const res2 = await fetchWithTimeout(url, { method, headers: headers2, body: isUpload ? body : (body ? JSON.stringify(body) : undefined) }, timeoutMs);
         if (res2.status !== 401) return this._json(res2);
       }
       // 刷新失败：用 auth/check 区分「会话失效（401 → 清 token 引导重登）」与「网络抖动（保留 token）」
@@ -82,7 +86,8 @@ const API = {
     let data = null;
     try { data = await res.json(); } catch (e) { /* 非 JSON 响应 */ }
     if (!res.ok) {
-      const err = new Error((data && data.error) || ('HTTP ' + res.status));
+      // 后端 APIResponse.detail 携带 409/400 的具体原因，优先展示；error 为面向用户的通用文案，作回退
+      const err = new Error((data && (data.detail || data.error)) || ('HTTP ' + res.status));
       err.status = res.status;
       err.data = data;
       throw err;
@@ -142,7 +147,6 @@ const ENDPOINTS = {
   // Tasks
   tasks: () => API.get(apiBase() + '/api/v1/tasks'),
   getTask: (id) => API.get(apiBase() + '/api/v1/tasks/' + encodeURIComponent(id)),
-  taskTimeline: (id) => API.get(apiBase() + '/api/v1/tasks/' + encodeURIComponent(id) + '/timeline'),
   cancelTask: (id) => API.post(apiBase() + '/api/v1/tasks/' + encodeURIComponent(id) + '/cancel'),
   retryTask: (id) => API.post(apiBase() + '/api/v1/tasks/' + encodeURIComponent(id) + '/retry'),
   deleteTask: (id) => API.delete(apiBase() + '/api/v1/tasks/' + encodeURIComponent(id)),
@@ -523,9 +527,14 @@ function updateTasksUI() {
       const tmp = document.createElement('tbody');
       tmp.innerHTML = taskRowHTML(t);
       const node = tmp.firstElementChild;
-      // 快照按 created_at 倒序，新任务总是最新 → 插到首位（appendChild 会落到末尾造成顺序错乱）
-      const first = tbody.firstElementChild;
-      if (first) tbody.insertBefore(node, first);
+      // pageTasks 按 created_at 倒序（后端 rebuildSnapshotLocked），行序须保持 newest-first：
+      // 空表时追加即得正确顺序；已有行时插到第一条更旧的行之前（appendChild 会落到末尾）
+      const created = String(t.created_at || '');
+      let anchor = null;
+      for (const tr of tbody.children) {
+        if (String(tr.dataset.created || '') < created) { anchor = tr; break; }
+      }
+      if (anchor) tbody.insertBefore(node, anchor);
       else tbody.appendChild(node);
     }
   }
@@ -537,7 +546,7 @@ function taskRowHTML(t) {
   const canCancel = t.status === 'queued' || t.status === 'running';
   const canRetry = t.status === 'failed' || t.status === 'cancelled';
   const canDelete = t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled';
-  return `<tr data-task-id="${jsEsc(t.task_id)}" data-status="${jsEsc(safeStatus(t.status))}">
+  return `<tr data-task-id="${jsEsc(t.task_id)}" data-created="${jsEsc(t.created_at || '')}" data-status="${jsEsc(safeStatus(t.status))}">
     <td>${taskTypeIcon(t)}</td>
     <td><span class="mono">${esc(t.task_id)}</span><div class="text-sm text-muted ellipsis">${esc(taskTypeName(t))}${target ? ' · ' + esc(target) : ''}</div></td>
     <td><span class="badge badge-${safeStatus(t.status)}">${esc(t.status)}</span></td>
@@ -826,8 +835,16 @@ async function clearAllErrors() { if (!confirm('Clear all failed records?')) ret
 /* ---------- 任务详情 ---------- */
 async function openTaskDetail(id) {
   try {
-    const [task, timeline] = await Promise.all([ENDPOINTS.getTask(id), ENDPOINTS.taskTimeline(id)]);
-    const rows = (timeline || []).map(l => `<tr><td class="text-sm text-muted">${esc(l.timestamp || '')}</td><td class="text-sm">${esc(l.message || '')}</td></tr>`).join('');
+    const task = await ENDPOINTS.getTask(id);
+    // 后端无 /tasks/{id}/timeline 路由：时间线由任务自身时间字段本地推导（与 web1/web2 一致）
+    const dur = task.started_at && task.ended_at ? fmtDur(task.started_at, task.ended_at) : '';
+    const events = [
+      ['Created', task.created_at],
+      ...(task.started_at ? [['Started', task.started_at]] : []),
+      ...(task.ended_at ? [['Ended', task.ended_at]] : []),
+      ...(dur ? [['Duration', dur]] : []),
+    ];
+    const rows = events.map(([label, value]) => `<tr><td class="text-sm text-muted">${esc(label)}</td><td class="text-sm">${esc(value || '-')}</td></tr>`).join('');
     openModal(`
       <div class="modal-header"><h2>Task ${esc(id)}</h2><button class="icon-btn" onclick="closeModal()" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
       <div class="modal-body">
@@ -841,7 +858,7 @@ async function openTaskDetail(id) {
         </div>
         <div class="form-group"><label>Progress</label>${progressHTML(task)}</div>
         ${task.result ? `<div class="form-group"><label>Result</label><pre class="mono text-sm" style="white-space:pre-wrap;background:rgba(255,255,255,.04);padding:10px;border-radius:8px">${esc(JSON.stringify(task.result, null, 2))}</pre></div>` : ''}
-        ${rows ? `<div class="section-title mt-3">Timeline</div><div class="table-wrap"><table><thead><tr><th>Time</th><th>Event</th></tr></thead><tbody>${rows}</tbody></table></div>` : ''}
+        ${rows ? `<div class="section-title mt-3">Timeline</div><div class="table-wrap"><table><thead><tr><th>Event</th><th>Time</th></tr></thead><tbody>${rows}</tbody></table></div>` : ''}
       </div>
       <div class="modal-footer"><button class="btn ghost" onclick="closeModal()">Close</button></div>`);
   } catch (e) { toast(e.message, 'err'); }
@@ -849,11 +866,11 @@ async function openTaskDetail(id) {
 
 /* ---------- Data 页 ---------- */
 const DB_TABS = [
-  { id: 'users', label: 'Users', endpoint: 'dbUsers', columns: ['id', 'screen_name', 'name', 'protected', 'created_at'], sortable: ['id', 'screen_name', 'name', 'created_at'] },
-  { id: 'lists', label: 'Lists', endpoint: 'dbLists', columns: ['id', 'name', 'owner_user_id', 'created_at'], sortable: ['id', 'name', 'owner_user_id', 'created_at'] },
+  { id: 'users', label: 'Users', endpoint: 'dbUsers', columns: ['id', 'screen_name', 'name', 'protected', 'friends_count'], sortable: ['id', 'screen_name', 'name', 'friends_count'] },
+  { id: 'lists', label: 'Lists', endpoint: 'dbLists', columns: ['id', 'name', 'owner_user_id'], sortable: ['id', 'name', 'owner_user_id'] },
   { id: 'user-entities', label: 'User Entities', endpoint: 'dbUserEntities', columns: ['id', 'name', 'parent_dir', 'media_count', 'latest_release_time'], sortable: ['id', 'name', 'media_count', 'latest_release_time'] },
-  { id: 'list-entities', label: 'List Entities', endpoint: 'dbListEntities', columns: ['id', 'name', 'parent_dir', 'latest_release_time'], sortable: ['id', 'name', 'latest_release_time'] },
-  { id: 'user-links', label: 'User Links', endpoint: 'dbUserLinks', columns: ['id', 'name', 'parent_lst_entity_name', 'parent_lst_entity_id', 'created_at'], sortable: ['id', 'name', 'created_at'] },
+  { id: 'list-entities', label: 'List Entities', endpoint: 'dbListEntities', columns: ['id', 'name', 'parent_dir', 'lst_id'], sortable: ['id', 'name', 'lst_id'] },
+  { id: 'user-links', label: 'User Links', endpoint: 'dbUserLinks', columns: ['id', 'name', 'parent_lst_entity_name', 'parent_lst_entity_id'], sortable: ['id', 'name', 'parent_lst_entity_id'] },
   { id: 'previous-names', label: 'Previous Names', endpoint: 'dbPreviousNames', columns: ['id', 'screen_name', 'name', 'record_date', 'current_screen_name'], sortable: ['id', 'screen_name', 'name', 'record_date'] },
 ];
 const DB_STAT_LABELS = {
@@ -1668,6 +1685,16 @@ function logParams(page) {
   return p;
 }
 
+// logrus TextFormatter 的级别词固定 4 字符（INFO/ERRO/FATA/WARN/DEBU），
+// 且位于行首或时间戳之后 —— 不能用 substrings 匹配，否则消息正文里的
+// "ERROR" 会误着色、而真正的 ERRO[...] 反而不命中。
+function logLineColor(clean) {
+  const line = clean.replace(/^\s*(?:time="[^"]*"\s*)?/, '');
+  if (line.startsWith('FATA[') || line.startsWith('ERRO[')) return 'var(--err)';
+  if (line.startsWith('WARN[')) return 'var(--warn)';
+  return '';
+}
+
 function logEntryHTML(clean, tweetId, color) {
   let html = '<div class="log-entry" style="color:' + color + '"';
   if (tweetId) html += ' data-tweet-id="' + tweetId + '"';
@@ -1694,7 +1721,7 @@ async function logLoadReplace() {
     stream.innerHTML = (r.logs || []).reverse().map(l => {
       const clean = stripAnsi(l);
       const tweetId = (clean.match(/tweet_id=(\d+)/) || [])[1];
-      const color = clean.includes('ERROR') || clean.includes('FATA') ? 'var(--err)' : clean.includes('WARN') ? 'var(--warn)' : '';
+      const color = logLineColor(clean);
       return logEntryHTML(clean, tweetId, color);
     }).join('') || '<div class="text-muted">No log lines match the filter.</div>';
     stream.scrollTop = stream.scrollHeight;
@@ -1719,7 +1746,7 @@ async function logLoadMore() {
     const html = lines.map(l => {
       const clean = stripAnsi(l);
       const tweetId = (clean.match(/tweet_id=(\d+)/) || [])[1];
-      const color = clean.includes('ERROR') || clean.includes('FATA') ? 'var(--err)' : clean.includes('WARN') ? 'var(--warn)' : '';
+      const color = logLineColor(clean);
       return logEntryHTML(clean, tweetId, color);
     }).join('');
     stream.innerHTML = html + stream.innerHTML;
@@ -1773,7 +1800,7 @@ function logConnect() {
     if (logState.paused) return;
     const wrapper = document.createElement('div');
     const tweetId = (clean.match(/tweet_id=(\d+)/) || [])[1];
-    const color = clean.includes('ERROR') || clean.includes('FATA') ? 'var(--err)' : clean.includes('WARN') ? 'var(--warn)' : '';
+    const color = logLineColor(clean);
     wrapper.innerHTML = logEntryHTML(clean, tweetId, color);
     const stick = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 40;
     stream.appendChild(wrapper.firstChild);
@@ -2091,8 +2118,12 @@ async function init() {
     /* 网络失败不阻塞启动 */
   }
   try {
-    const t = await ENDPOINTS.tasks();
-    if (Array.isArray(t)) { pageTasks = t; refreshStats(); if (state.page === 'dashboard') renderRecentTasks(); if (state.page === 'tasks') updateTasksUI(); }
+    // 后端返回 {tasks:[...]}（与 SSE 快照同构）：取 .tasks 兜底填充首屏，SSE 建立后由事件快照覆盖
+    const r = await ENDPOINTS.tasks();
+    pageTasks = (r && r.tasks) || [];
+    refreshStats();
+    if (state.page === 'dashboard') renderRecentTasks();
+    if (state.page === 'tasks') updateTasksUI();
   } catch (e) { /* 忽略 */ }
   connectSSE();
 }

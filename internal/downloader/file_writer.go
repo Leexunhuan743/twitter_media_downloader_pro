@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,10 @@ var tweetIDRe = regexp.MustCompile(`_(\d+(?:\(\d+\))?)\.\w+$`)
 type DefaultFileWriter struct {
 	versionManager VersionManager
 	locks          [256]sync.Mutex
+
+	// sweptDirs 记录已清扫过临时文件的目标目录（每个目录每进程只扫一次）。
+	sweptMu   sync.Mutex
+	sweptDirs map[string]struct{}
 }
 
 func (fw *DefaultFileWriter) getLock(path string) *sync.Mutex {
@@ -166,12 +171,52 @@ func setModTime(path string, modTime *time.Time) {
 	}
 }
 
+// staleTempFileAge 之后才认为 .tmp_* 是异常退出遗留（正在写入的临时文件
+// 一定比它新，避免与并发 worker 抢删）。
+const staleTempFileAge = time.Hour
+
+// sweepStaleTempFiles 清理目标目录中上次异常退出（强杀/断电）遗留的临时文件。
+// 每个目录每个进程只扫一次：临时文件与媒体同目录，无法用一次受限的启动扫描
+// 覆盖（.loongtweet/.profile 等深路径），而写入时顺手清扫能随重试/下次运行收敛。
+func (fw *DefaultFileWriter) sweepStaleTempFiles(dir string) {
+	fw.sweptMu.Lock()
+	if fw.sweptDirs == nil {
+		fw.sweptDirs = make(map[string]struct{})
+	}
+	if _, done := fw.sweptDirs[dir]; done {
+		fw.sweptMu.Unlock()
+		return
+	}
+	fw.sweptDirs[dir] = struct{}{}
+	fw.sweptMu.Unlock()
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-staleTempFileAge)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), ".tmp_") {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		tempPath := filepath.Join(dir, entry.Name())
+		if removeErr := os.Remove(tempPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			log.Warnf("[downloader] Stale temp file cleanup failed path=%q error=%q", logging.Path(tempPath), removeErr.Error())
+		}
+	}
+}
+
 // atomicWriteFromReader 原子写入 reader 内容
 func (fw *DefaultFileWriter) atomicWriteFromReader(path string, reader io.Reader) (int64, error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return 0, fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
+	fw.sweepStaleTempFiles(dir)
 	pattern := ".tmp_*"
 	if m := tweetIDRe.FindStringSubmatch(filepath.Base(path)); len(m) > 1 {
 		pattern = ".tmp_*_" + m[1]

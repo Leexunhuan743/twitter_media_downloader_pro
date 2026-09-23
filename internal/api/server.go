@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -40,7 +39,6 @@ type Server struct {
 	taskManager       *TaskManager
 	downloadService   service.DownloadService
 	downloadQueue     *DownloadQueue
-	logWriter         io.Closer
 	logHub            *consolelog.Hub
 	bindAddress       string
 	httpServer        *http.Server
@@ -63,11 +61,11 @@ type Server struct {
 	authRateLimit     *authRateLimiter
 }
 
-func NewServer(client *resty.Client, additionalClients []*resty.Client, db *sqlx.DB, config *config.Config, appRootPath string, logWriter io.Closer) (*Server, error) {
-	return NewServerWithConsoleLogHub(client, additionalClients, db, config, appRootPath, logWriter, consolelog.DefaultHub())
+func NewServer(client *resty.Client, additionalClients []*resty.Client, db *sqlx.DB, config *config.Config, appRootPath string) (*Server, error) {
+	return NewServerWithConsoleLogHub(client, additionalClients, db, config, appRootPath, consolelog.DefaultHub())
 }
 
-func NewServerWithConsoleLogHub(client *resty.Client, additionalClients []*resty.Client, db *sqlx.DB, config *config.Config, appRootPath string, logWriter io.Closer, logHub *consolelog.Hub) (*Server, error) {
+func NewServerWithConsoleLogHub(client *resty.Client, additionalClients []*resty.Client, db *sqlx.DB, config *config.Config, appRootPath string, logHub *consolelog.Hub) (*Server, error) {
 	if logHub == nil {
 		logHub = consolelog.DefaultHub()
 	}
@@ -83,7 +81,6 @@ func NewServerWithConsoleLogHub(client *resty.Client, additionalClients []*resty
 		db:                db,
 		config:            config,
 		appRootPath:       appRootPath,
-		logWriter:         logWriter,
 		logHub:            logHub,
 		taskManager:       NewTaskManager(eventBus),
 		shutdownDone:      make(chan struct{}),

@@ -86,29 +86,37 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 // authBearerPrefix is the prefix for Bearer tokens in the Authorization header.
 const authBearerPrefix = "Bearer "
 
-// publicPaths 是不需要认证的路径前缀。
-// Web UI 页面必须公开（否则用户看不到登录界面），静态资源和健康检查同理。
-var publicPathPrefixes = []string{
-	"/api/v1/health",
-	"/api/v1/auth/login",   // login 端点需要在没有 JWT 时也能被调用
-	"/api/v1/config/theme", // theme 切换器由内联 JS 调用，不经过 api 对象
-	"/static/",
+// publicPaths 是**精确匹配**的免认证路径。
+// 用前缀匹配会让未来任何同前缀的新路由被静默放行
+// （例如公开前缀 `/api/v1/config/theme` 会一并放行 `/api/v1/config/themes`，
+// 以及以后新增的 `/api/v1/healthz`），因此这里一律精确匹配；
+// 只有静态资源目录保留前缀语义。
+var publicPaths = map[string]struct{}{
+	"/":            {},
+	"/favicon.ico": {},
+	// SPA 页面路由（必须公开，否则用户看不到登录界面）
+	"/tasks":     {},
+	"/data":      {},
+	"/schedules": {},
+	"/system":    {},
+	"/logs":      {},
+	// 健康检查
+	"/api/v1/health": {},
+	// login 端点需要在没有 JWT 时也能被调用
+	"/api/v1/auth/login": {},
+	// theme 切换器由页面内联 JS 调用，不经过各主题的 api 封装
+	"/api/v1/config/theme":  {},
+	"/api/v1/config/themes": {},
 }
+
+// publicPathPrefixes 是唯一允许前缀匹配的公开路径（静态资源目录）。
+var publicPathPrefixes = []string{"/static/"}
 
 // isPublicPath 检查路径是否属于公开路径白名单。
 func isPublicPath(path string) bool {
-	// 根路径和所有 SPA 页面路由
-	if path == "/" || path == "/favicon.ico" {
+	if _, ok := publicPaths[path]; ok {
 		return true
 	}
-	// SPA 页面路由
-	spaPages := []string{"/tasks", "/data", "/schedules", "/system", "/logs"}
-	for _, p := range spaPages {
-		if path == p {
-			return true
-		}
-	}
-	// 前缀匹配
 	for _, prefix := range publicPathPrefixes {
 		if strings.HasPrefix(path, prefix) {
 			return true
@@ -194,8 +202,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// 方式二：回退到原始 API Key 比较（向后兼容）
-		if token == apiKey {
+		// 方式二：回退到原始 API Key 比较（向后兼容，常量时间）
+		if secureEqual(token, apiKey) {
 			next.ServeHTTP(w, r)
 			return
 		}

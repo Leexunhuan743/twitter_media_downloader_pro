@@ -21,7 +21,7 @@ var webFS embed.FS
 
 var (
 	themeMu       sync.RWMutex
-	frontendTheme = "web1" // web1 或 web2，运行时热切换
+	frontendTheme = "web1" // web1 / web2 / web3，运行时热切换（不写入 conf.yaml，重启回落 web1）
 	devWebRoot    string   // TMD_DEV=1 时设为本地 web 目录路径
 )
 

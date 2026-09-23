@@ -12,10 +12,9 @@ import (
 
 func TestUserDownloadTaskData(t *testing.T) {
 	tests := []struct {
-		name       string
-		data       UserDownloadTaskData
-		wantJSON   string
-		wantScreen string
+		name     string
+		data     UserDownloadTaskData
+		wantJSON string
 	}{
 		{
 			name: "完整数据",
@@ -28,16 +27,14 @@ func TestUserDownloadTaskData(t *testing.T) {
 					NoRetry:       true,
 				},
 			},
-			wantJSON:   `{"screen_name":"testuser","auto_follow":true,"follow_members":true,"skip_profile":false,"no_retry":true}`,
-			wantScreen: "testuser",
+			wantJSON: `{"screen_name":"testuser","auto_follow":true,"follow_members":true,"skip_profile":false,"no_retry":true}`,
 		},
 		{
 			name: "默认值",
 			data: UserDownloadTaskData{
 				ScreenName: "user2",
 			},
-			wantJSON:   `{"screen_name":"user2","auto_follow":false,"follow_members":false,"skip_profile":false,"no_retry":false}`,
-			wantScreen: "user2",
+			wantJSON: `{"screen_name":"user2","auto_follow":false,"follow_members":false,"skip_profile":false,"no_retry":false}`,
 		},
 	}
 
@@ -46,7 +43,6 @@ func TestUserDownloadTaskData(t *testing.T) {
 			bytes, err := json.Marshal(tt.data)
 			assert.NoError(t, err)
 			assert.JSONEq(t, tt.wantJSON, string(bytes))
-			assert.Equal(t, tt.wantScreen, tt.data.ScreenName)
 		})
 	}
 }

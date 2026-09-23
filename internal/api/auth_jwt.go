@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"net"
@@ -55,10 +56,23 @@ func enforceMaxRefreshAge(tokenString string, apiKey string) error {
 	if !ok || claims == nil || claims.IssuedAt == nil {
 		return fmt.Errorf("token has no issued-at claim")
 	}
+	// jwt.WithoutClaimsValidation 会跳过整个 validator，因此 WithIssuer/
+	// WithSubject 在此调用链上不生效 —— iss/sub 必须显式断言。
+	if claims.Issuer != jwtIssuer || claims.Subject != jwtSubject {
+		return fmt.Errorf("unexpected token issuer or subject")
+	}
 	if time.Since(claims.IssuedAt.Time) > jwtMaxRefreshAge {
 		return fmt.Errorf("token issued more than %s ago", jwtMaxRefreshAge)
 	}
 	return nil
+}
+
+// secureEqual 常量时间比较两个秘密字符串。
+// 先各自 sha256 再比较：既让比较耗时与匹配前缀无关，也不泄漏长度。
+func secureEqual(a, b string) bool {
+	sumA := sha256.Sum256([]byte(a))
+	sumB := sha256.Sum256([]byte(b))
+	return subtle.ConstantTimeCompare(sumA[:], sumB[:]) == 1
 }
 
 // deriveJWTSecret derives a 256-bit HMAC key from the API Key.
@@ -155,8 +169,8 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate
-	if token != apiKey {
+	// Validate（常量时间比较，避免按字节逐位推断密钥）
+	if !secureEqual(token, apiKey) {
 		s.authRateLimit.Fail(clientAddr)
 		log.Warnf("[auth] Login rejected ip=%s reason=api_key_mismatch", clientAddr)
 		if token != "" {
@@ -294,6 +308,15 @@ func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
 	token, err := validateSessionToken(tokenStr, apiKey)
 	if err != nil {
 		isExpired := isJWTExpiredError(err)
+		// 过期且已超出续期窗口（jwtMaxRefreshAge）的会话无法恢复：refresh 会
+		// 返回 too-old，客户端若只靠本端点探测就会一直留着死令牌、既不刷新也
+		// 不重新登录。这里与 refresh 给出一致的信号（401 + X-Token-Type）。
+		if isExpired && enforceMaxRefreshAge(tokenStr, apiKey) != nil {
+			log.Debugf("[auth] Check rejected ip=%s reason=too_old", clientAddr)
+			w.Header().Set("X-Token-Type", "too-old")
+			s.writeError(w, http.StatusUnauthorized, "session expired beyond refresh window")
+			return
+		}
 		errMsg := "token invalid"
 		if isExpired {
 			errMsg = "token expired"

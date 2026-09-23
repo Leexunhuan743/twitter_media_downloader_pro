@@ -74,10 +74,13 @@ func (tm *TaskManager) CreateTaskWithOptions(taskType TaskType, data interface{}
 
 	tm.tasks[task.ID] = task
 	tm.rebuildSnapshotLocked()
+	// 锁内克隆：解锁后 CancelAllTasks 可能立刻改 task.Status，
+	// logTaskCreated 读活指针会与之构成数据竞争。
+	taskSnapshot := cloneTask(task)
 	tm.mu.Unlock()
 
 	tm.publishTasks()
-	logTaskCreated(task)
+	logTaskCreated(taskSnapshot)
 	return task
 }
 

@@ -143,24 +143,34 @@ func TestHandleSSETasks_EventBusPush(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/sse/tasks", nil)
-	rr := httptest.NewRecorder()
+	writer := newObservedSSEWriter()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	req = req.WithContext(ctx)
 
 	done := make(chan struct{})
 	go func() {
-		server.handleSSETasks(rr, req)
+		server.handleSSETasks(writer, req)
 		close(done)
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	// setupSSE and the initial task snapshot each flush once. Waiting for both
+	// gives a synchronization point after the handler has subscribed, so the
+	// notification below cannot be published into the void.
+	writer.waitForFlushes(t, 2)
 	eventBus.PublishNotification("task_completed", "test done", nil)
+	// The notification frame itself flushes once it has been written.
+	writer.waitForFlushes(t, 1)
 
-	<-done
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("SSE handler did not exit after context cancellation")
+	}
 
-	body := rr.Body.String()
+	body := writer.String()
 	assert.Contains(t, body, "event: notification")
 	assert.Contains(t, body, "test done")
 }

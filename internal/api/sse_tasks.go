@@ -95,6 +95,16 @@ func (s *Server) handleSSETasks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
+	// 关停事件在 httpServer.Shutdown 之前就已经发布过，因此关停期间新建立的
+	// 流永远等不到它（replay 对 Last-Event-ID 为 0 的客户端会短路）。
+	// 这里补发一帧并立即结束，否则该连接会一直占住 http.Server.Shutdown
+	// 直到预算耗尽。
+	if s.isShuttingDown() {
+		_ = s.writeSSEEvent(w, flusher, SSEEvent{Event: "server_shutdown", Data: map[string]string{"reason": "shutdown-in-progress"}})
+		return
+	}
+
 	heartbeat := time.NewTicker(sseHeartbeatInterval)
 	defer heartbeat.Stop()
 

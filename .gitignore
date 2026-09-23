@@ -51,6 +51,13 @@ logs/
 .env.*
 !.env.example
 
+# === TMD runtime config (contain auth_token/ct0/api_key — never commit) ===
+conf.yaml
+additional_cookies.yaml
+bot_config.yaml
+schedules.yaml
+.tmd2/
+
 # === Temp / Downloaded Data ===
 tmp/
 temp/

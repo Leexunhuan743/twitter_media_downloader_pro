@@ -3,11 +3,9 @@ package downloading
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -84,6 +82,12 @@ func saveLoongTweet(cfg *workerConfig, dir string, tweet *twitter.Tweet, namingO
 	// Fire-and-forget by design: .txt metadata should not block media downloads.
 	go func() {
 		defer utils.RecoverWithLog("saveLoongTweet")
+
+		// 下载 worker 会就地改写 tweet.Urls（截断后回填失败 URL），这里先做
+		// 值快照再读取，避免与 worker 的写构成数据竞争（本协程只用到
+		// 标量字段与 slice header，浅拷贝即可）。
+		snapshot := *tweet
+		tweet = &snapshot
 
 		loongDir := filepath.Join(dir, ".loongtweet")
 
@@ -469,7 +473,7 @@ func tweetDownloader(config *workerConfig, errch chan<- PackagedTweet, twech <-c
 			config.onTweetDone(pt, failed)
 		}
 
-		if errors.Is(err, syscall.ENOSPC) {
+		if utils.IsDiskFull(err) {
 			config.cancel(err)
 		}
 	}

@@ -4,6 +4,10 @@ import (
 	"os"
 	"testing"
 
+	"github.com/jmoiron/sqlx"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/unkmonster/tmd/internal/database"
 	"github.com/unkmonster/tmd/internal/twitter"
 )
@@ -307,4 +311,67 @@ func TestSyncUser_NilDB(t *testing.T) {
 	}()
 
 	_ = database.SyncUser(nil, user.Id, user.Name, user.ScreenName, user.IsProtected, user.FriendsCount, true)
+}
+
+// TestSyncUserRecordsRenameHistory 守护改名历史：新用户首次同步先写入基线，
+// 之后同 uid 改名时追加的是改名前的旧值（记成新值会让历史页显示"改名从
+// 新名字变成新名字"，也丢失旧目录名线索）；名称未变时不追加。
+func TestSyncUserRecordsRenameHistory(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	const uid = uint64(4242)
+
+	require.NoError(t, database.SyncUser(db, uid, "Old Display", "old_handle", false, 3, true))
+
+	baseline, err := database.QueryUserPreviousNames(db, uid, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, baseline, 1, "first sync must record exactly one baseline row")
+	assert.Equal(t, "Old Display", baseline[0].Name)
+	assert.Equal(t, "old_handle", baseline[0].ScreenName)
+
+	// 第一次改名：历史只应多出一行，且记录的是改名前的旧值——历史里不能
+	// 出现改名后的新值（新值只存在于 users 表）。
+	require.NoError(t, database.SyncUser(db, uid, "New Display", "new_handle", false, 4, true))
+
+	history := previousNamePairs(t, db, uid)
+	assert.Len(t, history, 2, "rename must append exactly one history row")
+	assert.Contains(t, history, "old_handle|Old Display")
+	assert.NotContains(t, history, "new_handle|New Display", "rename must record the pre-rename values")
+
+	current, err := database.GetUserById(db, uid)
+	require.NoError(t, err)
+	require.NotNil(t, current)
+	assert.Equal(t, "New Display", current.Name)
+	assert.Equal(t, "new_handle", current.ScreenName)
+
+	// 第二次改名：追加的必须是上一轮的旧值（New Display/new_handle）。
+	require.NoError(t, database.SyncUser(db, uid, "Newest Display", "newest_handle", false, 5, true))
+
+	history = previousNamePairs(t, db, uid)
+	assert.Len(t, history, 3)
+	assert.Contains(t, history, "old_handle|Old Display")
+	assert.Contains(t, history, "new_handle|New Display")
+	assert.NotContains(t, history, "newest_handle|Newest Display")
+
+	// 名称未变的重复同步不得再写历史（用户同步每轮都会跑）。
+	require.NoError(t, database.SyncUser(db, uid, "Newest Display", "newest_handle", false, 5, true))
+	rows, err := database.QueryUserPreviousNames(db, uid, 10, 0)
+	require.NoError(t, err)
+	assert.Len(t, rows, 3, "unchanged names must not append history rows")
+}
+
+// previousNamePairs 把某 uid 的历史名称归约为 "screen_name|name" 列表，
+// 避免依赖同秒写入时 record_date 的排序稳定性。
+func previousNamePairs(t *testing.T, db *sqlx.DB, uid uint64) []string {
+	t.Helper()
+
+	rows, err := database.QueryUserPreviousNames(db, uid, 10, 0)
+	require.NoError(t, err)
+
+	pairs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		pairs = append(pairs, row.ScreenName+"|"+row.Name)
+	}
+	return pairs
 }

@@ -666,3 +666,71 @@ func TestRemoveRejectsUnrecordedEntity(t *testing.T) {
 		})
 	}
 }
+
+// TestRenameUpdatesStoredNameAndPreservesStatistics 守护改名 CAS 的两个不变量：
+// 提交后行内 name 必须已变为新名（旧名残留会让后续 Sync 反复改名），且同一次
+// 提交不得覆盖统计列（latest_release_time/media_count）——覆盖会让下载基线
+// 倒退、媒体被重复下载。
+func TestRenameUpdatesStoredNameAndPreservesStatistics(t *testing.T) {
+	db := openEntityTestDB(t)
+	parentDir := t.TempDir()
+	result := newFixtureEntity(t, entityFixtures[0], db, parentDir)
+	require.NoError(t, result.Create("old-name"))
+	id, err := result.Id()
+	require.NoError(t, err)
+
+	baseline := time.Date(2026, time.March, 4, 5, 6, 7, 0, time.UTC)
+	require.NoError(t, database.UpdateUserEntityTweetStat(db, id, baseline, 7))
+
+	require.NoError(t, result.Rename("new-name"))
+
+	var storedName string
+	require.NoError(t, db.QueryRow(`SELECT name FROM user_entities WHERE id=?`, id).Scan(&storedName))
+	assert.Equal(t, "new-name", storedName)
+
+	record, err := database.GetUserEntity(db, id)
+	require.NoError(t, err)
+	require.NotNil(t, record)
+	require.True(t, record.LatestReleaseTime.Valid)
+	assert.True(t, record.LatestReleaseTime.Time.Equal(baseline))
+	require.True(t, record.MediaCount.Valid)
+	assert.Equal(t, int32(7), record.MediaCount.Int32)
+
+	name, nameErr := result.Name()
+	require.NoError(t, nameErr)
+	assert.Equal(t, "new-name", name)
+	assert.DirExists(t, filepath.Join(parentDir, "new-name"))
+	assert.NoDirExists(t, filepath.Join(parentDir, "old-name"))
+}
+
+// TestRenameReturnsPathConflictWhenTargetOwnedByAnotherRecord 守护归属冲突的
+// 错误类型：目标名被另一实体的记录占用（目标目录此时并不存在，磁盘检查拦不住）
+// 时必须返回 ErrPathConflict，API 层才能映射为 409 而不是 500。
+func TestRenameReturnsPathConflictWhenTargetOwnedByAnotherRecord(t *testing.T) {
+	for _, fixture := range entityFixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			db := openEntityTestDB(t)
+			parentDir := t.TempDir()
+			first := newFixtureEntity(t, fixture, db, parentDir)
+			require.NoError(t, first.Create("original"))
+
+			// 另一实体的记录占用目标名，但磁盘上没有对应目录。
+			if fixture.name == "user" {
+				require.NoError(t, database.CreateUser(db, &database.User{Id: 303, ScreenName: "occupier", Name: "Occupier"}))
+				require.NoError(t, database.CreateUserEntity(db, &database.UserEntity{UserId: 303, Name: "taken", ParentDir: parentDir}))
+			} else {
+				require.NoError(t, database.CreateLst(db, &database.Lst{Id: 304, Name: "Occupier List"}))
+				require.NoError(t, database.CreateLstEntity(db, &database.LstEntity{LstId: 304, Name: "taken", ParentDir: parentDir}))
+			}
+
+			err := first.Rename("taken")
+
+			assert.ErrorIs(t, err, entity.ErrPathConflict)
+			name, nameErr := first.Name()
+			require.NoError(t, nameErr)
+			assert.Equal(t, "original", name)
+			assert.DirExists(t, filepath.Join(parentDir, "original"))
+			assert.NoDirExists(t, filepath.Join(parentDir, "taken"))
+		})
+	}
+}

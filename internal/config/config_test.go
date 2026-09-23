@@ -476,3 +476,103 @@ func TestWriteAdditionalCookies_CreatesNestedDir(t *testing.T) {
 	_, err = os.Stat(path)
 	assert.NoError(t, err)
 }
+
+// ==================== 字段 Setter 边界测试 ====================
+
+// TestNormalizeLoadedConfKeepsZeroAsDefaultAndClampsBounds 守护 0=用默认值的
+// 语义：0 必须原样保留（下游按默认值处理），负数归零，超出边界的正值截断到
+// 边界。若 0 被替换成上限，所有未显式配置的用户都会拿到最大并发。
+func TestNormalizeLoadedConfKeepsZeroAsDefaultAndClampsBounds(t *testing.T) {
+	conf := &Config{
+		RootPath:               t.TempDir(),
+		MaxDownloadRoutine:     0,
+		MaxUserFetchConcurrent: 0,
+		MaxFileNameLen:         0,
+	}
+	require.NoError(t, NormalizeLoadedConf(conf))
+	assert.Equal(t, 0, conf.MaxDownloadRoutine, "0 must stay 0 (use default)")
+	assert.Equal(t, 0, conf.MaxUserFetchConcurrent, "0 must stay 0 (use default)")
+	assert.Equal(t, 0, conf.MaxFileNameLen, "0 must stay 0 (use default)")
+
+	conf = &Config{
+		RootPath:               t.TempDir(),
+		MaxDownloadRoutine:     -5,
+		MaxUserFetchConcurrent: -5,
+		MaxFileNameLen:         -5,
+	}
+	require.NoError(t, NormalizeLoadedConf(conf))
+	assert.Equal(t, 0, conf.MaxDownloadRoutine, "negative must reset to 0")
+	assert.Equal(t, 0, conf.MaxUserFetchConcurrent, "negative must reset to 0")
+	assert.Equal(t, 0, conf.MaxFileNameLen, "negative must reset to 0")
+
+	conf = &Config{
+		RootPath:               t.TempDir(),
+		MaxDownloadRoutine:     MaxDownloadRoutine + 1000,
+		MaxUserFetchConcurrent: MaxUserFetchConcurrent + 1000,
+		MaxFileNameLen:         MaxFileNameLen + 1000,
+	}
+	require.NoError(t, NormalizeLoadedConf(conf))
+	assert.Equal(t, MaxDownloadRoutine, conf.MaxDownloadRoutine)
+	assert.Equal(t, MaxUserFetchConcurrent, conf.MaxUserFetchConcurrent)
+	assert.Equal(t, MaxFileNameLen, conf.MaxFileNameLen)
+
+	// 正值低于下限时抬到下限（0 是"默认值"哨兵，不受下限影响）。
+	conf = &Config{
+		RootPath:               t.TempDir(),
+		MaxUserFetchConcurrent: 1,
+		MaxFileNameLen:         MinFileNameLen - 10,
+	}
+	require.NoError(t, NormalizeLoadedConf(conf))
+	assert.Equal(t, MinUserFetchConcurrent, conf.MaxUserFetchConcurrent)
+	assert.Equal(t, MinFileNameLen, conf.MaxFileNameLen)
+}
+
+// TestAPIKeyFieldRejectsShortValueAndTrimsInput 守护 api_key 输入约束：
+// 非空时必须至少 8 字符（过短的 key 没有实际保护力），周围空白先裁剪；
+// 校验失败不得写入配置。
+func TestAPIKeyFieldRejectsShortValueAndTrimsInput(t *testing.T) {
+	var field FieldDef
+	for _, candidate := range GetFieldDefs() {
+		if candidate.Name == "api_key" {
+			field = candidate
+			break
+		}
+	}
+	require.Equal(t, "api_key", field.Name, "api_key field must be defined")
+
+	conf := &Config{APIKey: "existing-key"}
+
+	for _, short := range []string{"short", "1234567", "  1234  "} {
+		assert.Error(t, field.Setter(conf, short), "value %q must be rejected", short)
+		assert.Equal(t, "existing-key", conf.APIKey, "rejected value must not be applied")
+	}
+
+	require.NoError(t, field.Setter(conf, "  12345678  "))
+	assert.Equal(t, "12345678", conf.APIKey, "surrounding whitespace must be trimmed")
+
+	require.NoError(t, field.Setter(conf, "   "))
+	assert.Equal(t, "", conf.APIKey, "blank value disables the API key")
+}
+
+// TestProxyURLFieldRejectsValueWithoutSchemeWithoutLeakingUserInfo 守护
+// proxy_url 的两条约束：缺 "://" 必须报错，且报错信息不得带上 URL 里的
+// userinfo（否则凭据会随配置错误进日志）；失败时不得部分写入配置。
+func TestProxyURLFieldRejectsValueWithoutSchemeWithoutLeakingUserInfo(t *testing.T) {
+	var field FieldDef
+	for _, candidate := range GetFieldDefs() {
+		if candidate.Name == "proxy_url" {
+			field = candidate
+			break
+		}
+	}
+	require.Equal(t, "proxy_url", field.Name, "proxy_url field must be defined")
+
+	conf := &Config{ProxyURL: "http://127.0.0.1:7897"}
+
+	err := field.Setter(conf, "proxy-user:proxy-password@example.invalid:7897")
+
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "proxy-user")
+	assert.NotContains(t, err.Error(), "proxy-password")
+	assert.Equal(t, "http://127.0.0.1:7897", conf.ProxyURL, "rejected value must not be applied")
+}

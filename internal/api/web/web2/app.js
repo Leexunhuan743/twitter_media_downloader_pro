@@ -133,7 +133,10 @@ const API = {
 };
 
 /* ---- Utility ---- */
-const esc = (s) => { if (s == null) return ''; const d = document.createElement('div'); d.appendChild(document.createTextNode(String(s))); return d.innerHTML; };
+// 同时用于文本与属性上下文：必须转义引号，否则 Twitter 显示名/列表标题里的
+// `"` 会闭合 value="..." 并注入事件处理器属性（存储型 XSS）。web1 用
+// escapeAttr、web3 的 esc 也转义引号，web2 此前是唯一缺口。
+const esc = (s) => { if (s == null) return ''; const d = document.createElement('div'); d.appendChild(document.createTextNode(String(s))); return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;'); };
 const jsEsc = (s) => { if (s == null) return ''; return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,''); };
 
 // Log helpers
@@ -861,7 +864,7 @@ function renderTaskRow(t) {
   const canRetry = t.status === 'failed' || t.status === 'cancelled';
   const canDelete = t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled';
 
-  return `<tr data-status="${t.status}" data-task-id="${jsEsc(t.task_id || t.id || '')}">
+  return `<tr data-status="${esc(t.status)}" data-task-id="${jsEsc(t.task_id || t.id || '')}">
       <td>${taskTypeIcon(t.type)}</td>
       <td><span class="mono">${esc(t.task_id || t.id)}</span><div class="text-sm text-muted">${esc(taskTypeName(t.type))}${target ? ' - ' + esc(target) : ''}</div></td>
       <td><span class="badge badge-${safeTaskStatus(t.status)}">${esc(t.status)}</span></td>

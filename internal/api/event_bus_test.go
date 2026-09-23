@@ -64,28 +64,61 @@ func TestEventBusUnsubscribeClosesChannel(t *testing.T) {
 	}
 }
 
+// drainIntEvents 阻塞式收事件，直到 ch 连续 idleFor 没有新事件才返回。
+// 用阻塞接收而不是 select+default：后者每轮只能取到一个事件，随后就会空转，
+// 让"收齐 N 个事件"退化成 N 次轮询间隔。
+func drainIntEvents(t *testing.T, ch <-chan SSEEvent, idleFor time.Duration) []int {
+	t.Helper()
+	values := make([]int, 0)
+	deadline := time.Now().Add(idleFor)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return values
+		}
+		select {
+		case evt, open := <-ch:
+			if !open {
+				return values
+			}
+			value, isInt := evt.Data.(int)
+			if !isInt {
+				t.Errorf("unexpected payload type %T", evt.Data)
+				return values
+			}
+			values = append(values, value)
+			deadline = time.Now().Add(idleFor)
+		case <-time.After(remaining):
+			return values
+		}
+	}
+}
+
 func TestEventBusBuffersBurstWithoutDropping(t *testing.T) {
 	bus := NewEventBus()
 	ch, unsubscribe := bus.Subscribe()
 	defer unsubscribe()
 
-	for i := 0; i < 200; i++ {
+	const total = 200
+	for i := 0; i < total; i++ {
 		bus.Publish("test", i)
 	}
 
-	received := 0
-	timeout := time.After(50 * time.Millisecond)
-	for {
-		select {
-		case <-ch:
-			received++
-		case <-timeout:
-			goto done
-		}
-	}
-done:
+	// 收齐全部事件而不是采样一个固定时间窗：丢事件会让下面的计数断言失败，
+	// 而收齐所需时间不影响判定。
+	var received []int
+	assert.Eventually(t, func() bool {
+		received = append(received, drainIntEvents(t, ch, 50*time.Millisecond)...)
+		return len(received) >= total
+	}, 10*time.Second, 10*time.Millisecond, "expected all %d published events to arrive", total)
 
-	assert.Equal(t, 200, received)
+	counts := make(map[int]int, len(received))
+	for _, value := range received {
+		counts[value]++
+	}
+	for i := 0; i < total; i++ {
+		assert.Equal(t, 1, counts[i], "event %d should be delivered exactly once", i)
+	}
 }
 
 func TestEventBusConcurrentPublish(t *testing.T) {
@@ -94,29 +127,33 @@ func TestEventBusConcurrentPublish(t *testing.T) {
 	defer unsubscribe()
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	const publishers, perPublisher = 10, 100
+	for i := 0; i < publishers; i++ {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
-				bus.Publish("test", n*100+j)
+			for j := 0; j < perPublisher; j++ {
+				bus.Publish("test", n*perPublisher+j)
 			}
 		}(i)
 	}
 	wg.Wait()
 
-	timeout := time.After(200 * time.Millisecond)
-	received := 0
-	for {
-		select {
-		case <-ch:
-			received++
-		case <-timeout:
-			goto done2
-		}
+	// 收齐全部事件后断言每个 payload 恰好出现一次：既不丢也不重复。
+	const total = publishers * perPublisher
+	var received []int
+	assert.Eventually(t, func() bool {
+		received = append(received, drainIntEvents(t, ch, 50*time.Millisecond)...)
+		return len(received) >= total
+	}, 10*time.Second, 10*time.Millisecond, "expected all %d published events to arrive", total)
+
+	counts := make(map[int]int, len(received))
+	for _, value := range received {
+		counts[value]++
 	}
-done2:
-	assert.Equal(t, 1000, received)
+	for i := 0; i < total; i++ {
+		assert.Equal(t, 1, counts[i], "event %d should be delivered exactly once", i)
+	}
 }
 
 func TestEventBusCoalescesTasksEvents(t *testing.T) {
@@ -124,32 +161,20 @@ func TestEventBusCoalescesTasksEvents(t *testing.T) {
 	ch, unsubscribe := bus.Subscribe()
 	defer unsubscribe()
 
-	for i := 0; i < eventBusSubscriberBuffer+100; i++ {
+	const lastValue = eventBusSubscriberBuffer + 99
+	for i := 0; i <= lastValue; i++ {
 		bus.Publish("tasks", i)
 	}
 
 	values := make([]int, 0, 2)
-	timeout := time.After(200 * time.Millisecond)
-	for {
-		select {
-		case evt, ok := <-ch:
-			if !ok {
-				t.Fatal("Subscriber channel closed unexpectedly")
-			}
-			value, ok := evt.Data.(int)
-			if !ok {
-				t.Fatalf("Unexpected event payload type %T", evt.Data)
-			}
-			values = append(values, value)
-		case <-timeout:
-			goto done3
-		}
-	}
-done3:
+	assert.Eventually(t, func() bool {
+		values = append(values, drainIntEvents(t, ch, 50*time.Millisecond)...)
+		return len(values) > 0 && values[len(values)-1] == lastValue
+	}, 10*time.Second, 10*time.Millisecond, "expected the final coalesced tasks event")
 
 	assert.NotEmpty(t, values)
 	assert.LessOrEqual(t, len(values), 2)
-	assert.Equal(t, eventBusSubscriberBuffer+99, values[len(values)-1])
+	assert.Equal(t, lastValue, values[len(values)-1])
 }
 
 func TestEventBusClosesSlowSubscriberOnRegularQueueOverflow(t *testing.T) {

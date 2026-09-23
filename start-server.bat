@@ -3,7 +3,7 @@ setlocal
 
 if "%TMD_DEV%"=="1" (
     echo [DEV MODE] Running from source with live frontend reload...
-    echo [DEV MODE] Edit files in internal/api/web/web1/ or web2/ and refresh browser.
+    echo [DEV MODE] Edit files in internal/api/web/web1/, web2/ or web3/ and refresh browser.
     go run . -server %*
     exit /b %errorlevel%
 )

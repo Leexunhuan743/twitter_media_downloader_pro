@@ -3,6 +3,7 @@ package scheduler
 import (
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strings"
@@ -965,5 +966,131 @@ func TestFormatScheduleDisplayKeepsMinutesWhenDaysPresent(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("FormatScheduleDisplay(%v) = %q, want %q", tt.interval, got, tt.want)
 		}
+	}
+}
+
+// TestNextDailyTriggerAtRollsToNextDayEarliestTime 守护 daily 的跨天语义：
+// 今天的候选时间点全部过去后，下一次必须是「次日最早的时间点」，而不是
+// 输入顺序里的第一个（配置顺序不可信）也不是直接 +24h（跨月/跨年必须进位）。
+func TestNextDailyTriggerAtRollsToNextDayEarliestTime(t *testing.T) {
+	location := time.FixedZone("UTC+8", 8*60*60)
+	times := []time.Time{
+		time.Date(2000, time.January, 1, 6, 0, 0, 0, location),
+		time.Date(2000, time.January, 1, 12, 30, 0, 0, location),
+		time.Date(2000, time.January, 1, 21, 0, 0, 0, location),
+	}
+
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{
+			name: "late evening rolls to tomorrow's first slot",
+			now:  time.Date(2026, time.August, 14, 23, 59, 0, 0, location),
+			want: time.Date(2026, time.August, 15, 6, 0, 0, 0, location),
+		},
+		{
+			name: "just after the last slot rolls to tomorrow's first slot",
+			now:  time.Date(2026, time.August, 14, 21, 0, 0, 0, location),
+			want: time.Date(2026, time.August, 15, 6, 0, 0, 0, location),
+		},
+		{
+			name: "year boundary",
+			now:  time.Date(2026, time.December, 31, 23, 30, 0, 0, location),
+			want: time.Date(2027, time.January, 1, 6, 0, 0, 0, location),
+		},
+		{
+			name: "month boundary",
+			now:  time.Date(2026, time.February, 28, 22, 0, 0, 0, location),
+			want: time.Date(2026, time.March, 1, 6, 0, 0, 0, location),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := nextDailyTriggerAt(tt.now, times)
+			if !got.Equal(tt.want) {
+				t.Errorf("nextDailyTriggerAt(%v) = %v, want %v", tt.now, got, tt.want)
+			}
+			if !got.After(tt.now) {
+				t.Errorf("next trigger %v must be after now %v", got, tt.now)
+			}
+		})
+	}
+}
+
+// TestRandomIntervalDelayStaysInsideInterval 守护 interval 模式首次触发的
+// 下界：首次延迟必须严格大于 0（不早于 now）且小于 interval，同一 entry
+// 每次算出相同延迟（重启后不漂移），空 ID 的回退分支同样落在区间内。
+func TestRandomIntervalDelayStaysInsideInterval(t *testing.T) {
+	const interval = time.Hour
+
+	for _, id := range []string{"entry-alpha", "entry-beta", "0", "list:12345"} {
+		delay := randomIntervalDelay(interval, id)
+		if delay <= 0 || delay >= interval {
+			t.Errorf("randomIntervalDelay(%v, %q) = %v, want 0 < delay < %v", interval, id, delay, interval)
+		}
+		if again := randomIntervalDelay(interval, id); again != delay {
+			t.Errorf("randomIntervalDelay(%v, %q) is not stable: %v then %v", interval, id, delay, again)
+		}
+		now := time.Now()
+		if !now.Add(delay).After(now) {
+			t.Errorf("first run at now+delay must be after now (delay=%v)", delay)
+		}
+	}
+
+	// 无 ID 的回退分支（测试配置等）同样不得产生零延迟。
+	for range 32 {
+		delay := randomIntervalDelay(interval, "")
+		if delay <= 0 || delay >= interval {
+			t.Errorf("randomIntervalDelay(%v, \"\") = %v, want 0 < delay < %v", interval, delay, interval)
+		}
+	}
+
+	// 极短 interval 直接原样返回，不 panic（除零防护）。
+	if got := randomIntervalDelay(time.Nanosecond, "entry-alpha"); got != time.Nanosecond {
+		t.Errorf("randomIntervalDelay(1ns) = %v, want 1ns", got)
+	}
+}
+
+// TestRandomIntervalDelayNeverReturnsZero 用极小 interval 放大取模结果，
+// 逼出 0 延迟边界：哈希取模命中 0 时必须被抬到 1ns，否则"先延迟再执行"
+// 的语义退化成启动即执行（run_on_start=false 也会立刻跑）。
+func TestRandomIntervalDelayNeverReturnsZero(t *testing.T) {
+	const interval = 4 * time.Nanosecond
+
+	// 确定性重算：延迟 = 哈希取模，命中 0 时抬到 1ns。
+	expected := func(entryID string) time.Duration {
+		h := fnv.New64a()
+		_, _ = h.Write([]byte(entryID))
+		pos := h.Sum64() % uint64(interval)
+		if pos == 0 {
+			pos = 1
+		}
+		return time.Duration(pos)
+	}
+
+	zeroModuloSamples := 0
+	for i := range 256 {
+		entryID := fmt.Sprintf("synthetic-%d", i)
+		h := fnv.New64a()
+		_, _ = h.Write([]byte(entryID))
+		if h.Sum64()%uint64(interval) == 0 {
+			zeroModuloSamples++
+		}
+
+		got := randomIntervalDelay(interval, entryID)
+		if got != expected(entryID) {
+			t.Fatalf("randomIntervalDelay(%v, %s) = %v, want %v", interval, entryID, got, expected(entryID))
+		}
+		if got <= 0 || got >= interval {
+			t.Fatalf("randomIntervalDelay(%v, %s) = %v, want 0 < delay < %v", interval, entryID, got, interval)
+		}
+	}
+
+	// 采样中必须真的出现取模为 0 的 entry，否则上面的断言没触及该边界。
+	if zeroModuloSamples == 0 {
+		t.Fatal("test did not sample any entry whose hash hits modulo zero")
 	}
 }

@@ -185,7 +185,7 @@ func run(args []string) (runErr error) {
 
 	// Server 模式
 	if bootstrap.serverMode {
-		return runServer(conf, appRootPath, serverPort, loginOpts, logWriter, consoleLogHub, cliLogWriter)
+		return runServer(conf, appRootPath, serverPort, loginOpts, consoleLogHub, cliLogWriter)
 	}
 
 	// CLI 模式
@@ -321,6 +321,11 @@ func initializeClients(
 	if cleanup.Restored > 0 || cleanup.Removed > 0 {
 		log.Infof("[startup] Reconciled staged entity directories restored=%d removed=%d", cleanup.Restored, cleanup.Removed)
 	}
+	if removed, removeErr := api.CleanupStaleUploads(appRootPath); removeErr != nil {
+		log.Warnf("[startup] Stale upload cleanup incomplete error=%q", removeErr.Error())
+	} else if removed > 0 {
+		log.Infof("[startup] Removed stale upload directories count=%d", removed)
+	}
 
 	// 登录主账户
 	client, screenName, err := twitter.LoginWithOptions(ctx, conf.Cookie.AuthToken, conf.Cookie.Ct0, loginOpts)
@@ -356,7 +361,7 @@ func initializeClients(
 	return client, additional, pathHelper, db, nil
 }
 
-func runServer(conf *config.Config, appRootPath string, port int, loginOpts twitter.LoginOptions, logWriter io.Closer, logHub *consolelog.Hub, cliLogWriter io.Writer) error {
+func runServer(conf *config.Config, appRootPath string, port int, loginOpts twitter.LoginOptions, logHub *consolelog.Hub, cliLogWriter io.Writer) error {
 	ctx := context.Background()
 
 	client, additional, _, db, err := initializeClients(ctx, conf, appRootPath, loginOpts, false)
@@ -372,7 +377,7 @@ func runServer(conf *config.Config, appRootPath string, port int, loginOpts twit
 
 	// 创建并启动 API Server
 	// 注意：不再使用 defer db.Close()，因为 GracefulShutdown 会处理所有资源清理
-	server, err := api.NewServerWithConsoleLogHub(client, additional, db, conf, appRootPath, logWriter, logHub)
+	server, err := api.NewServerWithConsoleLogHub(client, additional, db, conf, appRootPath, logHub)
 	if err != nil {
 		_ = db.Close()
 		return fmt.Errorf("[server] initialize failed: %w", err)
@@ -393,7 +398,7 @@ func runServer(conf *config.Config, appRootPath string, port int, loginOpts twit
 			log.Warnf("[startup] Bot config load failed path=%q error=%q", logging.Path(botConfPath), err.Error())
 		}
 	}
-	server.InitBot(initBot(botConf, server))
+	server.InitBot(initBot(botConf, appRootPath, server))
 	server.SetBindAddress(conf.BindAddress)
 	stopSignals := notifyOnShutdownSignal(func(sig os.Signal) {
 		log.Warnf("[server] Signal caught signal=%s", sig)
@@ -416,7 +421,7 @@ func isEmptyBotConfigError(err error) bool {
 	return err == io.EOF
 }
 
-func initBot(botConf *config.BotConfig, server *api.Server) []bot.Bot {
+func initBot(botConf *config.BotConfig, appRootPath string, server *api.Server) []bot.Bot {
 	if botConf == nil {
 		return nil
 	}
@@ -434,12 +439,18 @@ func initBot(botConf *config.BotConfig, server *api.Server) []bot.Bot {
 		bots = append(bots, pushover.NewBot(botConf.Pushover, server.EventBus(), server.LogHub()))
 	}
 	if botConf.WeChat != nil && botConf.WeChat.CredentialPath != "" {
-		bots = append(bots, wechat.NewBot(botConf.WeChat, server.TaskManager(), server.EventBus(), server.LogHub(), server.EnqueueTask))
+		bots = append(bots, wechat.NewBot(botConf.WeChat, appRootPath, server.TaskManager(), server.EventBus(), server.LogHub(), server.EnqueueTask))
 	}
 	if botConf.Feishu != nil && botConf.Feishu.AppID != "" && botConf.Feishu.AppSecret != "" {
-		feishuBot := feishu.NewBot(botConf.Feishu, server.TaskManager(), server.EventBus(), server.LogHub(), server.EnqueueTask)
-		server.RegisterBotCallback(feishuBot.CallbackPath(), feishuBot.CallbackHandler())
-		bots = append(bots, feishuBot)
+		if botConf.Feishu.VerifyToken == "" || botConf.Feishu.EncryptKey == "" {
+			// 回调路径免 TMD 认证，缺这两个字段就没有任何事件来源校验，
+			// 任何能访问端口的人都能伪造事件触发 bot 命令 —— 拒绝启用。
+			log.Errorf("[bot-feishu] Disabled reason=missing_verify_token_or_encrypt_key app_id=%s", botConf.Feishu.AppID)
+		} else {
+			feishuBot := feishu.NewBot(botConf.Feishu, server.TaskManager(), server.EventBus(), server.LogHub(), server.EnqueueTask)
+			server.RegisterBotCallback(feishuBot.CallbackPath(), feishuBot.CallbackHandler())
+			bots = append(bots, feishuBot)
+		}
 	}
 	return bots
 }

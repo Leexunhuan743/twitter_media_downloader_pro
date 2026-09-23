@@ -33,11 +33,18 @@ func logScheduleValidationFailed(operation string, err error) {
 	log.Errorf("[schedules] Validation failed operation=%s error=%q", operation, err.Error())
 }
 
+// schedulerUnavailableReason 说明 scheduler 为 nil 的原因。scheduler.New 只在启动时
+// 调用一次（server.go NewServerWithConsoleLogHub），失败仅写启动日志，s.scheduler
+// 保持 nil。列表/统计端点必须把这个原因显式带出，否则"调度器根本没起来"会被
+// 伪装成"没有调度"（entries=[]）。
+const schedulerUnavailableReason = "scheduler not initialized: scheduler.New failed during server startup (see server logs)"
+
 func (s *Server) handleGetSchedules(w http.ResponseWriter, _ *http.Request) {
 	sched := s.getScheduler()
 	if sched == nil {
 		s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]interface{}{
 			"scheduler_running": false,
+			"scheduler_error":   schedulerUnavailableReason,
 			"entries":           []scheduler.ScheduleStatus{},
 			"active":            0,
 			"total":             0,
@@ -451,7 +458,9 @@ func (s *Server) handleReloadSchedules(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleTriggerSchedule(w http.ResponseWriter, r *http.Request) {
 	sched := s.getScheduler()
 	if sched == nil {
-		s.writeError(w, http.StatusBadRequest, "Scheduler not initialized")
+		// 503（服务不可用）而不是 400：请求本身没问题，是调度器未初始化。
+		log.Errorf("[schedules] Scheduler unavailable operation=trigger error=%q", schedulerUnavailableReason)
+		s.writeError(w, http.StatusServiceUnavailable, "Scheduler not initialized")
 		return
 	}
 
@@ -555,7 +564,9 @@ func (s *Server) reloadSchedulesLocked(schedulesPath string) error {
 	}
 	existingSched := s.scheduler
 	s.schedulerMu.Unlock()
-	existingSched.OnStatusChange = s.handleScheduleStatusChange
+	// 注意：不要在这里重设 OnStatusChange —— 回调已在 scheduler.New 之后安装，
+	// 且调度器自身 goroutine 在锁内读该字段（statusChangeSnapshotLocked），
+	// 此处无锁重赋值会与之构成数据竞争，值本身也是冗余的。
 	if err := existingSched.Reload(); err != nil {
 		return err
 	}
@@ -687,7 +698,9 @@ func (s *Server) handleValidateSchedule(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleTriggerAllSchedules(w http.ResponseWriter, _ *http.Request) {
 	sched := s.getScheduler()
 	if sched == nil {
-		s.writeError(w, http.StatusBadRequest, "Scheduler not initialized")
+		// 503（服务不可用）而不是 400：请求本身没问题，是调度器未初始化。
+		log.Errorf("[schedules] Scheduler unavailable operation=trigger_all error=%q", schedulerUnavailableReason)
+		s.writeError(w, http.StatusServiceUnavailable, "Scheduler not initialized")
 		return
 	}
 
@@ -731,7 +744,15 @@ func (s *Server) handleTriggerAllSchedules(w http.ResponseWriter, _ *http.Reques
 func (s *Server) handleScheduleStats(w http.ResponseWriter, _ *http.Request) {
 	sched := s.getScheduler()
 	if sched == nil {
-		s.writeJSON(w, http.StatusOK, NewSuccessResponse(ScheduleStatsResponse{}))
+		// 保持既有字段名与 200，只补 scheduler_error：前端读的是 data.total/enabled/
+		// disabled/failures，改成 5xx 或换结构都会打断既有读取路径。
+		s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]interface{}{
+			"total":           0,
+			"enabled":         0,
+			"disabled":        0,
+			"failures":        0,
+			"scheduler_error": schedulerUnavailableReason,
+		}))
 		return
 	}
 

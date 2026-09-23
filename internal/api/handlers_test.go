@@ -1,12 +1,19 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/unkmonster/tmd/internal/consolelog"
 )
 
 func serveStatic(server *Server, req *http.Request) *httptest.ResponseRecorder {
@@ -439,4 +446,237 @@ func TestHandleStatic_Methods(t *testing.T) {
 				"handleStatic should never return 500 for method: %s", method)
 		})
 	}
+}
+
+// TestHandleWebInjectsThemeSwitcherAtBodyEnd 守护切换器注入契约：handleWeb 在
+// 首个 </body> 之前注入切换器（在 body 外会被浏览器丢弃），注入是唯一改动
+// （移除注入内容必须还原原文），且只注入一次。
+func TestHandleWebInjectsThemeSwitcherAtBodyEnd(t *testing.T) {
+	raw, err := readFrontendFile("index.html")
+	require.NoError(t, err)
+	require.Contains(t, string(raw), "</body>", "test precondition: theme index.html has a body close tag")
+
+	server := &Server{}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+
+	server.handleWeb(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	body := rr.Body.String()
+	switcher := themeSwitcherHTML()
+
+	assert.Contains(t, body, `id="tmd-theme-switcher"`)
+	assert.Equal(t, 1, strings.Count(body, switcher), "switcher must be injected exactly once")
+	assert.Contains(t, body, switcher+"</body>", "switcher must sit immediately before the first </body>")
+	assert.Equal(t, string(raw), strings.Replace(body, switcher, "", 1), "injection must be the only body change")
+}
+
+// TestListThemesExcludesDirectoriesWithoutIndexHTML 守护主题枚举：只列出含
+// index.html 的目录。shared/ 只有共享资源文件，若被列出，用户在列表里选中
+// 它会得到一个选不中的主题（setFrontendTheme 会拒绝）。
+func TestListThemesExcludesDirectoriesWithoutIndexHTML(t *testing.T) {
+	themes := listThemes()
+	require.NotEmpty(t, themes)
+
+	assert.True(t, themeDirectoryExists("shared"), "test precondition: shared/ directory must exist")
+	assert.NotContains(t, themes, "shared")
+	assert.Contains(t, themes, getFrontendTheme())
+
+	for _, name := range themes {
+		assert.True(t, themeHasIndexHTML(name), "listed theme %q must provide index.html", name)
+	}
+}
+
+// TestSetFrontendThemeRejectsUnsafeAndMissingValues 守护主题热切换的取值校验：
+// 含路径分隔符/点的取值（逃逸出主题目录）与无 index.html 的目录都必须拒绝，
+// 且拒绝时当前主题保持不变。
+func TestSetFrontendThemeRejectsUnsafeAndMissingValues(t *testing.T) {
+	original := getFrontendTheme()
+	t.Cleanup(func() { assert.True(t, setFrontendTheme(original), "must restore original theme") })
+
+	require.True(t, setFrontendTheme("web2"), "test precondition: web2 must be a switchable theme")
+	require.Equal(t, "web2", getFrontendTheme())
+
+	rejected := []string{
+		"",
+		"/",
+		"\\",
+		"..",
+		"../web1",
+		"web1/..",
+		"web1\\web2",
+		"web1.",
+		".web1",
+		"web-not-a-theme",
+		"shared",
+	}
+	for _, theme := range rejected {
+		assert.False(t, setFrontendTheme(theme), "theme %q must be rejected", theme)
+		assert.Equal(t, "web2", getFrontendTheme(), "current theme must survive rejection of %q", theme)
+	}
+}
+
+// themeHasIndexHTML 按当前加载模式（TMD_DEV 本地目录 / embed FS）判断主题目录
+// 是否提供 index.html，用于校验 listThemes 的输出。
+func themeHasIndexHTML(name string) bool {
+	if devWebRoot != "" {
+		info, err := os.Stat(filepath.Join(devWebRoot, name, "index.html"))
+		return err == nil && !info.IsDir()
+	}
+	_, err := webFS.ReadFile("web/" + name + "/index.html")
+	return err == nil
+}
+
+func themeDirectoryExists(name string) bool {
+	if devWebRoot != "" {
+		info, err := os.Stat(filepath.Join(devWebRoot, name))
+		return err == nil && info.IsDir()
+	}
+	entries, err := webFS.ReadDir("web")
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.Name() == name && entry.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+// streamLogLevel 请求日志流并在首帧写出后立即取消上下文，避免测试阻塞在
+// 心跳循环里。响应体只在处理函数返回后才读取，避免与写入并发。
+func streamLogLevel(t *testing.T, server *Server, level string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/logs/stream?level="+level, nil).WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		server.handleLogStream(rr, req)
+	}()
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("log stream did not stop after context cancellation")
+	}
+	return rr
+}
+
+// TestLogStreamRejectsInvalidLevelBeforeStreamStarts 守护 SSE 校验时机：
+// 非法 level 必须在写入 200 + ": connected" 之前拒绝。若校验发生在 setupSSE
+// 之后，400 只会作为普通正文落进已建立的 event-stream，EventSource 侧既
+// 拿不到状态码也不触发 error，表现为"日志页静默无输出"。
+func TestLogStreamRejectsInvalidLevelBeforeStreamStarts(t *testing.T) {
+	server := &Server{logHub: consolelog.NewHub(16)}
+
+	rr := streamLogLevel(t, server, "bogus")
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assert.Contains(t, rr.Header().Get("Content-Type"), "application/json")
+	assert.NotContains(t, rr.Body.String(), ": connected", "event-stream must not be started for a rejected level")
+}
+
+// TestLogStreamAcceptsEveryAdvertisedLevel 守护 level 词表一致性：前端下拉里的
+// 每个级别都必须被流式端点接受（fatal 曾被词表漏掉，选中即 400）。
+func TestLogStreamAcceptsEveryAdvertisedLevel(t *testing.T) {
+	server := &Server{logHub: consolelog.NewHub(16)}
+
+	for _, level := range []string{"debug", "info", "warn", "error", "fatal", "all", ""} {
+		t.Run(level, func(t *testing.T) {
+			rr := streamLogLevel(t, server, level)
+
+			assert.Equal(t, http.StatusOK, rr.Code)
+			assert.Contains(t, rr.Body.String(), ": connected")
+		})
+	}
+}
+
+// TestGetLogsRejectsInvalidLevel 守护日志查询端点：未知 level 必须报 400，
+// 而不是静默返回空列表（空列表会被前端当成"这段时间没有日志"）。
+func TestGetLogsRejectsInvalidLevel(t *testing.T) {
+	server := &Server{logHub: consolelog.NewHub(16)}
+
+	for _, level := range []string{"bogus", "verbose", "FATA"} {
+		t.Run(level, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/logs?level="+level, nil)
+			rr := httptest.NewRecorder()
+
+			server.handleGetLogs(rr, req)
+
+			assert.Equal(t, http.StatusBadRequest, rr.Code)
+			assert.Contains(t, rr.Header().Get("Content-Type"), "application/json")
+			assert.Contains(t, rr.Body.String(), "Invalid log level")
+		})
+	}
+
+	for _, level := range []string{"fatal", "all", ""} {
+		t.Run("accepted_"+level, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/logs?level="+level, nil)
+			rr := httptest.NewRecorder()
+
+			server.handleGetLogs(rr, req)
+
+			assert.Equal(t, http.StatusOK, rr.Code)
+		})
+	}
+}
+
+// TestLogExportDoesNotDeclareContentLength 守护日志导出：tmd2.log 由 lumberjack
+// 持续追加/轮转，预先声明 Content-Length 会在拷贝期间文件增长时让 net/http 以
+// ErrContentLength 截断响应体；响应必须交给 chunked 并完整送出文件内容。
+func TestLogExportDoesNotDeclareContentLength(t *testing.T) {
+	server := &Server{appRootPath: t.TempDir()}
+	content := []byte("time=\"2026-01-01T00:00:00Z\" level=info msg=\"[test] synthetic log line\"\n")
+	require.NoError(t, os.WriteFile(filepath.Join(server.appRootPath, "tmd2.log"), content, 0600))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/logs/export", nil)
+	rr := httptest.NewRecorder()
+
+	server.handleLogExport(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Empty(t, rr.Header().Get("Content-Length"), "export must not pin a length for a growing file")
+	assert.Equal(t, content, rr.Body.Bytes())
+	assert.Contains(t, rr.Header().Get("Content-Disposition"), "attachment")
+}
+
+// TestSchedulesEndpointsExposeUninitializedScheduler 守护 scheduler 未初始化时
+// 的状态码语义：触发类端点返回 503（请求没错，是服务不可用），列表/统计保持
+// 200 但必须带 scheduler_error，不能把"调度器没起来"伪装成"没有调度"。
+func TestSchedulesEndpointsExposeUninitializedScheduler(t *testing.T) {
+	server := &Server{} // scheduler 保持 nil
+
+	triggerReq := httptest.NewRequest(http.MethodPost, "/api/v1/schedules/entry-1/trigger", nil)
+	triggerReq.SetPathValue("id", "entry-1")
+	triggerRR := httptest.NewRecorder()
+	server.handleTriggerSchedule(triggerRR, triggerReq)
+	assert.Equal(t, http.StatusServiceUnavailable, triggerRR.Code)
+
+	triggerAllReq := httptest.NewRequest(http.MethodPost, "/api/v1/schedules/trigger-all", nil)
+	triggerAllRR := httptest.NewRecorder()
+	server.handleTriggerAllSchedules(triggerAllRR, triggerAllReq)
+	assert.Equal(t, http.StatusServiceUnavailable, triggerAllRR.Code)
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/schedules", nil)
+	listRR := httptest.NewRecorder()
+	server.handleGetSchedules(listRR, listReq)
+	require.Equal(t, http.StatusOK, listRR.Code)
+	// 既有字段保持存在（前端按这些键读取），只新增原因说明。
+	assert.Contains(t, listRR.Body.String(), `"entries"`)
+	assert.Contains(t, listRR.Body.String(), `"total"`)
+	assert.Contains(t, listRR.Body.String(), `"scheduler_error"`)
+
+	statsReq := httptest.NewRequest(http.MethodGet, "/api/v1/schedules/stats", nil)
+	statsRR := httptest.NewRecorder()
+	server.handleScheduleStats(statsRR, statsReq)
+	require.Equal(t, http.StatusOK, statsRR.Code)
+	assert.Contains(t, statsRR.Body.String(), `"scheduler_error"`)
 }

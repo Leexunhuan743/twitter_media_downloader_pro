@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -1161,30 +1162,41 @@ func cloneProfileResult(result *ProfileResult) *ProfileResult {
 	return &clone
 }
 
-// validateJsonPaths 检查 paths 是否在允许的根目录之内，防止路径穿越
+// validateJsonPaths 检查 paths 是否在允许的根目录之内，防止路径穿越。
+// 判定必须是「等于根」或「根 + 分隔符」前缀：裸根做 HasPrefix 会把
+// 兄弟目录一并放行（RootPath=/data 时 /database/x.json 通过，
+// D:\data 时 D:\data-evil\x.json 通过）。
 func (s *downloadServiceImpl) validateJsonPaths(paths []string) error {
-	rootPath := filepath.Clean(s.deps.Config.RootPath)
-	var allowedPrefixes []string
-	allowedPrefixes = append(allowedPrefixes, rootPath+string(filepath.Separator))
-	allowedPrefixes = append(allowedPrefixes, rootPath)
+	roots := []string{filepath.Clean(s.deps.Config.RootPath)}
 	if s.deps.AppRootPath != "" {
-		appRoot := filepath.Clean(s.deps.AppRootPath)
-		allowedPrefixes = append(allowedPrefixes, appRoot+string(filepath.Separator))
-		allowedPrefixes = append(allowedPrefixes, appRoot)
+		roots = append(roots, filepath.Clean(s.deps.AppRootPath))
 	}
 
 	for _, p := range paths {
 		clean := filepath.Clean(p)
-		allowed := false
-		for _, prefix := range allowedPrefixes {
-			if strings.HasPrefix(clean, prefix) {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
+		if !pathWithinAnyRoot(clean, roots) {
 			return fmt.Errorf("path %q is outside allowed directories", p)
 		}
 	}
 	return nil
+}
+
+// pathWithinAnyRoot 判断 clean 是否正好是某个根，或位于某个根之下。
+// Windows 下路径大小写不敏感，比较前统一小写（与 entity.comparablePath 同语义）。
+func pathWithinAnyRoot(clean string, roots []string) bool {
+	sep := string(filepath.Separator)
+	compare := func(value string) string {
+		if runtime.GOOS == "windows" {
+			return strings.ToLower(value)
+		}
+		return value
+	}
+	target := compare(clean)
+	for _, root := range roots {
+		candidate := compare(root)
+		if target == candidate || strings.HasPrefix(target, candidate+compare(sep)) {
+			return true
+		}
+	}
+	return false
 }

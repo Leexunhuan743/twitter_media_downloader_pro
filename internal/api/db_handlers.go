@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +14,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/database"
 	entitypkg "github.com/unkmonster/tmd/internal/entity"
+	"github.com/unkmonster/tmd/internal/logging"
 	"github.com/unkmonster/tmd/internal/utils"
 )
 
@@ -20,6 +23,54 @@ import (
 // entityDeleteBatchSize 是级联删除时每轮查询实体数（query-until-empty
 // 循环的批大小，避免 count+1 守卫的并发竞态）。
 const entityDeleteBatchSize = 100
+
+// userLinkSymlinkPath 解析 user_links 行对应的磁盘符号链接路径。
+// 解析失败（缺 parent_dir/name）返回空串：那种行本来就没有可寻址的链接。
+func userLinkSymlinkPath(db queryer, link *database.UserLink) string {
+	if link == nil {
+		return ""
+	}
+	path, err := link.PathWithTx(db)
+	if err != nil {
+		log.Debugf("[db] User link path resolve skipped link_id=%d error=%q", link.Id, err.Error())
+		return ""
+	}
+	return path
+}
+
+// queryer 是 user_links 路径解析所需的最小查询接口（*sqlx.DB / *sqlx.Tx 都满足）。
+type queryer interface {
+	Get(dest interface{}, query string, args ...interface{}) error
+}
+
+// removeUserLinkSymlinks 在行删除后同步移除磁盘链接。
+// 不变量：user_links 行存在 ⇔ 列表目录下存在同名符号链接；
+// 行删了而链接留着会变成永不回收的孤儿（全仓没有列表目录对账逻辑）。
+func removeUserLinkSymlinks(paths []string) {
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			log.Warnf("[db] User link symlink remove failed path=%q error=%q", logging.Path(path), err.Error())
+		}
+	}
+}
+
+// moveUserLinkSymlink 让磁盘链接跟随行改名（同目录内重命名）。
+// 源链接缺失（历史数据/手工清理）不是错误。
+func moveUserLinkSymlink(oldPath, newName string) {
+	if oldPath == "" || newName == "" {
+		return
+	}
+	newPath := filepath.Join(filepath.Dir(oldPath), newName)
+	if newPath == oldPath {
+		return
+	}
+	if err := os.Rename(oldPath, newPath); err != nil && !os.IsNotExist(err) {
+		log.Warnf("[db] User link symlink rename failed from=%q to=%q error=%q", logging.Path(oldPath), logging.Path(newPath), err.Error())
+	}
+}
 
 var userSortFields = map[string]string{
 	"id":            "id",
@@ -30,9 +81,10 @@ var userSortFields = map[string]string{
 }
 
 var listSortFields = map[string]string{
-	"id":       "id",
-	"name":     "name",
-	"owner_id": "owner_user_id",
+	"id":            "id",
+	"name":          "name",
+	"owner_id":      "owner_user_id",
+	"owner_user_id": "owner_user_id",
 }
 
 var entitySortFields = map[string]string{
@@ -174,12 +226,15 @@ func (s *Server) handleDBUserUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.ScreenName != nil {
-		if err := validateScreenName(*req.ScreenName); err != nil {
+		// 与其它写入路径（下载/批量/调度 target）保持同一归一化语义：
+		// 去首尾空白 + 剥 @ 前缀后再校验并落库，否则 "@foo" 会被误判为非法。
+		normalized := utils.NormalizeScreenName(strings.TrimSpace(*req.ScreenName))
+		if err := validateScreenName(normalized); err != nil {
 			logDBInvalidInput("screen_name", *req.ScreenName, err)
 			s.writeErrorDetail(w, http.StatusBadRequest, "Invalid screen name", err.Error())
 			return
 		}
-		user.ScreenName = *req.ScreenName
+		user.ScreenName = normalized
 	}
 	if req.Name != nil {
 		if err := validateFieldName(*req.Name); err != nil {
@@ -248,10 +303,24 @@ func (s *Server) handleDBUserDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// DelUser 会在事务里直接 DELETE user_links 行，但不会碰磁盘链接；
+	// 此刻用户实体目录已被上面的循环删除，若不摘掉链接就会留下悬空符号链接
+	//（全仓没有列表目录对账逻辑，没人会回收它）。因此先收集路径，删行成功后再移除。
+	links, err := database.GetUserLinks(s.db, id)
+	if err != nil {
+		s.dbWriteError(w, err, "GetUserLinks")
+		return
+	}
+	linkPaths := make([]string, 0, len(links))
+	for _, link := range links {
+		linkPaths = append(linkPaths, userLinkSymlinkPath(s.db, link))
+	}
+
 	if err := database.DelUser(s.db, id); err != nil {
 		s.dbWriteError(w, err, "DelUser")
 		return
 	}
+	removeUserLinkSymlinks(linkPaths)
 
 	s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]interface{}{
 		"message":                "User deleted successfully",
@@ -881,10 +950,14 @@ func (s *Server) handleDBUserLinkUpdate(w http.ResponseWriter, r *http.Request) 
 		link.Name = *req.Name
 	}
 
+	oldSymlinkPath := userLinkSymlinkPath(s.db, link)
 	if err := database.UpdateUserLink(s.db, link.Id, link.Name); err != nil {
 		s.dbWriteError(w, err, "UpdateUserLink")
 		return
 	}
+	// 行改名后磁盘链接必须跟着改：否则列表目录里的链接名与 user_links.name
+	// 长期不一致，且下次下载会把行名改回实体目录名（改名静默失效）。
+	moveUserLinkSymlink(oldSymlinkPath, link.Name)
 
 	lstEntName := s.getListEntityName(int(link.ParentLstEntityId))
 
@@ -902,10 +975,12 @@ func (s *Server) handleDBUserLinkDelete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	symlinkPath := userLinkSymlinkPath(s.db, link)
 	if err := database.DelUserLink(s.db, int32(id)); err != nil {
 		s.dbWriteError(w, err, "DelUserLink")
 		return
 	}
+	removeUserLinkSymlinks([]string{symlinkPath})
 
 	s.writeResourceDeleted(w, "User link")
 }

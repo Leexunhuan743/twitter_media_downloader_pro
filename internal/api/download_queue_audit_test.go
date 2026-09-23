@@ -2,11 +2,8 @@ package api
 
 import (
 	"context"
-	"errors"
 	"net/http"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -103,7 +100,3 @@ func (w *stubResponseWriter) Write(b []byte) (int, error) {
 	w.body = append(w.body, b...)
 	return len(b), nil
 }
-
-var _ = sync.Once{}
-var _ = errors.Is
-var _ = time.Second

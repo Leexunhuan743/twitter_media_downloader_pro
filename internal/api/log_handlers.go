@@ -54,6 +54,11 @@ func parseFilterTime(s string) (time.Time, bool) {
 func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	levelStr := query.Get("level")
+	if levelStr != "" && !isValidLogLevel(levelStr) {
+		log.Debugf("[logs] Invalid log level requested level=%q", levelStr)
+		s.writeError(w, http.StatusBadRequest, "Invalid log level: "+levelStr)
+		return
+	}
 	search := query.Get("q")
 	domain := query.Get("domain")
 	startStr := query.Get("start_time")
@@ -125,14 +130,14 @@ func (s *Server) handleLogExport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 
-	stat, err := f.Stat()
-	if err == nil {
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", stat.Size()))
-	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tmd2-%s.log"`, time.Now().Format("20060102-150405")))
+	// 不设置 Content-Length：tmd2.log 由 lumberjack 持续追加/轮转，预声明的长度在
+	// 拷贝期间文件增长时会让 net/http 以 ErrContentLength 截断响应体；交给 chunked。
 	w.WriteHeader(http.StatusOK)
-	io.Copy(w, f)
+	if _, err := io.Copy(w, f); err != nil {
+		log.Errorf("[logs] Export copy failed path=%q error=%q", logging.Path(logPath), err.Error())
+	}
 }
 
 // filterLogLinesReverse 从尾向头遍历（天然逆序），过滤并直接产出结果，一次遍历完成。
@@ -211,9 +216,11 @@ func logLevelPrefix(level string) string {
 	}
 }
 
+// isValidLogLevel 与 matchLogLevel/logLevelPrefix 支持的词表必须一致：
+// fatal 由 logrus 的 FATA[ 前缀产出，前端 Level 下拉也提供该选项。
 func isValidLogLevel(level string) bool {
 	switch level {
-	case "debug", "info", "warn", "error", "all":
+	case "debug", "info", "warn", "error", "fatal", "all":
 		return true
 	}
 	return false

@@ -3,14 +3,12 @@ package profile
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -242,6 +240,21 @@ func (pd *ProfileDownloader) Download(ctx context.Context, req DownloadRequest) 
 	return result, nil
 }
 
+// firstFileError 返回结果中第一个文件级失败的错误。
+// Download 对文件级失败（含磁盘满）只写进 result.Files[].Error 并返回 nil error，
+// 调用方要判定致命 I/O 错误必须从这里取回。
+func firstFileError(result *DownloadResult) error {
+	if result == nil {
+		return nil
+	}
+	for _, file := range result.Files {
+		if file.Error != nil {
+			return file.Error
+		}
+	}
+	return nil
+}
+
 func resolveUserTitle(req DownloadRequest, maxLen int) string {
 	if req.UserTitle != "" {
 		return utils.WinFileNameWithMaxLen(req.UserTitle, maxLen)
@@ -365,22 +378,29 @@ func (pd *ProfileDownloader) profileDownloader(
 			}
 			result, err := pd.Download(ctx, ir.request)
 			if err != nil {
-				log.Errorf("[profile] Download failed screen_name=%s error=%q", ir.request.ScreenName, err.Error())
+				log.Errorf("[profile] Download failed screen_name=%s error=%q", ir.request.ScreenName, logging.RedactSensitiveText(err.Error()))
+			}
 
-				if errors.Is(err, syscall.ENOSPC) {
-					cancel(err)
-					// 把 channel 中剩余的任务标记为失败
-					for remainingIr := range reqChan {
-						mu.Lock()
-						results[remainingIr.index] = &DownloadResult{
-							ScreenName: remainingIr.request.ScreenName,
-							Success:    false,
-							Error:      fmt.Errorf("download cancelled: disk full"),
-						}
-						mu.Unlock()
+			// 文件级失败不会作为 error 返回（只写进 result.Files[].Error），
+			// 因此判定磁盘满前必须先合并首个文件级错误，否则 ENOSPC 不可见。
+			diskErr := err
+			if diskErr == nil {
+				diskErr = firstFileError(result)
+			}
+			if utils.IsDiskFull(diskErr) {
+				log.Errorf("[profile] Download cancelled screen_name=%s reason=disk_full error=%q", ir.request.ScreenName, logging.RedactSensitiveText(diskErr.Error()))
+				cancel(diskErr)
+				// 把 channel 中剩余的任务标记为失败
+				for remainingIr := range reqChan {
+					mu.Lock()
+					results[remainingIr.index] = &DownloadResult{
+						ScreenName: remainingIr.request.ScreenName,
+						Success:    false,
+						Error:      fmt.Errorf("download cancelled: disk full"),
 					}
-					return
+					mu.Unlock()
 				}
+				return
 			}
 
 			mu.Lock()
@@ -456,7 +476,7 @@ func (pd *ProfileDownloader) downloadFile(ctx context.Context, userTitle, screen
 
 	result, err := pd.downloader.Download(downloadReq)
 	if err != nil {
-		log.Debugf("[profile] File download failed screen_name=%s type=%s path=%q error=%q", screenName, label, logging.Path(filePath), err.Error())
+		log.Debugf("[profile] File download failed screen_name=%s type=%s path=%q error=%q", screenName, label, logging.Path(filePath), logging.RedactSensitiveText(err.Error()))
 		return FileResult{FileType: fileType, FilePath: filePath, Status: StatusFailed, Error: err}
 	}
 
@@ -495,7 +515,7 @@ func (pd *ProfileDownloader) saveContent(userTitle string, fileType FileType, da
 
 	result, err := pd.fileWriter.Write(writeReq)
 	if err != nil {
-		log.Errorf("[profile] File write failed type=%s path=%q error=%q", fileType, logging.Path(filePath), err.Error())
+		log.Errorf("[profile] File write failed type=%s path=%q error=%q", fileType, logging.Path(filePath), logging.RedactSensitiveText(err.Error()))
 		return FileResult{FileType: fileType, FilePath: filePath, Status: StatusFailed, Error: err}
 	}
 

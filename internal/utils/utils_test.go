@@ -648,7 +648,7 @@ func TestMediaExtFromUrl(t *testing.T) {
 		},
 		{
 			name:        "现代 URL 不带尺寸尾缀",
-			url:         "https://pbs.twimg.com/media/HID747dbgAAjl4P.png?name=4096x4096",
+			url:         "https://pbs.twimg.com/media/xyz.png?name=4096x4096",
 			expectedExt: ".png",
 		},
 		{

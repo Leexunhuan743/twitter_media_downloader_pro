@@ -46,6 +46,58 @@ func (s *Server) enqueueTask(task *Task, run func(ctx context.Context, taskID st
 	return nil
 }
 
+// CleanupStaleUploads 删除上次运行遗留的上传临时目录。
+// 上传目录只在任务执行期间有意义：任务正常结束由 cleanupUploadDirAfterTask
+// 清理，排队中被取消/关停由队列的 discard 回调清理；只有进程被强杀才会留下，
+// 启动时清一次即可（uploads 下只有本程序创建的单层请求目录）。
+func CleanupStaleUploads(appRootPath string) (int, error) {
+	if appRootPath == "" {
+		return 0, nil
+	}
+	removed := 0
+	for _, kind := range []string{"json", "loongtweet"} {
+		parent := filepath.Join(appRootPath, "uploads", kind)
+		entries, err := os.ReadDir(parent)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return removed, fmt.Errorf("read upload dir %q: %w", logging.Path(parent), err)
+		}
+		for _, entry := range entries {
+			path := filepath.Join(parent, entry.Name())
+			if err := os.RemoveAll(path); err != nil {
+				log.Warnf("[upload] Stale upload cleanup failed path=%q error=%q", logging.Path(path), err.Error())
+				continue
+			}
+			removed++
+		}
+	}
+	return removed, nil
+}
+
+// enqueueUploadTask 入队一个以上传临时目录为输入的任务。
+// 除了 run 执行完后的清理（cleanupUploadDirAfterTask），还登记一个 discard：
+// 任务在排队中被取消或关停丢弃时 run 永不执行，只有它能回收该目录。
+func (s *Server) enqueueUploadTask(task *Task, uploadDir string, run func(ctx context.Context, taskID string, reporter service.ProgressReporter) error) error {
+	if s.downloadQueue == nil {
+		err := errors.New("download queue not available")
+		s.taskManager.SetTaskError(task.ID, err)
+		return err
+	}
+	discard := func() {
+		if uploadDir != "" {
+			_ = os.RemoveAll(uploadDir)
+		}
+	}
+	if err := s.downloadQueue.EnqueueWithDiscard(task, cleanupUploadDirAfterTask(uploadDir, run), discard); err != nil {
+		s.taskManager.SetTaskError(task.ID, err)
+		log.Warnf("[tasks] Enqueue rejected task_id=%s type=%s error=%q", task.ID, task.Type, err.Error())
+		return err
+	}
+	return nil
+}
+
 // buildAndEnqueueTask admits an existing HTTP task through the same mapper and
 // queue path used by bot, scheduler, and system tasks. It writes a 500/503
 // response on rejection, and callers must return immediately when it is false.
@@ -514,7 +566,7 @@ func (s *Server) handleJsonFileUpload(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
 		return
 	}
-	if err := s.enqueueTask(task, cleanupUploadDirAfterTask(uploadDir, runFunc)); err != nil {
+	if err := s.enqueueUploadTask(task, uploadDir, runFunc); err != nil {
 		// 入队被拒（关停窗口）：清理上传目录，回复 503，不给假成功。
 		_ = os.RemoveAll(uploadDir)
 		status := http.StatusServiceUnavailable
@@ -573,7 +625,7 @@ func (s *Server) handleJsonFolderUpload(w http.ResponseWriter, r *http.Request) 
 		s.writeError(w, http.StatusInternalServerError, "Failed to create task")
 		return
 	}
-	if err := s.enqueueTask(task, cleanupUploadDirAfterTask(uploadDir, runFunc)); err != nil {
+	if err := s.enqueueUploadTask(task, uploadDir, runFunc); err != nil {
 		// 入队被拒（关停窗口）：清理上传目录，回复 503，不给假成功。
 		_ = os.RemoveAll(uploadDir)
 		status := http.StatusServiceUnavailable
@@ -653,7 +705,9 @@ func (s *Server) saveUploadedJSONFiles(r *http.Request, uploadKind string) ([]st
 	}
 
 	uploadParent := filepath.Join(s.appRootPath, "uploads", uploadKind)
-	if err := os.MkdirAll(uploadParent, 0o755); err != nil {
+	// 上传的第三方导出含推文文本与媒体 URL，与 conf.yaml 的 0600 策略一致：
+	// 目录 0700、文件 0600，避免同机其他用户读取。
+	if err := os.MkdirAll(uploadParent, 0o700); err != nil {
 		return nil, "", fmt.Errorf("failed to create upload directory: %w", err)
 	}
 	uploadDir, err := os.MkdirTemp(uploadParent, strconv.FormatInt(time.Now().UnixNano(), 10)+"-*")
@@ -728,7 +782,7 @@ func copyUploadedFile(fileHeader *multipart.FileHeader, dstPath string) error {
 	}
 	defer src.Close()
 
-	dst, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	dst, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("failed to create upload file %s: %w", filepath.Base(dstPath), err)
 	}

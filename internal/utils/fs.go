@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"unicode/utf8"
 )
 
@@ -272,4 +273,23 @@ func MediaExtFromUrl(u string) (string, error) {
 		return twimgFormatExt(u), nil
 	}
 	return ext, nil
+}
+
+// IsDiskFull 判断 err 是否表示目标卷已写满。
+//
+// 直接的 errors.Is(err, syscall.ENOSPC) 在 Windows 上恒为 false：ENOSPC 在那里
+// 是 Go 为兼容 os 包而合成的 APPLICATION_ERROR 值，操作系统从不返回它；真正的
+// 满盘以 ERROR_DISK_FULL（Win32 112）冒泡，而 syscall.Errno.Is 并未把 112 映射
+// 回 ENOSPC。因此这里同时匹配两个错误码，包装链（os.CreateTemp/io.Copy 产生的
+// *os.PathError、*fs.PathError 及其 fmt.Errorf("%w") 包装）交给 errors.Is 展开。
+func IsDiskFull(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.ENOSPC) {
+		return true
+	}
+	// 只在 Windows 上比较 ERROR_DISK_FULL：在 Linux 上 112 是 EHOSTDOWN
+	// （对端主机关闭），无条件匹配会把网络故障误判为磁盘满。
+	return runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(112))
 }

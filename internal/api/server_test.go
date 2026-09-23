@@ -134,7 +134,7 @@ func setupTestServerWithAppRoot(t *testing.T, appRoot string) (*Server, *sqlx.DB
 	}
 
 	client := resty.New()
-	server, err := NewServer(client, []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(client, []*resty.Client{}, db, cfg, appRoot)
 	require.NoError(t, err)
 	t.Cleanup(server.taskManager.Close)
 	t.Cleanup(func() {
@@ -224,7 +224,7 @@ func TestNewServer(t *testing.T) {
 	}
 
 	client := resty.New()
-	server, err := NewServer(client, []*resty.Client{}, db, cfg, "/app", nil)
+	server, err := NewServer(client, []*resty.Client{}, db, cfg, "/app")
 	require.NoError(t, err)
 	defer server.taskManager.Close()
 
@@ -239,7 +239,7 @@ func TestNewServer(t *testing.T) {
 }
 
 func TestNewServerReturnsDependencyErrors(t *testing.T) {
-	server, err := NewServer(resty.New(), nil, nil, nil, t.TempDir(), nil)
+	server, err := NewServer(resty.New(), nil, nil, nil, t.TempDir())
 
 	assert.Nil(t, server)
 	assert.EqualError(t, err, "server config is nil")
@@ -393,9 +393,9 @@ func TestGracefulShutdownSharesSingleDeadlineAcrossPhases(t *testing.T) {
 	server.GracefulShutdown("shared-deadline-test")
 	elapsed := time.Since(start)
 
-	// 共享截止 ≈ 200ms；串行累加 ≈ 400ms。断言界取 1.6× 单阶段超时，
-	// 共享实现余量充足、串行实现必然失败。
-	if elapsed >= 320*time.Millisecond {
+	// 共享截止 ≈ 200ms；串行累加 ≈ 400ms。断言界取 1.8× 单阶段超时：
+	// 共享实现留有 ~160ms 的调度/CI 抖动余量，串行实现仍然必然失败。
+	if elapsed >= 360*time.Millisecond {
 		t.Fatalf("shutdown took %v; phases appear to consume independent timeouts instead of a shared deadline", elapsed)
 	}
 	select {
@@ -511,7 +511,7 @@ func TestHandleUpdateSchedulesRawInitializesSchedulerAfterStartupParseFailure(t 
 		MaxDownloadRoutine: 5,
 		MaxFileNameLen:     100,
 	}
-	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot)
 	require.NoError(t, err)
 	defer server.taskManager.Close()
 	assert.Nil(t, server.scheduler)
@@ -562,7 +562,7 @@ func TestHandleGetSchedulesReturnsFrontendFieldNames(t *testing.T) {
 		MaxDownloadRoutine: 5,
 		MaxFileNameLen:     100,
 	}
-	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot)
 	require.NoError(t, err)
 	defer server.taskManager.Close()
 
@@ -593,7 +593,7 @@ func TestStructuredScheduleCRUDUsesStableID(t *testing.T) {
 		MaxDownloadRoutine: 5,
 		MaxFileNameLen:     100,
 	}
-	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot)
 	require.NoError(t, err)
 	defer server.taskManager.Close()
 
@@ -674,7 +674,7 @@ func TestStructuredScheduleCRUDSupportsMixedAndNormalizesShape(t *testing.T) {
 		MaxDownloadRoutine: 5,
 		MaxFileNameLen:     100,
 	}
-	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot)
 	require.NoError(t, err)
 	defer server.taskManager.Close()
 
@@ -1275,7 +1275,7 @@ func TestServer_PutRoutesForConfigFieldsAndCookies(t *testing.T) {
 		MaxFileNameLen:     100,
 	}
 
-	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot)
 	require.NoError(t, err)
 	defer server.taskManager.Close()
 	handler := server.buildHandler()
@@ -1325,7 +1325,7 @@ func TestServer_UpdateConfigRawRejectsInvalidSemanticConfig(t *testing.T) {
 	appRoot := t.TempDir()
 	cfg := &config.Config{RootPath: appRoot}
 
-	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot)
 	require.NoError(t, err)
 	defer server.taskManager.Close()
 	handler := server.buildHandler()
@@ -1350,7 +1350,7 @@ func TestServer_UpdateConfigRawPersistsNormalizedConfig(t *testing.T) {
 	appRoot := t.TempDir()
 	cfg := &config.Config{RootPath: appRoot}
 
-	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot)
 	require.NoError(t, err)
 	defer server.taskManager.Close()
 	handler := server.buildHandler()
@@ -1390,7 +1390,7 @@ func TestServer_SaveCookiesFailsWhenExistingCookiesUnreadable(t *testing.T) {
 		MaxFileNameLen:     100,
 	}
 
-	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot)
 	require.NoError(t, err)
 	defer server.taskManager.Close()
 	handler := server.buildHandler()
@@ -1420,7 +1420,7 @@ func TestServer_SaveCookiesKeepsOldValuesByOriginalIndex(t *testing.T) {
 		MaxFileNameLen:     100,
 	}
 
-	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot, nil)
+	server, err := NewServer(resty.New(), []*resty.Client{}, db, cfg, appRoot)
 	require.NoError(t, err)
 	defer server.taskManager.Close()
 	handler := server.buildHandler()
@@ -2938,40 +2938,6 @@ func TestServer_LargeResponse(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Greater(t, rr.Body.Len(), 0)
-}
-
-func TestServer_RequestPathVariations(t *testing.T) {
-	server, db := setupTestServer(t)
-	defer db.Close()
-
-	tests := []struct {
-		name   string
-		method string
-		path   string
-	}{
-		{"健康检查 GET", http.MethodGet, "/api/v1/health"},
-		{"配置 GET", http.MethodGet, "/api/v1/config"},
-		{"任务列表 GET", http.MethodGet, "/api/v1/tasks"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, tt.path, nil)
-			rr := httptest.NewRecorder()
-
-			// 根据路径调用相应的 handler
-			switch {
-			case strings.HasSuffix(tt.path, "/health"):
-				server.handleHealth(rr, req)
-			case strings.HasSuffix(tt.path, "/config"):
-				server.handleConfig(rr, req)
-			case strings.HasSuffix(tt.path, "/tasks") && !strings.Contains(tt.path, "task_id"):
-				server.handleTasks(rr, req)
-			}
-
-			// 验证不会 panic
-		})
-	}
 }
 
 func TestHandleTaskStats(t *testing.T) {

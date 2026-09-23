@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1626,15 +1627,18 @@ func TestWaitRetryDelay_ContextCanceled(t *testing.T) {
 }
 
 func TestDownloader_DownloadStream_CancelDuringRetryDelay(t *testing.T) {
-	attemptCount := 0
+	var attempts atomic.Int32
+	var getOnce sync.Once
+	firstGetServed := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "HEAD" {
 			w.Header().Set("Content-Length", fmt.Sprintf("%d", 11*1024*1024))
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		attemptCount++
+		attempts.Add(1)
 		w.WriteHeader(http.StatusServiceUnavailable)
+		getOnce.Do(func() { close(firstGetServed) })
 	}))
 	defer server.Close()
 
@@ -1648,7 +1652,13 @@ func TestDownloader_DownloadStream_CancelDuringRetryDelay(t *testing.T) {
 	dl := NewDownloader(fw)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(100*time.Millisecond, cancel)
+	defer cancel()
+	// Cancel once the first GET has actually been served, so the downloader is
+	// guaranteed to be parked in the retry delay rather than racing the timer.
+	go func() {
+		<-firstGetServed
+		cancel()
+	}()
 
 	destPath := filepath.Join(tempDir, "retry-cancel.bin")
 	req := DownloadRequest{
@@ -1674,8 +1684,8 @@ func TestDownloader_DownloadStream_CancelDuringRetryDelay(t *testing.T) {
 	if elapsed >= retryDelay {
 		t.Fatalf("expected cancellation before full retry delay, elapsed=%v", elapsed)
 	}
-	if attemptCount != 1 {
-		t.Fatalf("expected only one GET attempt before cancellation, got %d", attemptCount)
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("expected only one GET attempt before cancellation, got %d", got)
 	}
 }
 

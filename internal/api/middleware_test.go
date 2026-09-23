@@ -509,10 +509,8 @@ func TestIsPublicPath(t *testing.T) {
 		{"/system", true},
 		{"/logs", true},
 		{"/api/v1/health", true},
-		{"/api/v1/health?foo=bar", true},
 		{"/api/v1/config/theme", true},
 		{"/api/v1/config/themes", true},
-		{"/api/v1/config/theme?foo=bar", true},
 		{"/static/app.js", true},
 		{"/static/css/styles.css", true},
 		{"/static/", true},
@@ -527,6 +525,12 @@ func TestIsPublicPath(t *testing.T) {
 		{"/api/v1/server/shutdown", false},
 		{"/some/other/path", false},
 		{"/not-static/file.js", false},
+		// 回归：公开名单从前缀匹配改为精确匹配，避免同前缀的新路由被静默放行
+		{"/api/v1/healthz", false},
+		{"/api/v1/config/theme-extra", false},
+		{"/api/v1/config/themesfoo", false},
+		{"/api/v1/auth/loginfoo", false},
+		{"/staticx/app.js", false},
 	}
 
 	for _, tt := range tests {
