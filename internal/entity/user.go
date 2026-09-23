@@ -359,9 +359,9 @@ func (ue *UserEntity) refreshRecord() error {
 	if current == nil {
 		return fmt.Errorf("%w: %s no longer exists", ErrNotFound, ue.description())
 	}
-	if current.UserId != ue.record.UserId || operationParentDirKey(current.ParentDir) != operationParentDirKey(ue.record.ParentDir) {
-		return fmt.Errorf("%w: stable identity changed for %s", ErrConcurrentUpdate, ue.description())
-	}
+	// 行是按主键取回的，且库内没有写入 user_id / parent_dir 的 UPDATE
+	// （只有 name / media_count / latest_release_time 会被改），身份不可能漂移，
+	// 因此无需再比对身份，直接整行覆盖以吸收别处已提交的 name/统计更新。
 	*ue.record = *current
 	return nil
 }

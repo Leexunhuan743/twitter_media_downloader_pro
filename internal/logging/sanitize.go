@@ -167,6 +167,12 @@ func RedactSensitiveText(text string) string {
 		if at <= 0 {
 			return match
 		}
+		// 带 scheme 的 URL 已由上面的 absoluteURLRegex→SanitizeURL 处理过，其
+		// userinfo 掩码是百分号编码的（%5Bredacted%3A…%5D），仍会被本正则命中；
+		// 再掩一次会把 scheme 与字段名一起吞进指纹、且同一凭据出现两种指纹。
+		if strings.Contains(match[:at], "://") {
+			return match
+		}
 		// 已掩码的指纹（[redacted:...] 去括号形态）保持原样，保证幂等。
 		if maskedSecretRegex.MatchString("[" + match[:at] + "]") {
 			return match

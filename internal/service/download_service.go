@@ -381,10 +381,9 @@ type downloadTemplateConfig struct {
 		err error,
 	)
 
-	ReportBeforeDownload  func(taskID string, reporter ProgressReporter)
-	ShouldDownloadProfile func(users []*twitter.User) bool
-	ProfileIdentifier     string
-	CompletionMessage     string
+	ReportBeforeDownload func(taskID string, reporter ProgressReporter)
+	ProfileIdentifier    string
+	CompletionMessage    string
 }
 
 func (s *downloadServiceImpl) executeDownloadTemplate(ctx context.Context, config downloadTemplateConfig) error {
@@ -470,9 +469,12 @@ func (s *downloadServiceImpl) executeDownloadTemplate(ctx context.Context, confi
 	var profileResult *ProfileResult
 	profileWarning := ""
 
+	// 这里的去重与 downloadProfile 内部的去重职责不同、都需要保留：
+	// downloadProfile 是共享边界（ProfileDownload 也走它，而上游只按原字符串去重），
+	// 这里去重则是为了让日志计数与 len==0 分支反映真实的目标集合。
 	profileTargetUsers := dedupeProfileUsers(append(append([]*twitter.User(nil), users...), listMembers...))
 
-	if config.ShouldDownloadProfile(profileTargetUsers) && len(profileTargetUsers) > 0 {
+	if !config.Opts.SkipProfile && len(profileTargetUsers) > 0 {
 		log.Infof("[download] Profile start task_id=%s target=%q users=%d", config.TaskID, config.ProfileIdentifier, len(profileTargetUsers))
 		profileResult, err = s.downloadProfile(
 			ctx, config.TaskID, profileTargetUsers,
@@ -524,10 +526,6 @@ func (s *downloadServiceImpl) UserDownload(ctx context.Context, taskID string, s
 			}
 			return []*twitter.User{user}, nil, nil
 		},
-
-		ShouldDownloadProfile: func(_ []*twitter.User) bool {
-			return !opts.SkipProfile
-		},
 	})
 }
 
@@ -552,10 +550,6 @@ func (s *downloadServiceImpl) ListDownload(ctx context.Context, taskID string, l
 			}
 			return nil, []twitter.ListBase{list}, nil
 		},
-
-		ShouldDownloadProfile: func(_ []*twitter.User) bool {
-			return !opts.SkipProfile
-		},
 	})
 }
 
@@ -579,10 +573,6 @@ func (s *downloadServiceImpl) FollowingDownload(ctx context.Context, taskID stri
 				return nil, nil, err
 			}
 			return nil, []twitter.ListBase{user.Following()}, nil
-		},
-
-		ShouldDownloadProfile: func(_ []*twitter.User) bool {
-			return !opts.SkipProfile
 		},
 	})
 }
@@ -846,10 +836,6 @@ func (s *downloadServiceImpl) BatchDownload(ctx context.Context, taskID string, 
 			}
 			return users, lists, nil
 		},
-
-		ShouldDownloadProfile: func(_ []*twitter.User) bool {
-			return !opts.SkipProfile
-		},
 	})
 }
 
@@ -1014,7 +1000,6 @@ func (s *downloadServiceImpl) downloadProfile(ctx context.Context, taskID string
 		log.Errorf("[profile] Storage manager create failed task_id=%s path=%q error=%q", taskID, logging.Path(pathHelper.Users), safeDownloadError(err))
 		return nil, fmt.Errorf("failed to create profile storage: %w", err)
 	}
-	storage.SetVersionManager(versionManager)
 
 	// 创建 profile 下载器（使用 DB 版本以同步用户实体信息）
 	pd := profile.NewProfileDownloaderWithDB(
@@ -1192,9 +1177,19 @@ func pathWithinAnyRoot(clean string, roots []string) bool {
 		return value
 	}
 	target := compare(clean)
+	separator := compare(sep)
 	for _, root := range roots {
 		candidate := compare(root)
-		if target == candidate || strings.HasPrefix(target, candidate+compare(sep)) {
+		if target == candidate {
+			return true
+		}
+		// 卷根（`D:\`、`/`）本身已以分隔符结尾，再拼一次会得到 `D:\\`、`//`，
+		// 使该根下的所有路径都被拒绝。
+		prefix := candidate
+		if !strings.HasSuffix(prefix, separator) {
+			prefix += separator
+		}
+		if strings.HasPrefix(target, prefix) {
 			return true
 		}
 	}

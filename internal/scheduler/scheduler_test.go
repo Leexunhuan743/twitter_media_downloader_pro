@@ -166,22 +166,60 @@ func TestStartIsIdempotent(t *testing.T) {
 	}
 
 	var calls atomic.Int32
+	firstRun := make(chan struct{})
+	var runOnce sync.Once
 	sc, err := New(configPath, func(entry ScheduleEntry) (string, error) {
 		calls.Add(1)
+		runOnce.Do(func() { close(firstRun) })
 		return "task-1", nil
 	})
 	if err != nil {
 		t.Fatalf("new scheduler: %v", err)
 	}
-	t.Cleanup(sc.Stop)
+
+	// 首次执行完整落账（RunCount=1 且 Triggering 已释放）时才发信号：这是
+	// 后面能确定性区分「重复 Start 多拉了一个 goroutine」的前提。
+	executed := make(chan struct{}, 1)
+	sc.OnStatusChange = func(_ bool, statuses []ScheduleStatus) {
+		if len(statuses) == 1 && statuses[0].RunCount == 1 && !statuses[0].Triggering {
+			select {
+			case executed <- struct{}{}:
+			default:
+			}
+		}
+	}
 
 	sc.Start()
-	sc.Start()
+	sc.Start() // 重复 Start 必须是 no-op
 
-	waitFor(t, 200*time.Millisecond, func() bool {
-		return calls.Load() >= 1
-	})
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-firstRun:
+	case <-time.After(2 * time.Second):
+		t.Fatal("run_on_start execution was not observed")
+	}
+	select {
+	case <-executed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first execution result was not published to the status callback")
+	}
+
+	// 防重入 guard 已释放后再调一次 Start：若重复 Start 真的又拉起一个 loop
+	// goroutine，它要么在 Stop 的 wg.Wait 返回前再执行一次 run_on_start
+	// （计数变 2），要么因覆盖 sc.cancel 而让老 goroutine 的 context 永不被
+	// 取消、Stop 永不返回。两种表现都是缺陷，因此用带兜底的 select 等 Stop，
+	// 而不是 time.Sleep 窗口；此处不注册 t.Cleanup(sc.Stop)，否则缺陷场景下
+	// 兜底失败后的清理会再次卡在 wg.Wait。
+	sc.Start()
+	stopped := make(chan struct{})
+	go func() {
+		sc.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("duplicate Start leaked a scheduler goroutine: Stop never returned")
+	}
 
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("expected one immediate scheduled run after duplicate Start, got %d", got)
@@ -216,7 +254,19 @@ func TestReloadDoesNotStartStoppedScheduler(t *testing.T) {
 	if err := sc.Reload(); err != nil {
 		t.Fatalf("reload scheduler: %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
+
+	// Reload 在未启动的调度器上必须是同步 no-op：不得拉起 loop goroutine
+	// （IsRunning / NextRunAt 是可观测状态），也不得执行 run_on_start。
+	// 这里没有"某事发生"可等（负向语义），因此断言可观测状态；随后的 Stop
+	// 是确定性同步点——若 Reload 误启动了 goroutine，Stop 会等待它把
+	// run_on_start 跑完，计数随即变成 1。
+	if sc.IsRunning() {
+		t.Fatal("expected Reload on a stopped scheduler to keep it stopped")
+	}
+	if next := sc.GetStatuses()[0].NextRunAt; next != nil {
+		t.Fatalf("expected no next run time for a stopped scheduler, got %v", next)
+	}
+	sc.Stop()
 
 	if got := calls.Load(); got != 0 {
 		t.Fatalf("expected Reload on a stopped scheduler not to start jobs, got %d calls", got)
@@ -239,8 +289,11 @@ func TestReloadDoesNotTriggerRunOnStart(t *testing.T) {
 	}
 
 	var calls atomic.Int32
+	firstRun := make(chan struct{})
+	var runOnce sync.Once
 	sc, err := New(configPath, func(entry ScheduleEntry) (string, error) {
 		calls.Add(1)
+		runOnce.Do(func() { close(firstRun) })
 		return "task-1", nil
 	})
 	if err != nil {
@@ -249,9 +302,11 @@ func TestReloadDoesNotTriggerRunOnStart(t *testing.T) {
 	t.Cleanup(sc.Stop)
 
 	sc.Start()
-	waitFor(t, 200*time.Millisecond, func() bool {
-		return calls.Load() >= 1
-	})
+	select {
+	case <-firstRun:
+	case <-time.After(2 * time.Second):
+		t.Fatal("initial run_on_start execution was not observed")
+	}
 
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("expected one immediate run on first Start, got %d", got)
@@ -260,57 +315,15 @@ func TestReloadDoesNotTriggerRunOnStart(t *testing.T) {
 	if err := sc.Reload(); err != nil {
 		t.Fatalf("reload scheduler: %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
+
+	// Reload 重启的 loop 不得再执行 run_on_start（firstStart 已被首次 Start 消费）。
+	// Stop 会 wg.Wait 等待重启后的 goroutine 退出，因此这是确定性同步点：
+	// 若 Reload 误触发了 run_on_start，计数会在 Stop 返回前变成 2。
+	sc.Stop()
 
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("expected Reload not to trigger run_on_start, got %d calls", got)
 	}
-}
-
-func TestStopStartDoesNotTriggerRunOnStart(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "schedules.yaml")
-	content := []byte(`schedules:
-  - type: user
-    target: alice
-    name: Alice
-    schedule: "interval:1h"
-    enabled: true
-    run_on_start: true
-`)
-	if err := os.WriteFile(configPath, content, 0600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	var calls atomic.Int32
-	sc, err := New(configPath, func(entry ScheduleEntry) (string, error) {
-		calls.Add(1)
-		return "task-1", nil
-	})
-	if err != nil {
-		t.Fatalf("new scheduler: %v", err)
-	}
-
-	sc.Start()
-	waitFor(t, 200*time.Millisecond, func() bool {
-		return calls.Load() >= 1
-	})
-
-	if got := calls.Load(); got != 1 {
-		t.Fatalf("expected one immediate run on first Start, got %d", got)
-	}
-
-	sc.Stop()
-	time.Sleep(50 * time.Millisecond)
-
-	sc.Start()
-	time.Sleep(50 * time.Millisecond)
-
-	if got := calls.Load(); got != 1 {
-		t.Fatalf("expected Stop+Start not to trigger run_on_start again, got %d calls", got)
-	}
-
-	sc.Stop()
 }
 
 func TestStopIsIdempotent(t *testing.T) {
@@ -354,17 +367,19 @@ func TestIntervalDefaultDelaysFirstRun(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
+	const firstDelay = 80 * time.Millisecond
 	oldRandomIntervalDelay := randomIntervalDelay
 	randomIntervalDelay = func(interval time.Duration, entryID string) time.Duration {
-		return 80 * time.Millisecond
+		return firstDelay
 	}
 	t.Cleanup(func() {
 		randomIntervalDelay = oldRandomIntervalDelay
 	})
 
-	var calls atomic.Int32
+	ran := make(chan struct{})
+	var runOnce sync.Once
 	sc, err := New(configPath, func(entry ScheduleEntry) (string, error) {
-		calls.Add(1)
+		runOnce.Do(func() { close(ran) })
 		return "task-1", nil
 	})
 	if err != nil {
@@ -372,15 +387,48 @@ func TestIntervalDefaultDelaysFirstRun(t *testing.T) {
 	}
 	t.Cleanup(sc.Stop)
 
-	sc.Start()
-	time.Sleep(30 * time.Millisecond)
-	if got := calls.Load(); got != 0 {
-		t.Fatalf("expected default run_on_start=false to delay first run, got %d calls", got)
+	// 首次状态变更必须是「排定首次运行时间」而不是「已执行一次」：run_on_start
+	// 默认 false 时 runIntervalLoop 走 waitInterval（先写 NextRunAt 再起计时器），
+	// 若默认值被改成 true，第一次回调就会带 RunCount=1。用状态回调作为事件
+	// 同步点，避免"睡一小段再断言没跑"的墙钟窗口。
+	firstChange := make(chan ScheduleStatus, 1)
+	sc.OnStatusChange = func(_ bool, statuses []ScheduleStatus) {
+		if len(statuses) != 1 {
+			return
+		}
+		select {
+		case firstChange <- statuses[0]:
+		default:
+		}
 	}
 
-	waitFor(t, 200*time.Millisecond, func() bool {
-		return calls.Load() == 1
-	})
+	start := time.Now()
+	sc.Start()
+
+	select {
+	case status := <-firstChange:
+		if status.RunCount != 0 {
+			t.Fatalf("expected run_on_start=false to delay the first run, but it already ran %d time(s)", status.RunCount)
+		}
+		if status.NextRunAt == nil {
+			t.Fatal("expected the first status change to schedule NextRunAt")
+		}
+		// NextRunAt 是 waitInterval 在起计时器前写入的 now+delay：必须落在未来
+		// 约 firstDelay 处，而不是"立即"（≈start）或直接使用真实 interval（1h）。
+		delay := status.NextRunAt.Sub(start)
+		if delay < firstDelay/2 || delay > time.Minute {
+			t.Fatalf("expected first run to be delayed by ~%v, got %v", firstDelay, delay)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("scheduler did not publish a first status change")
+	}
+
+	// 首次执行仍必须发生，只是被推迟到 firstDelay 之后。
+	select {
+	case <-ran:
+	case <-time.After(2 * time.Second):
+		t.Fatal("delayed first run never executed")
+	}
 }
 
 func TestTriggerReturnsErrorWhenDownloadFuncReturnsEmptyTaskID(t *testing.T) {
@@ -445,8 +493,7 @@ func TestStatusChangeCallbackCanQuerySchedulerState(t *testing.T) {
 
 	callbackDone := make(chan struct{})
 	var once sync.Once
-	sc.OnStatusChange = func(running bool, _ []ScheduleStatus) {
-		_ = running
+	sc.OnStatusChange = func(_ bool, _ []ScheduleStatus) {
 		once.Do(func() { close(callbackDone) })
 	}
 
@@ -869,18 +916,6 @@ func TestNextDailyTriggerAt_ReturnsTomorrowAtExactTime(t *testing.T) {
 	if !got.Equal(want) {
 		t.Errorf("expected %v, got %v", want, got)
 	}
-}
-
-func waitFor(t *testing.T, timeout time.Duration, condition func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if condition() {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatal("condition was not met before timeout")
 }
 
 // TestValidateEntryListRejectsAtPrefixedTarget 守护 list 目标不剥 @：

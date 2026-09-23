@@ -114,6 +114,9 @@ func SelectVideoVariantURLs(variants []VideoVariant) string {
 	return preferredURL
 }
 
+// videoVariantURLs 取最高码率的视频变体 URL，与格式化条目路径共用同一选择策略
+// （json_folder_download 的 parseFormattedEntry → SelectVideoVariantURLs）：无码率的
+// playlist 变体永不被优先选中；全部无码率时回退到最后一个可用变体。
 func videoVariantURLs(variants gjson.Result) string {
 	parsed := make([]VideoVariant, 0, len(variants.Array()))
 	for _, variant := range variants.Array() {
@@ -123,13 +126,4 @@ func videoVariantURLs(variants gjson.Result) string {
 		})
 	}
 	return SelectVideoVariantURLs(parsed)
-}
-
-// bestVideoVariantURL selects the URL of the highest-bitrate video variant,
-// mirroring the explicit max-bitrate pick used for formatted entries
-// (json_folder_download parseFormattedEntry): playlist variants without a
-// bitrate are never preferred. Falls back to the last variant when none
-// declares a bitrate, which reproduces the legacy @reverse.0 selection.
-func bestVideoVariantURL(variants gjson.Result) string {
-	return videoVariantURLs(variants)
 }

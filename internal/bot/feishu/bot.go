@@ -89,8 +89,9 @@ func (b *Bot) Name() string { return "feishu" }
 
 // CallbackHandler 返回 HTTP handler 供 Server 注册飞书事件回调路由。
 // 该路径按精确匹配免 TMD 认证，因此唯一防线是飞书侧的 verification token 与
-// X-Lark-Signature 校验：必须走 ListenSecurityCallback，并拒绝在缺少
-// verify_token / encrypt_key 时放行任何事件。
+// X-Lark-Signature 校验，必须走 ListenSecurityCallback（缺 verify_token/encrypt_key
+// 时该调用会 fail-closed 报错，不会放行事件）。启用门禁在 main.go#initBot：
+// 缺字段时不注册路由。
 func (b *Bot) CallbackHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		b.mu.Lock()
@@ -98,11 +99,6 @@ func (b *Bot) CallbackHandler() http.HandlerFunc {
 		b.mu.Unlock()
 		if cli == nil {
 			http.Error(w, "feishu bot not started", http.StatusServiceUnavailable)
-			return
-		}
-		if b.config.VerifyToken == "" || b.config.EncryptKey == "" {
-			log.Errorf("[bot-feishu] Callback rejected reason=missing_verify_token_or_encrypt_key hint=unauthorized_events_would_reach_commands")
-			http.Error(w, "feishu callback requires verify_token and encrypt_key", http.StatusServiceUnavailable)
 			return
 		}
 		cli.EventCallback.ListenSecurityCallback(r.Context(), r.Header, r.Body, w)

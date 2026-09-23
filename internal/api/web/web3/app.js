@@ -1685,13 +1685,12 @@ function logParams(page) {
   return p;
 }
 
-// logrus TextFormatter 的级别词固定 4 字符（INFO/ERRO/FATA/WARN/DEBU），
-// 且位于行首或时间戳之后 —— 不能用 substrings 匹配，否则消息正文里的
-// "ERROR" 会误着色、而真正的 ERRO[...] 反而不命中。
+// logrus TextFormatter 的级别词固定 4 字符（INFO/ERRO/FATA/WARN/DEBU），且位于
+// 行首 —— 不能用 substrings 匹配，否则消息正文里的 "ERROR" 会误着色、而真正的
+// ERRO[...] 反而不命中。与 web1 `getLineLevel` / web2 `getLogLineColor` 同语义。
 function logLineColor(clean) {
-  const line = clean.replace(/^\s*(?:time="[^"]*"\s*)?/, '');
-  if (line.startsWith('FATA[') || line.startsWith('ERRO[')) return 'var(--err)';
-  if (line.startsWith('WARN[')) return 'var(--warn)';
+  if (clean.startsWith('FATA[') || clean.startsWith('ERRO[')) return 'var(--err)';
+  if (clean.startsWith('WARN[')) return 'var(--warn)';
   return '';
 }
 

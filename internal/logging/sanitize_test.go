@@ -202,6 +202,24 @@ func TestRedactSensitiveTextDoesNotMatchFieldSuffixes(t *testing.T) {
 	assert.Equal(t, input, RedactSensitiveText(input))
 }
 
+// 回归：带 scheme 的 URL 已由 absoluteURLRegex→SanitizeURL 掩码（userinfo 变成
+// 百分号编码的指纹），无 scheme 的 rootlessUserinfoRegex 不应再掩一次——否则
+// scheme 与字段名会被一起吞进指纹。
+func TestRedactSensitiveTextKeepsSchemeAndFieldForMaskedURLUserinfo(t *testing.T) {
+	input := `proxy_url=http://proxy-user:proxy-password@example.invalid:7897`
+	got := RedactSensitiveText(input)
+
+	assert.NotContains(t, got, "proxy-user")
+	assert.NotContains(t, got, "proxy-password")
+	assert.Contains(t, got, "proxy_url=http://", "scheme and field name must survive")
+	assert.NotContains(t, got, "[redacted:", "userinfo must not be masked a second time")
+
+	// 无 scheme 形态（url.Parse 会当作 scheme:opaque，User 恒为 nil）仍必须掩码掉明文。
+	rootless := RedactSensitiveText(`user:pass@example.invalid`)
+	assert.NotContains(t, rootless, "pass")
+	assert.Contains(t, rootless, "example.invalid")
+}
+
 func TestSanitizeLogText(t *testing.T) {
 	got := SanitizeLogText("\x1b]8;;https://example.invalid\asecret\x1b]8;;\a token=plain-secret\r\x00\x07")
 

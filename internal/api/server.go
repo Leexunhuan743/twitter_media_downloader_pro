@@ -43,7 +43,6 @@ type Server struct {
 	bindAddress       string
 	httpServer        *http.Server
 	lifecycleMu       sync.Mutex
-	started           bool
 	shuttingDown      bool
 	startupDone       chan struct{}
 	startedBots       []bot.Bot
@@ -388,15 +387,13 @@ func (s *Server) Start(port int) error {
 		s.lifecycleMu.Unlock()
 		return http.ErrServerClosed
 	}
-	if s.started {
+	if s.httpServer != nil {
 		s.lifecycleMu.Unlock()
 		return fmt.Errorf("server already started")
 	}
-	s.started = true
 	s.httpServer = httpServer
 	startupDone := make(chan struct{})
 	s.startupDone = startupDone
-	s.startedBots = nil
 	s.lifecycleMu.Unlock()
 
 	log.Infof("[server] API server starting addr=%s", addr)

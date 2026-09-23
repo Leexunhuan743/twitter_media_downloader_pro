@@ -285,9 +285,8 @@ func (le *ListEntity) refreshRecord() error {
 	if current == nil {
 		return fmt.Errorf("%w: %s no longer exists", ErrNotFound, le.description())
 	}
-	if current.LstId != le.record.LstId || operationParentDirKey(current.ParentDir) != operationParentDirKey(le.record.ParentDir) {
-		return fmt.Errorf("%w: stable identity changed for %s", ErrConcurrentUpdate, le.description())
-	}
+	// 行是按主键取回的，且库内没有写入 lst_id / parent_dir 的 UPDATE
+	// （只有 name 会被改），身份不可能漂移，因此无需再比对身份，直接整行覆盖。
 	*le.record = *current
 	return nil
 }

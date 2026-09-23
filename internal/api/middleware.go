@@ -1,8 +1,6 @@
 package api
 
 import (
-	"bufio"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -12,7 +10,7 @@ import (
 )
 
 // responseRecorder 包装 http.ResponseWriter 以记录状态码
-// 同时实现了 http.Flusher、http.Hijacker 和 http.Pusher 接口
+// 同时实现了 http.Flusher 接口
 type responseRecorder struct {
 	http.ResponseWriter
 	statusCode int
@@ -33,22 +31,6 @@ func (rr *responseRecorder) Flush() {
 	if f, ok := rr.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
-}
-
-// Hijack 实现 http.Hijacker 接口（WebSocket 需要）
-func (rr *responseRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if h, ok := rr.ResponseWriter.(http.Hijacker); ok {
-		return h.Hijack()
-	}
-	return nil, nil, http.ErrNotSupported
-}
-
-// Push 实现 http.Pusher 接口（HTTP/2 Server Push 需要）
-func (rr *responseRecorder) Push(target string, opts *http.PushOptions) error {
-	if p, ok := rr.ResponseWriter.(http.Pusher); ok {
-		return p.Push(target, opts)
-	}
-	return http.ErrNotSupported
 }
 
 // loggingMiddleware 请求日志中间件

@@ -4,13 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/unkmonster/tmd/internal/downloader"
 )
 
 type FileStorageManager struct {
-	usersBasePath  string
-	versionManager downloader.VersionManager
+	usersBasePath string
 }
 
 func NewFileStorageManager(usersBasePath string) (*FileStorageManager, error) {
@@ -23,10 +20,6 @@ func NewFileStorageManager(usersBasePath string) (*FileStorageManager, error) {
 	}
 
 	return &FileStorageManager{usersBasePath: usersBasePath}, nil
-}
-
-func (fsm *FileStorageManager) SetVersionManager(vm downloader.VersionManager) {
-	fsm.versionManager = vm
 }
 
 func (fsm *FileStorageManager) getUserProfilePath(userTitle string) string {

@@ -363,13 +363,10 @@ func (sc *Scheduler) triggerEntry(index int, entry ScheduleEntry) (taskID string
 				status.LastError = fmt.Sprintf("panic: %v", r)
 				status.ConsecutiveFailures++
 			})
-			released = true
+			// 必须给命名返回值赋值：否则上层把 panic 当成成功（200 + 空 task_id），
+			// 与 ScheduleStatus 里刚写入的 LastError=panic 自相矛盾。
+			err = fmt.Errorf("schedule %q trigger panicked: %v", entry.Name, r)
 			return
-		}
-		// 正常返回路径的安全网：releaseAndUpdateStatus 可能因 generation 变更
-		// 返回 false 而跳过清理，这里兜底释放 Triggering。
-		if !released {
-			sc.releaseTriggeringLocked(index, gen)
 		}
 	}()
 
@@ -540,13 +537,7 @@ func (sc *Scheduler) execute(idx int, entry ScheduleEntry, gen int64) {
 				status.LastError = fmt.Sprintf("panic: %v", r)
 				status.ConsecutiveFailures++
 			})
-			released = true
 			return
-		}
-		// 正常返回路径的安全网：releaseAndUpdateStatus 可能因 generation 变更
-		// 返回 false 而跳过清理，这里兜底释放 Triggering。
-		if !released {
-			sc.releaseTriggeringLocked(idx, acquiredGen)
 		}
 	}()
 
@@ -650,17 +641,6 @@ func (sc *Scheduler) releaseAndUpdateStatus(idx int, entry ScheduleEntry, gen in
 
 	notifyStatusChange(callback, running, statuses)
 	return true
-}
-
-// releaseTriggeringLocked 无条件清除 Triggering 标志，作为 releaseAndUpdateStatus
-// 因 generation/ID 校验失败而跳过清理时的安全网。
-// 仅在当前 generation 与获取时一致时执行，避免误清 reload 后新 goroutine 设置的标志。
-func (sc *Scheduler) releaseTriggeringLocked(idx int, acquiredGen int64) {
-	sc.mu.Lock()
-	if sc.generation == acquiredGen && idx >= 0 && idx < len(sc.statuses) {
-		sc.statuses[idx].Triggering = false
-	}
-	sc.mu.Unlock()
 }
 
 func (sc *Scheduler) applyConfig(entries []ScheduleEntry, parsed []*ParsedSchedule, statuses []ScheduleStatus) {

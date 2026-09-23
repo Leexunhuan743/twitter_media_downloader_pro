@@ -1,11 +1,9 @@
 package api
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,13 +16,12 @@ import (
 )
 
 // mockResponseWriter 用于测试的 ResponseWriter
-// 实现了 http.Flusher, http.Hijacker, http.Pusher 接口
+// 实现了 http.Flusher 接口
 type mockResponseWriter struct {
 	headers    http.Header
 	statusCode int
 	body       []byte
 	flushed    bool
-	hijacked   bool
 	written    bool
 }
 
@@ -58,20 +55,6 @@ func (m *mockResponseWriter) Flush() {
 	m.flushed = true
 }
 
-func (m *mockResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	m.hijacked = true
-	return nil, nil, nil
-}
-
-// mockHijacker 实现 http.Hijacker 接口
-type mockHijacker struct {
-	*mockResponseWriter
-}
-
-func (m *mockHijacker) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	return nil, nil, nil
-}
-
 // mockFlusher 实现 http.Flusher 接口
 type mockFlusher struct {
 	*mockResponseWriter
@@ -79,17 +62,6 @@ type mockFlusher struct {
 
 func (m *mockFlusher) Flush() {
 	m.flushed = true
-}
-
-// mockPusher 实现 http.Pusher 接口
-type mockPusher struct {
-	*mockResponseWriter
-	pushCalled bool
-}
-
-func (m *mockPusher) Push(target string, opts *http.PushOptions) error {
-	m.pushCalled = true
-	return nil
 }
 
 func TestResponseRecorder_WriteHeader(t *testing.T) {
@@ -146,51 +118,6 @@ func TestResponseRecorder_Flush(t *testing.T) {
 		// mockResponseWriter 实现了 Flush()，所以会被调用
 		rr.Flush()
 		assert.True(t, mock.flushed)
-	})
-}
-
-func TestResponseRecorder_Hijack(t *testing.T) {
-	t.Run("底层支持 Hijacker", func(t *testing.T) {
-		mock := &mockHijacker{mockResponseWriter: newMockResponseWriter()}
-		rr := &responseRecorder{ResponseWriter: mock}
-
-		conn, rw, err := rr.Hijack()
-		assert.NoError(t, err)
-		assert.Nil(t, conn)
-		assert.Nil(t, rw)
-	})
-
-	t.Run("底层不支持 Hijacker", func(t *testing.T) {
-		// 使用 httptest.ResponseRecorder，它实现了 Hijacker
-		mock := httptest.NewRecorder()
-		rr := &responseRecorder{ResponseWriter: mock}
-
-		conn, rw, err := rr.Hijack()
-		// httptest.ResponseRecorder 实现了 Hijacker，但会返回错误
-		// 因为 hijack 不支持
-		assert.Error(t, err)
-		assert.Nil(t, conn)
-		assert.Nil(t, rw)
-	})
-}
-
-func TestResponseRecorder_Push(t *testing.T) {
-	t.Run("底层支持 Pusher", func(t *testing.T) {
-		mock := &mockPusher{mockResponseWriter: newMockResponseWriter()}
-		rr := &responseRecorder{ResponseWriter: mock}
-
-		err := rr.Push("/test", nil)
-		assert.NoError(t, err)
-		assert.True(t, mock.pushCalled)
-	})
-
-	t.Run("底层不支持 Pusher", func(t *testing.T) {
-		mock := newMockResponseWriter()
-		rr := &responseRecorder{ResponseWriter: mock}
-
-		err := rr.Push("/test", nil)
-		assert.Error(t, err)
-		assert.Equal(t, http.ErrNotSupported, err)
 	})
 }
 
@@ -399,8 +326,6 @@ func TestResponseRecorder_InterfaceCompliance(t *testing.T) {
 	// 测试 responseRecorder 实现了所有需要的接口
 	var _ http.ResponseWriter = (*responseRecorder)(nil)
 	var _ http.Flusher = (*responseRecorder)(nil)
-	var _ http.Hijacker = (*responseRecorder)(nil)
-	var _ http.Pusher = (*responseRecorder)(nil)
 }
 
 func TestLoggingMiddleware_WithDifferentMethods(t *testing.T) {

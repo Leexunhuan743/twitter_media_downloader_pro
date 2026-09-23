@@ -332,8 +332,11 @@ func TestPopNextBatchEntityKeepsDeferredEntityInHeap(t *testing.T) {
 	if ok || selected != nil || depth != 0 {
 		t.Fatalf("deferred selection = (%v, %d, %v), want nil, 0, false", selected, depth, ok)
 	}
-	if heap.Size() != 1 || heap.Peek() != second {
+	if heap.Size() != 1 {
 		t.Fatal("deferred entity was removed from heap")
+	}
+	if top, ok := heap.TryPeek(); !ok || top != second {
+		t.Fatal("deferred entity is no longer at the top of the heap")
 	}
 
 	selected, depth, ok = popNextBatchEntity(heap, depthByEntity, 0, userTweetRateLimit, func(string) {})

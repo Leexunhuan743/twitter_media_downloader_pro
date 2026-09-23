@@ -342,6 +342,64 @@ func TestPagination_ToResponse(t *testing.T) {
 			wantPage:  5,
 			wantSize:  100,
 		},
+		// TotalPages 的向上取整边界：total 相对 pageSize 少一 / 相等 / 多一，
+		// 以及整除与非整除两侧（原 TestPagination_ToResponse_TotalPagesCalculation
+		// 的算术表已合并到此处，不再单独维护第二份同样的断言）。
+		{
+			name:      "总数少一页",
+			page:      1,
+			pageSize:  20,
+			total:     19,
+			data:      []int{},
+			wantPages: 1,
+			wantTotal: 19,
+			wantPage:  1,
+			wantSize:  20,
+		},
+		{
+			name:      "总数恰好一页",
+			page:      1,
+			pageSize:  20,
+			total:     20,
+			data:      []int{},
+			wantPages: 1,
+			wantTotal: 20,
+			wantPage:  1,
+			wantSize:  20,
+		},
+		{
+			name:      "总数多一条进位",
+			page:      1,
+			pageSize:  20,
+			total:     21,
+			data:      []int{},
+			wantPages: 2,
+			wantTotal: 21,
+			wantPage:  1,
+			wantSize:  20,
+		},
+		{
+			name:      "总数刚过整页边界",
+			page:      1,
+			pageSize:  20,
+			total:     101,
+			data:      []int{},
+			wantPages: 6,
+			wantTotal: 101,
+			wantPage:  1,
+			wantSize:  20,
+		},
+		{
+			name:      "非整除页大小",
+			page:      1,
+			pageSize:  10,
+			total:     99,
+			data:      []int{},
+			wantPages: 10,
+			wantTotal: 99,
+			wantPage:  1,
+			wantSize:  10,
+		},
 	}
 
 	for _, tt := range tests {
@@ -358,36 +416,6 @@ func TestPagination_ToResponse(t *testing.T) {
 			assert.Equal(t, tt.wantPage, resp.Page)
 			assert.Equal(t, tt.wantSize, resp.PageSize)
 			assert.Equal(t, tt.data, resp.Data)
-		})
-	}
-}
-
-func TestPagination_ToResponse_TotalPagesCalculation(t *testing.T) {
-	tests := []struct {
-		total    int
-		pageSize int
-		expected int
-	}{
-		{0, 20, 1},
-		{1, 20, 1},
-		{19, 20, 1},
-		{20, 20, 1},
-		{21, 20, 2},
-		{100, 20, 5},
-		{101, 20, 6},
-		{100, 10, 10},
-		{99, 10, 10},
-	}
-
-	for _, tt := range tests {
-		t.Run(fmt.Sprintf("total_%d_size_%d", tt.total, tt.pageSize), func(t *testing.T) {
-			p := &Pagination{
-				Page:     1,
-				PageSize: tt.pageSize,
-			}
-
-			resp := p.ToResponse([]int{}, tt.total)
-			assert.Equal(t, tt.expected, resp.TotalPages)
 		})
 	}
 }

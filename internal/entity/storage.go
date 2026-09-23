@@ -31,6 +31,11 @@ func entityPath(parentDir, name string) (string, error) {
 // storedEntityPath resolves names already persisted by older versions. Legacy
 // trailing spaces and dots are normalized only on Windows, where Win32 resolves
 // them to the same path without the suffix. New names always use ValidateName.
+//
+// 读取路径只做「可寻址性」所需的归一化与穿越校验（validateNameComponent）：
+// 再对库中已有名跑 validateWindowsCompatibleName 会把 `a:b`、`CON` 这类遗留记录
+// 变成永久不可寻址 —— Path()/Remove/Rename/Sync 全部报错，反而卡死而不是收敛。
+// 目录在 Windows 上本来就无法以这些名字存在，交给文件系统层报错即可。
 func storedEntityPath(parentDir, name string) (string, error) {
 	normalized, err := normalizeStoredName(name)
 	if err != nil {
@@ -116,9 +121,6 @@ func normalizeStoredName(name string) (string, error) {
 	normalized := strings.TrimRight(name, " .")
 	if err := validateNameComponent(normalized); err != nil {
 		return "", fmt.Errorf("%w: legacy name is not addressable on Windows: %q", ErrInvalidName, name)
-	}
-	if err := validateWindowsCompatibleName(normalized); err != nil {
-		return "", fmt.Errorf("%w: legacy name is not safely addressable on Windows: %q", ErrInvalidName, name)
 	}
 	return normalized, nil
 }
@@ -250,9 +252,9 @@ func CleanupStagedDirectories(db *sqlx.DB, parentDirs ...string) (StagedDirector
 		if !dup {
 			byHash[hash] = append(byHash[hash], activePath)
 		}
-		if _, err := os.Lstat(activePath); err == nil {
-			continue
-		} else if !os.IsNotExist(err) {
+		// 目录是否存在不再参与归属判定（目录缺失的活跃记录同样参与），
+		// 这里仅保留探测失败时的诊断信息。
+		if _, err := os.Lstat(activePath); err != nil && !os.IsNotExist(err) {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("inspect active entity path %q: %w", activePath, err))
 		}
 

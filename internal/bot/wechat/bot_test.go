@@ -122,6 +122,11 @@ func TestBot_NotifyTaskChanges(t *testing.T) {
 	bot.notifyTaskChanges(nil)
 	bot.notifyTaskChanges("bad type")
 }
+
+// TestBotStopIsIdempotent 是各 provider 共享的 Stop 幂等契约的唯一样例：
+// 每个 provider 的 Stop 都是 stopOnce.Do(close(stopCh)) + wg.Wait()，行为逐字
+// 相同，因此不再在 telegram/discord/feishu 包里重复。放在 wechat 包是因为
+// internal/bot/bot_test.go 属于父包，构造不出带私有 stopCh 的 provider。
 func TestBotStopIsIdempotent(t *testing.T) {
 	bot := &Bot{stopCh: make(chan struct{})}
 

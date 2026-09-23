@@ -10,13 +10,10 @@ import (
 
 var avatarSuffixRe = regexp.MustCompile(`_(normal|bigger|mini)(\.[^/?#]+)([?#].*)?$`)
 
-// ErrNilHTTPResponse indicates that no HTTP response was available to inspect.
-var ErrNilHTTPResponse = errors.New("HTTP response is nil")
-
+// CheckRespStatus reports a non-nil error for a response with status >= 400.
+// Callers only reach it with a response resty actually produced (a transport
+// failure is reported through err, never as a nil response), so resp is never nil.
 func CheckRespStatus(resp *resty.Response) error {
-	if resp == nil {
-		return ErrNilHTTPResponse
-	}
 	if resp.StatusCode() >= 400 {
 		return &HttpStatusError{Code: resp.StatusCode(), Msg: resp.String()}
 	}

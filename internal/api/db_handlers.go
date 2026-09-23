@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/database"
 	entitypkg "github.com/unkmonster/tmd/internal/entity"
@@ -26,7 +27,7 @@ const entityDeleteBatchSize = 100
 
 // userLinkSymlinkPath 解析 user_links 行对应的磁盘符号链接路径。
 // 解析失败（缺 parent_dir/name）返回空串：那种行本来就没有可寻址的链接。
-func userLinkSymlinkPath(db queryer, link *database.UserLink) string {
+func userLinkSymlinkPath(db *sqlx.DB, link *database.UserLink) string {
 	if link == nil {
 		return ""
 	}
@@ -36,11 +37,6 @@ func userLinkSymlinkPath(db queryer, link *database.UserLink) string {
 		return ""
 	}
 	return path
-}
-
-// queryer 是 user_links 路径解析所需的最小查询接口（*sqlx.DB / *sqlx.Tx 都满足）。
-type queryer interface {
-	Get(dest interface{}, query string, args ...interface{}) error
 }
 
 // removeUserLinkSymlinks 在行删除后同步移除磁盘链接。
@@ -664,6 +660,11 @@ func (s *Server) writeEntityMutationErrorWithDetail(w http.ResponseWriter, err e
 	switch {
 	case errors.Is(err, entitypkg.ErrNotFound):
 		s.writeError(w, http.StatusNotFound, resource+" not found")
+	case errors.Is(err, entitypkg.ErrInvalidName):
+		// handler 的预校验让这条在常规路径上不可达，但没有它时非法实体名会落到
+		// default 分支变成 500。实体层才是名称规则的唯一权威，这里保证它的
+		// 拒绝语义对任何调用方都是 400。
+		s.writeErrorDetail(w, http.StatusBadRequest, "Invalid name", err.Error())
 	case errors.Is(err, entitypkg.ErrPathConflict):
 		message := pathConflictMessage
 		if detail != "" {

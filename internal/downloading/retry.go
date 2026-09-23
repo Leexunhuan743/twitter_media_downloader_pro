@@ -134,10 +134,10 @@ func RetryFailedJsonTweets(ctx context.Context, dumper *JsonTweetDumper, client 
 		return RetrySummary{}, nil
 	}
 
-	tweetIDToSource := make(map[uint64]string, len(toretry))
+	tweetIDToSources := make(map[uint64][]string, len(toretry))
 	for sourcePath, ids := range dumper.set {
 		for id := range ids {
-			tweetIDToSource[id] = sourcePath
+			tweetIDToSources[id] = append(tweetIDToSources[id], sourcePath)
 		}
 	}
 
@@ -153,28 +153,39 @@ func RetryFailedJsonTweets(ctx context.Context, dumper *JsonTweetDumper, client 
 			if !ok || jpt.Tweet == nil {
 				return nil, true, ""
 			}
-			sourcePath, exists := tweetIDToSource[jpt.Tweet.Id]
-			if !exists {
+			sources, exists := tweetIDToSources[jpt.Tweet.Id]
+			if !exists || len(sources) == 0 {
 				return nil, true, ""
 			}
-			return sourcePath, false, ""
+			return sources, false, ""
 		},
 		remove: func(pt PackagedTweet, key any) bool {
 			jpt, ok := pt.(JsonPackagedTweet)
 			if !ok || jpt.Tweet == nil {
 				return false
 			}
-			sourcePath, ok := key.(string)
+			sources, ok := key.([]string)
 			if !ok {
 				return false
 			}
-			return dumper.Remove(sourcePath, jpt.Tweet.Id)
+			// 同一推文可能被多个导出文件记录（例如重叠的搜索结果导出）。媒体只
+			// 下一次，成功后必须从**所有**记录它的来源里摘除：此前用
+			// map[id]source 单值映射，map 遍历序随机决定删哪一个，导致另一个来源
+			// 的条目永久留在失败列表里（重试永远清不干净）。
+			removed := false
+			for _, sourcePath := range sources {
+				if dumper.Remove(sourcePath, jpt.Tweet.Id) {
+					removed = true
+				}
+			}
+			return removed
 		},
 	})
 
 	for _, id := range noUrlTweetIDs {
-		if sp, ok := tweetIDToSource[id]; ok {
-			dumper.Remove(sp, id)
+		// 无 URL 的条目不可重试（媒体链接已缺失），从所有记录它的来源摘除。
+		for _, sourcePath := range tweetIDToSources[id] {
+			dumper.Remove(sourcePath, id)
 		}
 	}
 

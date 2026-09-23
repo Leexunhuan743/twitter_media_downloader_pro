@@ -26,3 +26,17 @@ covprofile
 .review
 Dockerfile
 docker-compose.yml
+
+# 本地构建产物与工具缓存（Dockerfile 只 `go build .`，这些不进镜像）
+*.exe
+*.backup.*
+.migrating
+.replacing
+release-artifacts
+.gitnexus
+__pycache__/
+.tmd2/
+uploads/
+tools/xapi-probe/saved-api-json
+lat.md
+doc

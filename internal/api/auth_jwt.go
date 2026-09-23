@@ -42,11 +42,12 @@ func enforceMaxRefreshAge(tokenString string, apiKey string) error {
 		}
 		return secret, nil
 	},
-		jwt.WithIssuer(jwtIssuer),
-		jwt.WithSubject(jwtSubject),
 		jwt.WithValidMethods([]string{"HS256"}),
-		// 只解析并验证签名/issuer/subject，不校验过期——过期正是本函数
-		// 需要检查的状态（golang-jwt 默认在过期时返回 nil token）。
+		// 只解析并验证签名，不校验过期——过期正是本函数需要检查的状态
+		// （golang-jwt 默认在过期时返回 nil token）。
+		// 注意：WithoutClaimsValidation 会跳过整个 validator，因此这里**不要**
+		// 再写 WithIssuer/WithSubject（它们只会写进被跳过的 validator，恒不生效）；
+		// iss/sub 由下方显式断言校验。
 		jwt.WithoutClaimsValidation(),
 	)
 	if err != nil {

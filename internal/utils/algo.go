@@ -25,14 +25,6 @@ func (hp *Heap[T]) Push(val T) {
 	hp.siftUp(len(hp.data) - 1)
 }
 
-func (hp *Heap[T]) Pop() T {
-	top, ok := hp.TryPop()
-	if !ok {
-		panic("heap is empty")
-	}
-	return top
-}
-
 // TryPop removes the top value and reports whether the heap was non-empty.
 func (hp *Heap[T]) TryPop() (T, bool) {
 	hp.mtx.Lock()
@@ -53,14 +45,6 @@ func (hp *Heap[T]) TryPop() (T, bool) {
 		hp.siftDown(0)
 	}
 	return top, true
-}
-
-func (hp *Heap[T]) Peek() T {
-	top, ok := hp.TryPeek()
-	if !ok {
-		panic("heap is empty")
-	}
-	return top
 }
 
 // TryPeek returns the top value without removing it and reports whether it exists.

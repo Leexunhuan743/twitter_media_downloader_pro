@@ -20,6 +20,11 @@ func TestParseRetryAfter(t *testing.T) {
 		{name: "zero", in: "0", want: defaultClientCooldown},
 		{name: "seconds", in: "47", want: 47 * time.Second},
 		{name: "whitespace", in: " 60 ", want: 60 * time.Second},
+		{name: "clamped", in: "999999", want: maxRetryAfterSeconds * time.Second},
+		// 回归：未做上限时 `time.Duration(secs) * time.Second` 溢出成负值，
+		// setClientCooldown 会把负冷却当作“无需冷却”忽略，账号完全不被冷却。
+		{name: "overflow int64", in: "9999999999", want: maxRetryAfterSeconds * time.Second},
+		{name: "max int64", in: "9223372036854775807", want: maxRetryAfterSeconds * time.Second},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

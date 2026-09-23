@@ -508,8 +508,16 @@ func SetClientError(cli *resty.Client, err error) {
 	}
 }
 
+// maxRetryAfterSeconds 上限：Retry-After 是服务端可控的字符串，直接乘进
+// time.Duration 会溢出 int64 变成负值，而负冷却会被 setClientCooldown 当作
+// “无需冷却”忽略 —— 账号于是完全不被冷却、继续被派发去撞 429。
+const maxRetryAfterSeconds = 3600
+
 func parseRetryAfter(header string) time.Duration {
 	if secs, err := strconv.Atoi(strings.TrimSpace(header)); err == nil && secs > 0 {
+		if secs > maxRetryAfterSeconds {
+			secs = maxRetryAfterSeconds
+		}
 		return time.Duration(secs) * time.Second
 	}
 	return defaultClientCooldown
@@ -547,7 +555,9 @@ func clientInCooldown(cli *resty.Client) bool {
 	if time.Now().Before(until) {
 		return true
 	}
-	clientCooldowns.Delete(cli)
+	// CompareAndDelete：并发续期可能已把 until 换成更晚的值，直接 Delete 会
+	// 误删仍在冷却中的条目（客户端随即被视为可用）。只在值未被改动时清理。
+	clientCooldowns.CompareAndDelete(cli, v)
 	return false
 }
 
@@ -589,9 +599,12 @@ func armGlobalCooldownIfIdle(d time.Duration) {
 		globalCooldownMu.Unlock()
 		return
 	}
-	globalCooldownUntil = now.Add(d)
+	until := now.Add(d)
+	globalCooldownUntil = until
 	globalCooldownMu.Unlock()
-	log.Warnf("[twitter] Global cooldown until=%s dur=%s", globalCooldownUntil.Format(time.RFC3339), d.Round(time.Second))
+	// 在锁内取值到局部变量再打日志：globalCooldownUntil 会被其他 goroutine 并发写，
+	// 解锁后读它是未同步的 time.Time 读（-race 可捕获）。
+	log.Warnf("[twitter] Global cooldown until=%s dur=%s", until.Format(time.RFC3339), d.Round(time.Second))
 }
 
 func setGlobalCooldownUntil(until time.Time) {

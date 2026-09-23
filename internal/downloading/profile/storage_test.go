@@ -134,21 +134,6 @@ func TestFileStorageManager_GetFilePathWithExt(t *testing.T) {
 	}
 }
 
-func TestFileStorageManager_SetVersionManager(t *testing.T) {
-	tempDir := t.TempDir()
-
-	fsm, err := NewFileStorageManager(tempDir)
-	if err != nil {
-		t.Fatalf("NewFileStorageManager() error = %v", err)
-	}
-
-	// SetVersionManager should not panic with nil
-	fsm.SetVersionManager(nil)
-
-	// In a real test, we'd create a mock VersionManager
-	// but for now we just verify the method exists and doesn't panic
-}
-
 func TestFileStorageManager_getUserProfilePath(t *testing.T) {
 	tempDir := t.TempDir()
 

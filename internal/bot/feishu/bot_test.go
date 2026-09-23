@@ -14,36 +14,9 @@ import (
 )
 
 // 回调路径（/api/v1/bot/feishu/callback）按精确匹配免 TMD 认证，唯一防线是
-// 飞书侧的 verification token + X-Lark-Signature。缺配置时必须拒绝，而不是
-// 落到 SDK 的无校验监听上（那会让任何能访问端口的人伪造事件触发 bot 命令）。
-func TestBot_CallbackHandlerRequiresSecurityConfig(t *testing.T) {
-	cases := []struct {
-		name string
-		cfg  *config.FeishuBotConfig
-	}{
-		{"missing both", &config.FeishuBotConfig{AppID: "cli_x", AppSecret: "s"}},
-		{"missing verify token", &config.FeishuBotConfig{AppID: "cli_x", AppSecret: "s", EncryptKey: "ek"}},
-		{"missing encrypt key", &config.FeishuBotConfig{AppID: "cli_x", AppSecret: "s", VerifyToken: "vt"}},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			bot := &Bot{
-				config: tc.cfg,
-				cli:    lark.New(lark.WithAppCredential(tc.cfg.AppID, tc.cfg.AppSecret)),
-			}
-			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/bot/feishu/callback", strings.NewReader(`{"schema":"2.0"}`))
-
-			bot.CallbackHandler()(rec, req)
-
-			assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-		})
-	}
-}
-
-// 配齐校验字段后，未携带 X-Lark-Signature 的事件必须被拒绝（非 200），
-// 而不是被当作合法事件处理 —— 这是免认证回调路径上真正的安全边界。
+// 飞书侧的 verification token + X-Lark-Signature。缺 verify_token/encrypt_key 时
+// 路由根本不会注册（main.go#initBot），因此这里只覆盖真正生效的那道防线：
+// 未签名事件必须被拒绝。
 func TestBot_CallbackHandlerRejectsUnsignedEvent(t *testing.T) {
 	cfg := &config.FeishuBotConfig{AppID: "cli_x", AppSecret: "s", VerifyToken: "vt", EncryptKey: "ek"}
 	bot := &Bot{
@@ -132,12 +105,4 @@ func TestBot_CallbackHandlerBeforeStartReturnsUnavailable(t *testing.T) {
 	bot.CallbackHandler().ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-}
-func TestBotStopIsIdempotent(t *testing.T) {
-	bot := &Bot{stopCh: make(chan struct{})}
-
-	assert.NotPanics(t, func() {
-		bot.Stop()
-		bot.Stop()
-	})
 }

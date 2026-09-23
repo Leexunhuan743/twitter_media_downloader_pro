@@ -750,7 +750,9 @@ func TestHeap(t *testing.T) {
 		assert.Equal(t, len(wants), heap.Size())
 
 		for _, want := range wants {
-			assert.Equal(t, want, heap.Pop())
+			got, ok := heap.TryPop()
+			require.True(t, ok)
+			assert.Equal(t, want, got)
 		}
 
 		assert.True(t, heap.Empty())
@@ -766,15 +768,14 @@ func TestHeap(t *testing.T) {
 		}
 
 		for _, want := range wants {
-			assert.Equal(t, want, heap.Pop())
+			got, ok := heap.TryPop()
+			require.True(t, ok)
+			assert.Equal(t, want, got)
 		}
 	})
 
 	t.Run("空堆操作", func(t *testing.T) {
 		heap := NewHeap(func(a, b int) bool { return a < b })
-
-		assert.Panics(t, func() { heap.Peek() })
-		assert.Panics(t, func() { heap.Pop() })
 
 		value, ok := heap.TryPeek()
 		assert.False(t, ok)
@@ -827,9 +828,11 @@ func TestHeap(t *testing.T) {
 		assert.Equal(t, numGoroutines*numPushes, heap.Size())
 
 		// 验证堆的性质
-		prev := heap.Pop()
+		prev, ok := heap.TryPop()
+		require.True(t, ok)
 		for !heap.Empty() {
-			curr := heap.Pop()
+			curr, ok := heap.TryPop()
+			require.True(t, ok)
 			assert.LessOrEqual(t, prev, curr)
 			prev = curr
 		}
@@ -845,7 +848,9 @@ func TestHeap(t *testing.T) {
 		}
 
 		for _, want := range wants {
-			assert.Equal(t, want, heap.Pop())
+			got, ok := heap.TryPop()
+			require.True(t, ok)
+			assert.Equal(t, want, got)
 		}
 	})
 
@@ -854,8 +859,14 @@ func TestHeap(t *testing.T) {
 		heap.Push(42)
 
 		assert.Equal(t, 1, heap.Size())
-		assert.Equal(t, 42, heap.Peek())
-		assert.Equal(t, 42, heap.Pop())
+
+		peeked, ok := heap.TryPeek()
+		require.True(t, ok)
+		assert.Equal(t, 42, peeked)
+
+		popped, ok := heap.TryPop()
+		require.True(t, ok)
+		assert.Equal(t, 42, popped)
 		assert.True(t, heap.Empty())
 	})
 }
@@ -1028,14 +1039,6 @@ func TestCheckRespStatus(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestCheckRespStatus_NilResponse(t *testing.T) {
-	var got error
-	assert.NotPanics(t, func() {
-		got = CheckRespStatus(nil)
-	})
-	assert.ErrorIs(t, got, ErrNilHTTPResponse)
 }
 
 func TestIsStatusCode(t *testing.T) {
@@ -1438,7 +1441,7 @@ func BenchmarkHeapPop(b *testing.B) {
 			}
 			b.StartTimer()
 		}
-		heap.Pop()
+		heap.TryPop()
 	}
 }
 

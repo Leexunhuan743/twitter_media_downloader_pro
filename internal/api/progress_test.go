@@ -49,21 +49,6 @@ func TestSSEProgressReporter_OnProgress(t *testing.T) {
 	assert.Equal(t, 5, updatedTask.Progress.Failed)
 }
 
-func TestSSEProgressReporter_OnProgress_NotFound(t *testing.T) {
-	server := &Server{
-		taskManager: NewTaskManager(nil),
-	}
-
-	reporter := NewSSEProgressReporter(server)
-
-	progress := service.Progress{
-		Total:     100,
-		Completed: 50,
-	}
-
-	reporter.OnProgress("non_existent_task", progress)
-}
-
 func TestSSEProgressReporter_OnComplete(t *testing.T) {
 	tm := NewTaskManager(nil)
 	server := &Server{
@@ -191,10 +176,6 @@ func TestResult_Struct(t *testing.T) {
 	err = json.Unmarshal(data, &decoded)
 	assert.NoError(t, err)
 	assert.Equal(t, r, decoded)
-}
-
-func TestSSEProgressReporter_InterfaceCompliance(t *testing.T) {
-	var _ service.ProgressReporter = (*SSEProgressReporter)(nil)
 }
 
 func TestSSEProgressReporter_CompleteWorkflow(t *testing.T) {

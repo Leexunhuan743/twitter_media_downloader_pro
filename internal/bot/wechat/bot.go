@@ -131,30 +131,26 @@ func (b *Bot) runWithReconnect(ctx context.Context) {
 		}
 
 		loginCtx, loginCancel := context.WithTimeout(ctx, 2*time.Minute)
-		var qrMu sync.Mutex
 		qrPath := ""
 		err := b.wechatBot.Login(loginCtx, func(qrCode string) {
 			// 二维码是可直接渲染扫描的登录凭据：写盘 0600，日志只给路径。
 			// 内容绝不进日志/终端/Web 面板。
+			// SDK 在调用 Login 的同一 goroutine 内同步回调（wechat/auth.go#Auth.Login），
+			// 因此 qrPath 无需额外同步。
 			path, writeErr := writeLoginQR(b.appRootPath, qrCode)
 			if writeErr != nil {
 				log.Warnf("[bot-wechat] Login QR unavailable bytes=%d error=%q hint=scan_to_login",
 					len(qrCode), logging.RedactSensitiveText(writeErr.Error()))
 				return
 			}
-			qrMu.Lock()
 			qrPath = path
-			qrMu.Unlock()
 			log.Infof("[bot-wechat] Login QR written path=%q bytes=%d hint=scan_to_login", logging.Path(path), len(qrCode))
 		})
 		loginCancel()
 		// 登录窗口结束即删除二维码：它是登录凭据，不应在磁盘上留存。
-		qrMu.Lock()
-		written := qrPath
-		qrMu.Unlock()
-		if written != "" {
-			if removeErr := os.Remove(written); removeErr != nil && !os.IsNotExist(removeErr) {
-				log.Warnf("[bot-wechat] Login QR cleanup failed path=%q error=%q", logging.Path(written), removeErr.Error())
+		if qrPath != "" {
+			if removeErr := os.Remove(qrPath); removeErr != nil && !os.IsNotExist(removeErr) {
+				log.Warnf("[bot-wechat] Login QR cleanup failed path=%q error=%q", logging.Path(qrPath), removeErr.Error())
 			}
 		}
 		if err != nil {

@@ -75,6 +75,9 @@ func UpdateUserEntityNameIfCurrent(db *sqlx.DB, id int, currentName, newName str
 
 // UpdateUserEntityMetadata atomically updates only the optional statistics
 // supplied by the caller. A nil pointer leaves that column unchanged.
+// At least one of mediaCount / latestReleaseTime must be non-nil; the PATCH
+// handler reaches this only when a statistics field is present, and an empty
+// SET list would not be valid SQL anyway.
 // Timestamps are normalized to UTC so the stored TEXT order matches the
 // instant order (see NormalizeLegacyTimestamps).
 func UpdateUserEntityMetadata(db *sqlx.DB, id int, mediaCount *int32, latestReleaseTime *sql.NullTime) error {
@@ -88,9 +91,6 @@ func UpdateUserEntityMetadata(db *sqlx.DB, id int, mediaCount *int32, latestRele
 		normalized := NormalizeNullTime(*latestReleaseTime)
 		setClauses = append(setClauses, "latest_release_time=?")
 		args = append(args, normalized)
-	}
-	if len(setClauses) == 0 {
-		return nil
 	}
 	args = append(args, id)
 	result, err := db.Exec(`UPDATE user_entities SET `+strings.Join(setClauses, ", ")+` WHERE id=?`, args...)
