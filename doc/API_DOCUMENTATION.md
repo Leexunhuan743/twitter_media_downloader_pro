@@ -310,7 +310,11 @@ curl -X POST http://localhost:25556/api/v1/auth/refresh \
 #### 检查 JWT 状态
 
 查询当前 JWT 的有效性和过期时间。
-> 🔒 **需要认证**：需要携带 JWT。与 refresh 相同——authMiddleware 放行签名正确（允许过期）的 JWT，handler 返回过期状态而非 401。
+> 🔒 **需要认证**：需要携带 JWT。与 refresh 相同——authMiddleware 放行签名正确（允许过期）的 JWT。
+> **过期且仍可续期**：返回 200，`valid=false`、`expired=true`，客户端应调用 refresh。
+> **过期且已超出续期窗口（>24h）**：返回 `401` + `X-Token-Type: too-old`，与 refresh 保持同一信号，客户端应清除本地令牌并重新登录（否则会一直用死令牌轮询）。
+
+```http
 GET /api/v1/auth/check
 Authorization: Bearer <jwt-token>
 ```

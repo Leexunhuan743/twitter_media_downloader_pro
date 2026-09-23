@@ -26,7 +26,7 @@ flowchart TD
 | 环节 | 唯一实现 | 备注 |
 |------|----------|------|
 | 根目录归一化 | `internal/path/store.go#NormalizeRoot` | TrimSpace → 非空 → `filepath.Abs(filepath.Clean())` |
-| 用户目录名 | `internal/naming/user_naming.go#UserDirTitle` | 全仓库唯一入口，`resolveUserTitle` / `syncUserAndEntity` / mark / jsonfile 都走它 |
+| 用户目录名 | `internal/naming/user_naming.go#UserDirTitle` | 全仓库唯一入口；`syncUserAndEntity` / mark / jsonfile 都走它，`resolveUserTitle` 只在 `req.UserTitle` 为空时回落到它（非空时直接用 `utils.WinFileNameWithMaxLen(req.UserTitle, maxLen)`） |
 | 列表目录名 | `internal/naming/list_naming.go#NewListNamingFromBase` | 保 `(listID)` 后缀 |
 | 推文文件名 | `internal/naming/tweet_naming.go#TweetNaming#FileName` | 文本 + `_<tweetID>` + 规范化扩展名 |
 | 扩展名推导 | `internal/utils/fs.go#MediaExtFromUrl` | 推文媒体专用；profile 走另一条更保守的规则 |
@@ -44,13 +44,13 @@ flowchart TD
 |------|------|
 | `internal/utils/fs.go#DefaultMaxFileNameLen` | 常量 **158**（注释：为扩展名与碰撞后缀预留空间） |
 | `internal/config/config.go` | `MinFileNameLen = 50`、`MaxFileNameLen = 245`；字段名 `max_file_name_len`、环境变量 `TMD_MAX_FILE_NAME_LEN` |
-| 字段 Setter | 空值 → `utils.DefaultMaxFileNameLen`；非法值 → 默认；否则 `clampInt(n, 50, 245)` |
+| 字段 Setter | 空值 → `utils.DefaultMaxFileNameLen`；**非数字 → 返回 `invalid number` 错误、写入被拒**（`parseIntWithDefault` 只在输入 `TrimSpace` 后为空时给默认值）；否则 `clampInt(n, 50, 245)` |
 | 配置归一化 | `normalizeInt(conf.MaxFileNameLen, 0, MinFileNameLen, MaxFileNameLen)` —— **0 表示"用默认值"**，负数归零 |
-| `internal/api/config_handlers.go#HandleConfig` | `MaxFileNameLen == 0` 时回填 `utils.DefaultMaxFileNameLen` |
+| `internal/api/config_handlers.go#handleConfig`（`(*Server).handleConfig`） | `MaxFileNameLen == 0` 时回填 `utils.DefaultMaxFileNameLen` |
 | `internal/downloading/types.go#RuntimeOptions.normalizedMaxFileNameLen` | `<= 0` 时回填 `utils.DefaultMaxFileNameLen`（双层兜底，见 `internal/service/download_service.go#runtimeOptions` 注释） |
 | `internal/downloading/profile/types.go#DefaultConfig` | `MaxFileNameLen: utils.DefaultMaxFileNameLen` |
 
-**预算是 UTF-8 字节，不是字符数。** 所有截断都经过 `internal/utils/fs.go#TruncateUTF8`：按字节切且不会把 rune 切一半；`maxLen <= 0` 返回空串（命名层因此把 `maxLen <= 0` 视为"产出空名"）。
+**预算是 UTF-8 字节，不是字符数。** 命名层所有与预算相关的截断都经过 `internal/utils/fs.go#TruncateUTF8`：按字节切且不会把 rune 切一半；`maxLen <= 0` 返回空串（命名层因此把 `maxLen <= 0` 视为"产出空名"）。清洗器内部另有一套等价逻辑：`internal/utils/fs.go#sanitizeFileNameCore` 逐 rune 判断 `buffer.Len()+utf8.RuneLen(ch) > maxLen` 才停，同样不会切开 rune。
 
 ### 2.2 `ExtReserveLen = 8`
 
@@ -62,12 +62,12 @@ flowchart TD
 |--------|----------------------|----------|------------------|
 | `TweetNaming` | `_<tweetID>`（`idPart`） | `maxTextLen = maxLen - len("_"+tweetID) - ExtReserveLen`，下限 0 | 19 位 ID → 文本 130 字节 + 20 字节 id + ≤8 字节扩展名 |
 | `UserNaming` | `(screenName)`（X 规则下 ≤15 ASCII → 后缀 ≤17 字节） | `fitNameWithSuffix(name, suffix, maxLen)`：`TruncateUTF8(name, maxLen-len(suffix)) + suffix` | 显示名 ≤141 字节 + 后缀 |
-| `ListNaming` | `(listID)` | 同上；标题已带 `(id)` 时先剥离再加回 | 标题 ≤145 字节 + 后缀 |
+| `ListNaming` | `(listID)` | 同上；标题已带 `(id)` 时先剥离再加回 | 标题 ≤ `158 − len("(listID)")` 字节（10 位 ID 时为 145；19 位 ID 时为 137） |
 
 关键实现细节（都读自源码，改预算时逐条对照）：
 
 - `TweetNaming#textPartFor`：文本截到 `maxTextLen` 后为空则用字面量 `tweet`；`baseName = 文本 + "_" + tweetID`。
-- `TweetNaming#logBaseName`：**只用于日志**，额外 `TrimRightFunc(unicode.IsSpace)`，长度不受 `maxLen` 约束。
+- `TweetNaming#logBaseName`：**只用于日志**（唯一调用点是 `LogFormat`），额外 `TrimRightFunc(unicode.IsSpace)`，且不经过 `normalizeExtension`/`finalizeName`；但它的文本部分取自 `textPart()`，**仍受 `maxTextLen`**（`maxLen − len("_"+tweetID) − ExtReserveLen`）约束——只有末尾的空格裁剪是它独有的。
 - `UserNaming`：`screenName` 为空时整份预算给显示名（空则 `user`）；`parenthesizedIdentity` 在 `maxLen < 3` 时退化为不带括号的裸截断。
 - `ListNaming`：`isNilListNamer` 用 `reflect` 识别 typed-nil，nil 输入 → `list`；标题为空且 `id != 0` → `list(id)`。
 - `UserNaming`/`ListNaming` 结尾统一过 `internal/naming/base.go#finalizeName`（`TrimSpace` + `WinFileNameWithMaxLen`），`TweetNaming` 不过这一步（见 §3）。
@@ -141,7 +141,7 @@ flowchart LR
 | `https://example.com/media/xyz` | `""` | 无信息 |
 | `://invalid-url` | 错误 | `url.Parse` 失败 |
 
-- `GetExtFromUrl` 用 `path.Ext`（不是 `filepath.Ext`）：URL path 永远是正斜杠，Windows 上 `filepath.Ext` 会按 `\` 切分而失效。
+- `GetExtFromUrl` 用 `path.Ext`（不是 `filepath.Ext`）：URL 的 path 部分永远是正斜杠，用 `path` 包就与宿主 OS 的路径语义无关。（源码注释给的理由是"Windows 上 `filepath.Ext` 会按 `\` 切分而失效"——该失败模式 `[INFERENCE]` 只是沿用注释说法，未实测；`path.Ext` 这个选择本身是确定的。）
 - `twimgFormatExt` 只接受 **小写化后**、字符全为 `[a-z0-9]`、长度 ≤5 的值；主机必须是 `twimg.com` 或 `*.twimg.com`（`isTwitterMediaHost`，末尾点会被去掉）。
 - 调用方 `internal/downloading/tweet_download.go#downloadTweetMedia`：`ext, err := utils.MediaExtFromUrl(u); if err != nil || ext == "" { ext = ".jpg" }`。
 
@@ -159,7 +159,7 @@ flowchart LR
 
 ### 4.3 最后一道复检与"没有兼容查找"
 
-- `TweetNaming#FileName` = `guardReservedFileName(baseName + normalizeExtension(ext))`；`guardReservedFileName` 调 `utils.IsWindowsReservedFileName`（`CON`/`PRN`/`AUX`/`NUL`/`CLOCK$`/`CONIN$`/`CONOUT$`/`COM1-9`/`LPT1-9` 及 `CON.txt` 形态）。推文名永远带 `_id` 后缀，所以这是纵深防御而非真实改名路径。
+- `TweetNaming#FileName` = `guardReservedFileName(tn.baseName() + normalizeExtension(ext))`；`guardReservedFileName` 调 `utils.IsWindowsReservedFileName`，命中就给整个文件名加 `_` 前缀。判定细节（`internal/utils/fs.go#IsWindowsReservedFileName`，这是**保留项**，不要删）：取**第一个** `.` 之前的部分 → 大写 → 去掉尾部空格，再做两件事——(a) 精确匹配 `CON`/`PRN`/`AUX`/`NUL`/`CLOCK$`/`CONIN$`/`CONOUT$` 与上标变体 `COM¹`/`COM²`/`COM³`/`LPT¹`/`LPT²`/`LPT³`；(b) 若剩下 4 个字符且以 `COM`/`LPT` 开头、末位是 `1`–`9` 也算（即 `COM1`–`COM9`/`LPT1`–`LPT9`；`COM0`、`COM10` 不算）。所以 `CON.txt` 与 `CON .txt`（尾随空格先被去掉）都会被判中。推文名永远带 `_id` 后缀，所以这是纵深防御而非真实改名路径。
 - **不存在旧命名查找。** `TweetNaming.LegacyFileNames`、目录级碰撞索引、旧文本清洗器、`Tweet.LegacyURLs` 都已删除。一条历史命名规则被替换后，重新处理该推文只会**用新规则重新下载**：如果新旧文件名不同，旧文件留在原地成为孤儿；如果文件名相同（文件已存在），会被去重器改名成 `名称(1).ext`（§5）。没有"先找找旧文件"这一步，任何在 `naming` 里加回查找逻辑的改动都会引入第二个真相源。
 - **`EnsurePhotoHighQuality` 不是命名逻辑。** 它只改查询参数（`name=4096x4096`，已有 `orig`/`4096x4096` 时不动）且跳过视频，不碰 path，因此不会改变扩展名推导结果；`downloadTweetMedia` 是"用原始 URL 推扩展名、用升级后 URL 下载"。改这条链路时不要顺手把 `MediaExtFromUrl` 的入参换成 `downloadURL`——今天结果相同，但会把两件事耦合起来。
 - **profile 走另一条更保守的规则**：`internal/downloading/profile/downloader.go#imageExtFromURL` = `GetExtFromUrl` + lowercase + 白名单 `{.jpg,.jpeg,.png,.gif,.webp}`，否则 `.jpg`。它不看 `format` 查询参数，也与 `MediaExtFromUrl` 无关。
@@ -181,7 +181,7 @@ flowchart LR
 
 **递增规则**（`nextUniquePathCandidate`）：
 
-- 形如 `名称(N).ext`（`N` 为十进制数字，且未超 `int` 上限）→ `名称(N+1).ext`；
+- 形如 `名称(N).ext`（`N` 能被 `strconv.Atoi` 解析且未超 `int` 上限）→ `名称(N+1).ext`；注意 `Atoi` 接受前导符号，所以 `名称(-1).ext` 会变成 `名称(0).ext`；
 - 其他情况 → `名称(1).ext`；
 - dotfile 特判：`filepath.Ext(".env") == ".env"`，代码在 `ext == base` 时把 ext 置空，于是得到 `.env(1)` 而不是 `.ext` 形态（`TestUniquePath_PreservesDotfileName`）。
 
@@ -207,8 +207,8 @@ flowchart LR
 临时文件细节：
 
 - 建在**目标同目录**（`filepath.Dir(path)`），保证 `os.Rename` 是同卷原子替换（Windows 上 `os.Rename` 走 `MoveFileEx(REPLACE_EXISTING)`）。
-- pattern 默认 `.tmp_*`；当**基础名**匹配 `tweetIDRe = _(\d+(\(\d+\))?)\.\w+$` 时改为 `.tmp_*_<tweetID>`，让残留文件可追溯回推文（例如 `text_1355100264760393735.jpg` → `.tmp_<random>_1355100264760393735`）。
-- `defer os.Remove(tempPath)`：失败路径会清理，但**进程被强杀时残留不会被任何清理逻辑回收**（全仓库只有这两处出现 `.tmp_`）。
+- pattern 默认 `.tmp_*`；当**基础名**匹配 `tweetIDRe = _(\d+(?:\(\d+\))?)\.\w+$` 时改为 `.tmp_*_<tweetID>`，让残留文件可追溯回推文（例如 `text_1355100264760393735.jpg` → `.tmp_<random>_1355100264760393735`）。
+- `defer os.Remove(tempPath)` 负责本次失败路径；**强杀/断电遗留由下次往同目录写入时的 `sweepStaleTempFiles` 回收**：只删 mtime 早于 `staleTempFileAge = time.Hour` 的 `.tmp_*`，且每个目录每进程只扫一次（`sweptDirs`）。所以"目录里还躺着 `.tmp_*`"在 1 小时内是正常的——它要么正在被写，要么还没等到下一次写入触发清扫。
 
 ### 6.2 流式 `Write`（`req.IsStream()`，>10MB 走这条路）
 
@@ -266,12 +266,12 @@ flowchart LR
 
 | 路径片段 | 定义处 | 内容 |
 |----------|--------|------|
-| `.loongtweet` | `internal/downloading/profile/downloader.go` 的 `profileDirName` 与 `saveTweetJson`/`saveLoongTweet` | 推文 `*.json`/`*.txt`；profile 在其下再套一层 |
+| `.loongtweet` | `internal/downloading/profile/downloader.go` 的 `profileDirName` 与 `internal/downloading/tweet_download.go` 的 `saveTweetJson`/`saveLoongTweet` | 推文 `*.json`/`*.txt`；profile 在其下再套一层 |
 | `.loongtweet/.profile` | `profileSubDirName` | `avatar.jpg`、`banner.jpg`、`description.txt`、`profile.json`、`.versions/` |
 | `.data` | `path.NewStorePath` | DB 与错误转储 |
 | `.tmd-remove-v1-<hash>-*` | `internal/entity/storage.go` 的 `stagedDirectoryVersionPrefix` | 实体目录删除的暂存名，启动时由 `entity.CleanupStagedDirectories` 回收 |
 
-`internal/downloading/profile/storage.go#FileStorageManager.GetFilePath` 是 profile 文件名（`avatar.jpg` 等）的唯一来源；`GetFilePathWithExt` 在扩展名白名单命中时给 `avatar`/`banner` 换后缀。
+`internal/downloading/profile/storage.go#FileStorageManager.GetFilePath` 是 profile 文件名（`avatar.jpg` 等）的唯一来源；`GetFilePathWithExt` 只做 `avatar`/`banner` + 传入后缀的字符串拼接，**不带白名单**——扩展名的白名单过滤发生在调用方 `internal/downloading/profile/downloader.go#imageExtFromURL`（`{.jpg,.jpeg,.png,.gif,.webp}`，否则 `.jpg`）。
 
 ---
 
@@ -281,7 +281,7 @@ flowchart LR
 
 1. 生成任何落盘名称时**必须**走 `naming` 包：目录用 `naming.UserDirTitle` / `naming.NewListNamingFromBase(...).SanitizedTitle()`，媒体文件用 `naming.TweetNaming#FileName`。新增入口（CLI/API/JSON 重放）一律复用，不要各自内联清洗。
 2. 推文媒体路径**必须**用 `TweetNaming#FilePathWithResolver`（批次共享 `utils.NewUniquePathResolver()`）。无 resolver 的 `TweetNaming#FilePath` 只服务测试与 benchmark。
-3. 实体（用户/列表）目录名**必须**能通过 `internal/entity/storage.go#ValidateName`：单一路径组件、不以空格或点结尾、不含 Windows 保留字符、非保留设备名。
+3. 实体（用户/列表）目录名**必须**能通过 `internal/entity/storage.go#ValidateName`：单一路径组件、不以空格或点结尾、不含 Windows 保留字符（`[/\\:*?"<>|]` 与 `< 32` 的控制字符）、非保留设备名、不使用内部暂存前缀 `.tmd-remove-`（大小写不敏感）。
 4. 任何"按长度截断"的实现**必须**以 UTF-8 字节为单位并走 `utils.TruncateUTF8`。
 5. 改动任何清洗/扩展名/预算逻辑时，**必须**同时评估"已落盘文件名是否变化"，并在 CHANGELOG 里写清一次性重下载与孤儿文件的影响。
 
@@ -311,7 +311,7 @@ flowchart LR
 | `UniquePath` / `nextUniquePathCandidate` | 去重后缀规则 | 影响重下载落地名与 `(N)` 递增；不改变"已存在则不覆盖"这一点，除非显式删除磁盘检查 |
 | `FileWriter` 临时文件/锁 | 并发写与原子性 | 临时文件建到别的目录会破坏 `os.Rename` 原子性；256 槽锁改小会放大同路径并发冲突（它是"同路径串行"的**唯一**保证） |
 | `CreateVersion` 时间戳/stem | `.versions/` 文件名 | 旧备份不会被重命名；`_unknown` 前缀约定改变会让旧备份与新备份混排 |
-| `StorePath` 子路径 | 整个存储布局 | `Root/users` 改名等于所有实体目录失联（DB 里存的是相对父目录 + 名字，见 `entity.Sync`）；`.data` 改名等于换库 |
+| `StorePath` 子路径 | 整个存储布局 | `Root/users` 改名等于所有实体目录失联（DB 的 `user_entities`/`lst_entities` 存的是**绝对**父目录 `parent_dir` + 名字——`internal/entity/list.go`/`user.go` 都先 `filepath.Abs` 再写库，见 `entity.Sync`）；`.data` 改名等于换库 |
 
 ---
 
@@ -339,7 +339,7 @@ go test ./internal/path/ -run TestNewStorePath -count=1
 
 ### 11.2 端到端（命名规则最接近"独立运行"的方式）
 
-命名子系统没有独立可执行入口，最接近真实验证的是 CLI 单用户下载（需要一个可用 `config.yaml`；`root_path` 决定落盘位置，`max_file_name_len` 决定预算）：
+命名子系统没有独立可执行入口，最接近真实验证的是 CLI 单用户下载（需要一个可用的 `conf.yaml`——`main.go` 按 `<appRootPath>/conf.yaml` 定位；`root_path` 决定落盘位置，`max_file_name_len` 决定预算）：
 
 ```bash
 go run . -user <screen_name>          # 拉取该用户的推文与媒体，按 naming 规则落盘
@@ -365,4 +365,4 @@ npx --yes lat.md@0.12.2 check    # 与 CI 的 verify 门禁一致（.github/work
 
 1. `doc/naming-and-paths.md` 里出现的每个符号（`TweetNaming#FileName`、`WinFileNameWithMaxLenStable`、`nextUniquePathCandidate`…）在源码里能搜到。
 2. 改命名规则后，`users/` 下是否出现同一实体的两个目录（改名遗留）——用 `read users/` 目视即可。
-3. 媒体目录里是否出现 `.tmp_*` 残留（强杀进程后可能出现，当前无自动清理）。
+3. 媒体目录里是否出现 `.tmp_*` 残留（强杀进程后可能出现；下次往该目录写入时会清扫超过 1 小时的遗留，见 §6.1——所以刚强杀完看到残留属正常，别急着当成 bug）。

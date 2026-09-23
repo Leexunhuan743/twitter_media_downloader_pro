@@ -10,13 +10,13 @@
 |---|---|---|---|---|
 | `tools/tmd-db-migrate.py` | Python 3（仅 stdlib） | 重写 `foo.db` 里历史存储根路径（`parent_dir` 等） | **会**：原地改库 + 生成一致性备份 | 否 |
 | `tools/test_tmd_db_migrate.py` | Python 3 `unittest` | 上者的单元测试（9 个用例） | 只在 `tempfile` 目录里建库 | 否 |
-| `tools/convert_db_to_legacy.py` | Python 3 | 新版 tmd 库 → tmd-2.4.4 旧版格式 | 生成新文件；**会 `os.remove` 同名目标** | 否 |
+| `tools/convert_db_to_legacy.py` | Python 3 | 新版 tmd 库 → tmd-2.4.4 旧版格式（**历史工具**：无调用方、无测试，见 §3 状态栏） | 生成新文件；**会 `os.remove` 同名目标**，无 dry-run | 否 |
 | `tools/xapi-probe/main.go` | Go（属主 module） | 诊断 X GraphQL 的 HTTP 429 / `error code: 1015` | 只读 X；`-save-dir` 会写响应体到磁盘 | `go vet ./...`、`go test ./...` 会编译它 |
 | `tools/tmd-download-button.user.js` | Tampermonkey | X 个人页注入"推送下载"按钮 | 向 TMD 服务发一次下载任务请求 | 否 |
 | `tools/web1-e2e/` | omp 浏览器内 JS | web1 前端浏览器回归（helpers + 入口 + 9 个测试文件） | 会真实新增/删除 1 条调度规则、1 个 mark 任务 | 否 |
 | `tools/web3-e2e/` | Node + omp 浏览器 | web3 响应式布局验收 + 只读 mock server | mock 与脚本均只读 | 否 |
 
-`readme.md` 未记录这些工具（grep `tools/`、`xapi`、`probe` 均无命中）；命令口径以 `lat.md/development.md` 的 X API Probe Tool 一节为准，本文件与之保持一致。
+`readme.md` **没有**逐工具说明：它只在文档索引表里链接了 `doc/tools.md`（`readme.md` 中唯一一处 `tools/` 命中，描述为"`tools/` 下迁移/转换/探针/E2E 脚本用法"），grep `xapi`、`probe`、`tmd-db-migrate`、`convert_db` 均无命中；命令口径以 `lat.md/development.md` 的 X API Probe Tool 一节为准，本文件与之保持一致。
 
 ```mermaid
 flowchart TD
@@ -99,7 +99,7 @@ sequenceDiagram
 
 | 输入形态 | style | 匹配规则 |
 |---|---|---|
-| `F:\twitter_dl`、`D:/archive` | `windows`，`volume_id="f:"` | 盘符比较**大小写不敏感**（`casefold`），段内比较也不敏感 |
+| `F:\twitter_dl`、`D:/archive` | `windows`，`volume_id` 为小写盘符（`"f:"`、`"d:"`） | 盘符比较**大小写不敏感**（`casefold`），段内比较也不敏感 |
 | `\\server\share\root` | `windows`（UNC），`volume_id="server/share"` | host/share 必须齐全，否则报 `missing host/share components`；比较不敏感 |
 | `/data`、`/mnt/archive` | `posix`，`volume_id="/"` | 段比较**严格区分大小写** |
 | `users`、`..\x`、`a\b`（无盘符/无前导 `/`） | 相对路径 | **永不改写**，原样返回 |
@@ -195,6 +195,13 @@ python -m py_compile tools/tmd-db-migrate.py
 
 ## 3. convert_db_to_legacy.py —— 新库降级为 tmd-2.4.4 旧库
 
+> **状态：历史工具**（能用，但按"不再维护"对待）。判定依据：
+> - **无仓内调用路径**：全仓检索 `convert_db_to_legacy` 只命中 `CHANGELOG.md` 与 `doc/` 下的文档，没有任何 Go / Python / JS 代码或 CI 步骤调用它——它只有"人手敲命令行"这一条入口。
+> - **无测试**：仓库里没有针对它的测试（`tools/test_tmd_db_migrate.py` 只覆盖 `tmd-db-migrate.py`）；改动只能靠手工跑一次再抽查输出库（§3.5 末尾的命令）。
+> - **无 CI**：见 §8.1 的表格；`python -m py_compile tools/convert_db_to_legacy.py` 只做语法自检。
+> - **破坏性**：目标路径已存在即 `os.remove` 重建，**没有 dry-run、没有备份开关**（下面 §3.2 第 2 步、§3.4）；这与 §8.4 对新工具的"必须提供只读预演"要求相抵触，所以它是**遗留例外**，不要拿它当新工具的模板。
+> - 这份文件自 `1c27c8e`（2026-06-25，"move convert_db_to_legacy.py to tools/"）移入 `tools/` 后未再改动，仍是 177 行。
+
 ### 3.1 用途与方向
 
 脚本 docstring 写明方向：**新版 tmd 库 → 旧版 tmd-2.4.4 兼容库**，即"降级导出"，用于把新版本数据交给旧版程序读取。它是**单向**的：没有旧→新的反向路径（那由 `internal/database/sqlite_migration.go#migrateExistingDatabase` 在启动时负责）。
@@ -239,7 +246,7 @@ python tools/convert_db_to_legacy.py <新版db路径> <输出旧版db路径>
 - **目标路径会被无条件删除**：脚本 `os.remove(legacy_db_path)` 不看内容、不备份。别把有价值的旧库路径当第二个参数。
 - **失败不清理**：脚本没有 `try/except`，中途异常（源库缺表 → `sqlite3.OperationalError`）会带着 traceback 退出；已创建的输出文件**不会**被删除。`executescript` 会先提交 DDL，所以半成品通常是一个"只有 schema、没有数据"的库 `[INFERENCE]`。
 - **不启用外键检查**：脚本未 `PRAGMA foreign_keys=ON`，因此源库里已有的孤儿行会被原样复制，不会报错。
-- **不动源库**：源库只读使用，转换是"另存为"。
+- **不动源库**：脚本对源库只执行 `SELECT`，没有任何写语句（连接是普通读写模式，未加 `?mode=ro`——与 `tmd-db-migrate.py` 的 `#_readonly_database_uri` 不同）。
 - 输出库没有任何版本/校验标记，**无法**从文件本身判断它对应哪个新版本 schema。
 
 ### 3.5 已知边界
@@ -326,9 +333,9 @@ stress 细节（`#runStress`）：
 | 风格 | 客户端构造 | 实际带的头 |
 |---|---|---|
 | default（app-like） | `#newProbeClient(..., browser=false)` | 只有 `twitter.SetClientAuth` 设的 `Authorization: Bearer <bearer>`、`auth_token`/`ct0` cookie、`X-Csrf-Token`——**与产品请求一致** |
-| browser（Chrome-like） | `#newProbeClient(..., browser=true)` | 在上一行基础上 `SetHeaders(browserHeaders)`：Chrome/131 UA、`Accept`、`Accept-Language: en-US`、`Origin`/`Referer: https://x.com`、`Sec-Fetch-*`、`X-Twitter-Active-User: yes`、`X-Twitter-Client-Language: en` |
+| browser（Chrome-like） | `#newProbeClient(..., browser=true)` | 在上一行基础上 `SetHeaders(browserHeaders)`：Chrome/131 UA、`Accept`、`Accept-Language: en-US,en;q=0.9`、`Origin`/`Referer: https://x.com`、`Sec-Fetch-*`、`X-Twitter-Active-User: yes`、`X-Twitter-Client-Language: en` |
 
-产品侧确实只设最小头：`internal/twitter/client.go#SetClientAuth` 只有 bearer + cookie + CSRF（全仓库唯一显式 `User-Agent` 在登录流程取 `https://x.com/home` 的那处请求里）。因此：
+产品侧确实只设最小头：`internal/twitter/client.go#SetClientAuth` 只有 bearer + cookie + CSRF（**产品代码里**唯一显式 `User-Agent` 在登录流程取 `https://x.com/home` 的那处请求；探针自己的 `browserHeaders` 另有一份，正是本行要对比的"browser 风格"）。因此：
 
 - **default 429/1015、browser 200** → 大概率是 Cloudflare 对"不像浏览器"的请求拦截；修产品需要补头，而不是换账号。
 - **两者都 429** → 更像限流、账号状态或代理出口 IP 问题；接着用 `-accounts`（换账号）和 `-conf`/`proxy` 对比（换出口）继续二分。
@@ -404,7 +411,7 @@ go vet ./tools/xapi-probe
 
 ## 5. tmd-download-button.user.js —— Tampermonkey 推送按钮
 
-> 规范摘要见 [[lat.md/api-server.md]] 的 Userscript Remote API Access 一节（`@connect *` 的语义与远端部署要求）。脚本第 22 行自身也挂了 `// @lat: [[lat.md/api-server#API Server#Userscript Remote API Access]]` 锚点。
+> 规范摘要见 [[lat.md/api-server.md]] 的 Userscript Remote API Access 一节（`@connect *` 的语义与远端部署要求）。脚本第 21 行自身也挂了 `// @lat: [[lat.md/api-server#API Server#Userscript Remote API Access]]` 锚点。
 
 ### 5.1 它是什么、装在哪
 
@@ -458,7 +465,7 @@ go vet ./tools/xapi-probe
 
 - **后端路由与响应契约**：脚本打到 `internal/api/server.go` 注册的 `POST /api/v1/users/{screen_name}/download`（处理器 `#handleUserDownloadRoute`，成功返回 202）。改路径、改 body 字段（`auto_follow`）或改响应里 `data.task_id` 的位置，脚本不会编译报错，只会运行时 400/404 或 toast 显示 `-`。
 - **认证方式**：脚本固定用 `Authorization: Bearer <api_key>`；服务端若不再接受 API Key 作为 Bearer（`internal/api/middleware.go#authMiddleware`），按钮会 401。
-- **lat 锚点**：脚本第 22 行的 `// @lat: [[lat.md/api-server#API Server#Userscript Remote API Access]]` 与 [[lat.md/api-server.md]] 的对应小节互相引用，改脚本时不要删这行注释。
+- **lat 锚点**：脚本第 21 行的 `// @lat: [[lat.md/api-server#API Server#Userscript Remote API Access]]` 与 [[lat.md/api-server.md]] 的对应小节互相引用，改脚本时不要删这行注释。
 - **X 页面结构**：`primaryColumn`/`UserName`/`userActions`/三点 SVG path 任一变化都会让注入静默失效（脚本只会在控制台之外表现为"按钮不出现"）。
 
 ## 6. web1-e2e —— web1 前端浏览器回归
@@ -507,7 +514,7 @@ go run . -server -port 25557
 - 单文件同理：先注入 `helpers.js` 源码，再 eval 目标文件（入口正是这么拼的：`helperSrc + '\n' + ';' + src`，每个文件一次独立 evaluate）。
 - 目录用环境变量 `TMD_WEB1_E2E_DIR` 覆盖；**默认值是硬编码绝对路径** `C:/Users/leeexx/Documents/NewProject/tmd/tools/web1-e2e`，换机器/换目录必须设置该变量。
 - 执行顺序固定：`01 → 02 → 03 → 04 → 05 → 06 → 07 → 09 → 08`。08 会 `location.reload()`，所以放最后；README 的覆盖表里 08 排在 09 前面，以 `run-all.js` 的数组为准。
-- 入口注册了 `page.on('dialog', d => d.accept())`，自动确认 raw 编辑器的"未保存修改"弹窗，避免 evaluate 卡死。
+- 入口注册了 `page.on('dialog', d => d.accept().catch(() => {}))`，自动确认 raw 编辑器的"未保存修改"弹窗，避免 evaluate 卡死。
 - 08 结束后入口会用后端 API 读 `/api/v1/config/theme`，若已被切成 web2 就 POST 切回 web1，再 `?e2e=<ts>` 重载页面。
 
 ### 6.4 产物
@@ -640,7 +647,7 @@ node tools/web3-e2e/mock-server.js 25558
 
 ### 8.1 它们不在 CI 里（只有一个例外）
 
-`.github/workflows/go.yml` 只在 tag push（`v*`）时跑 `go test -race -count=1 ./...`、`go vet ./...`、`npx --yes lat.md@0.12.2 check`；`docker.yml` 只构建镜像。仓库里**没有** Python / Node 的 CI job。
+`.github/workflows/go.yml` 只在 tag push（`v*`）时跑 `go test -race -count=1 ./...`、`go vet ./...`、`npx --yes lat.md@0.12.2 check`（其中 `actions/setup-node@v4` 装 Node 22 只为最后那条）；`docker.yml` 只构建镜像。仓库里**没有**任何会执行 `tools/` 下 Python / JS 工具的 CI job。
 
 | 工具 | CI 是否执行 / 编译 |
 |---|---|
@@ -656,7 +663,7 @@ node tools/web3-e2e/mock-server.js 25558
 
 - **不替代 `go test ./...`**：这些工具做诊断、迁移、UI 回归，不承担产品契约测试的职责。
 - **跨平台程度不一**：`tmd-db-migrate.py` 自己解析路径风格（可在 Linux 上处理 Windows 库，反之亦然）；e2e 脚本依赖 omp 浏览器运行时与硬编码绝对路径；`convert_db_to_legacy.py` 输出文件权限依赖进程 umask。
-- **不落盘凭据（但靠自觉）**：`.gitignore` 只忽略 `/config/`、`.env*`、`tools/xapi-probe/saved-api-json/` 等；`conf.yaml`、`additional_cookies.yaml` **没有被忽略**。把 `TMD_HOME` 指向仓库目录时，凭据文件就直接躺在工作区里——顺手 `git add -A` 就带进版本库（仓库规则本来就禁止 `git add -A`）。
+- **凭据文件的忽略状态（已核实）**：根 `.gitignore` 明列 `conf.yaml`、`additional_cookies.yaml`、`bot_config.yaml`、`schedules.yaml`、`.tmd2/`，另有 `/config/`、`.env*`、`tools/xapi-probe/saved-api-json/`、`*.backup.*`。也就是说"固定名字的凭据文件不会进版本库"这一层是有的；但**其余名字的产物不受保护**：把 `TMD_HOME` 指向仓库目录时，工具/运行期生成的其他文件（改名后的凭据副本、临时库、导出的响应体等）仍可能落进工作区。加上仓库规则本来就禁止 `git add -A`，提交前仍要 `git status` 自查。
 - **不属于产品运行路径**：删掉 `tools/` 不影响 `tmdp` 主二进制（`go build .` 只编译根包）；唯一牵连是 `go vet ./...` / `go test ./...` 会编译 `tools/xapi-probe`。
 
 ### 8.3 本文件所有命令的汇总

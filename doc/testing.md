@@ -10,41 +10,43 @@
 复核命令（仓库根执行）：
 
 ```bash
-# 测试文件总数（应输出 94）
+# 测试文件总数
 find . -name "*_test.go" -not -path "./node_modules/*" | wc -l
-# 顶层测试函数总数（应输出 1184）
+# 顶层测试函数总数
 grep -rh "^func Test" --include=*_test.go . | wc -l
-# 子测试数量（约 393 处 t.Run）
+# 子测试数量（t.Run 调用点）
 grep -rh "t.Run(" --include=*_test.go . | wc -l
 ```
 
+> **数字会漂移，以命令输出为准。** 下面的快照取 `1f5ff79`（2026-09-23）：**94 个测试文件 / 1196 个 `func Test` / 401 处 `t.Run`**。上一版记的 1184 / 393 是更早的快照——加删测试后不要只改数字，顺手确认结论段是否还成立。
+
 | 目录 | 测试文件 | `func Test` | 性质 |
 |---|---:|---:|---|
-| `internal/api` | 25 | 409 | **集成**：`setupTestServer` 起完整 handler 栈（`httptest.NewRecorder` + 内存库 + `fakeDownloadService`） |
-| `internal/downloading` | 16 | 142 | **集成**：真实临时目录 + 文件库/内存库 + 自定义 `RoundTripper` |
+| `internal/api` | 25 | 418 | **集成**：`setupTestServer` 起完整 handler 栈（`httptest.NewRecorder` + 内存库 + `fakeDownloadService`） |
+| `internal/downloading` | 16 | 143 | **集成**：真实临时目录 + 文件库/内存库 + 自定义 `RoundTripper` |
 | `internal/downloading/profile` | 3 | 34 | **集成**：`httptest.Server` 驱动超时/取消语义 |
-| `internal/database/test` | 13 | 96 | **集成**：外部测试包 `database_test`，真实文件库 + 建表/迁移/WAL |
+| `internal/database/test` | 13 | 97 | **集成**：外部测试包 `database_test`，真实文件库 + 建表/迁移/WAL |
 | `internal/database` | 3 | 12 | 单元：schema 文本一致性、迁移原子替换（纯文件 IO） |
-| `internal/service` | 3 | 76 | 混合：接口/依赖校验 + 纯函数（`effectiveAutoFollow`、`shouldFollowMember`） |
-| `internal/entity` | 3 | 51 | **集成**：内存库 + 真实临时目录（路径校验/暂存目录/符号链接） |
+| `internal/service` | 3 | 64 | 混合：接口/依赖校验 + 纯函数（`effectiveAutoFollow`、`shouldFollowMember`） |
+| `internal/entity` | 3 | 53 | **集成**：内存库 + 真实临时目录（路径校验/暂存目录/符号链接） |
 | `internal/twitter` | 4 | 41 | 混合：纯解析 + `httptest` + 冷却/限流状态机 |
-| `internal/logging` | 4 | 34 | 单元：脱敏、ANSI 剥离、轮转 |
+| `internal/logging` | 4 | 36 | 单元：脱敏、ANSI 剥离、轮转 |
 | `internal/downloader` | 1 | 44 | **集成**：`httptest.Server` 流式下载/重试/并发 |
 | `internal/cli` | 2 | 45 | 单元 + `httptest`（executor） |
-| `internal/scheduler` | 1 | 36 | 状态机 |
-| `internal/config` | 2 | 35 | 单元 + 文件 IO（备份/恢复） |
+| `internal/scheduler` | 1 | 39 | 状态机 |
+| `internal/config` | 2 | 38 | 单元 + 文件 IO（备份/恢复） |
 | `internal/utils` | 1 | 33 | 纯函数（1 处真实 HTTP：`resty.NewWithClient(server.Client())`） |
-| `internal/bot` + 6 个平台包 | 7 | 30 | 混合：`IsAllowed`/格式化/`Stop` 幂等 |
+| `internal/bot` + 6 个平台包 | 7 | 33 | 混合：`IsAllowed`/格式化/`Stop` 幂等 |
 | `internal/naming` | 1 | 20 | 纯函数（文件名/路径/截断） |
 | `internal/consolelog` | 1 | 19 | 并发、环形缓冲、管道重组 |
 | `internal/path` | 1 | 12 | 纯函数 |
 | `internal/database/tx` | 1 | 2 | 事务管理器 |
 | 仓库根（`main_test.go` / `signal_test.go`） | 2 | 13 | 启动参数解析、信号订阅 |
-| **合计** | **94** | **1184** | |
+| **合计** | **94** | **1196** | |
 
 分布特征：
 
-- **集成测试集中在 `internal/api` + `internal/downloading` + `internal/database/test` + `internal/entity`**（共 57 文件 / 698 测试）。它们共享同一套脚手架：内存库或临时目录 + 内存 HTTP 栈，**不碰真实网络、不碰 `%APPDATA%\.tmd2`**。
+- **集成测试集中在 `internal/api` + `internal/downloading` + `internal/database/test` + `internal/entity`**（共 57 文件 / 711 测试）。它们共享同一套脚手架：内存库或临时目录 + 内存 HTTP 栈，**不碰真实网络、不碰 `%APPDATA%\.tmd2`**。
 - **纯单元测试集中在 `internal/naming`、`internal/path`、`internal/utils`、`internal/logging`（脱敏部分）、`internal/consolelog`**：无 IO、无 DB、可直接按测试函数名跑。
 - 只有 **2 个外部测试包**：`internal/database/test`（13 文件全部 `package database_test`）与 `internal/entity/entity_test.go`（`package entity_test`）。前者用于从外部验证 `database` 包的公开 CRUD 契约；后者与同目录的包内测试（`storage_internal_test.go`、`operation_lock_test.go` 是 `package entity`）配合，专门测不可导出符号。
 
@@ -68,7 +70,7 @@ graph TD
 | 入口 | 用途 | shared cache | 连接池配置 | 调用点 |
 |---|---|---|---|---|
 | `database.MemoryDSN(sharedCache)` | 单元/集成测试的内存库 | 测试一律传 `true` | 无（用 `sqlx` 默认池） | **25 处**：`internal/api/server_test.go`(11)、`internal/api/db_handlers_test.go`(1)、`internal/database/test/*`(9 文件各 1)、`internal/database/tx/manager_test.go`(1)、`internal/downloading/profile/downloader_test.go`(1)、`internal/entity/storage_internal_test.go`(1)、`internal/service/download_service_test.go`(1) |
-| `database.MustFileDSN(path, sharedCache)` | 测试用临时文件库 | 全部传 `true` | 无 | **4 处**：`internal/downloading/test_helper.go`、`internal/database/test/db_test.go`(2)、`internal/database/test/connect_test.go` |
+| `database.MustFileDSN(path, sharedCache)` | 测试用临时文件库 | 全部传 `true` | 无 | **4 处**：`internal/downloading/test_helper_test.go`、`internal/database/test/db_test.go`(2)、`internal/database/test/connect_test.go` |
 | `database.Connect(path)` | **生产**文件库 | `openSQLiteFile(path, false)` | `configureSQLiteConnection` | 仅生产与 `internal/database/test` |
 
 `database.MemoryDSN` 的完整形态：
@@ -116,7 +118,7 @@ graph TD
 
 | 脚手架 | 位置 | 它做了什么 |
 |---|---|---|
-| `setupTestDB` | `internal/downloading/test_helper.go` | `t.TempDir()/test.db` + `MustFileDSN(path, true)` + `CreateTables`；**不** `Close`（调用方 `defer db.Close()`） |
+| `setupTestDB` | `internal/downloading/test_helper_test.go` | `t.TempDir()/test.db` + `MustFileDSN(path, true)` + `CreateTables`；**不** `Close`（调用方 `defer db.Close()`） |
 | `setupTestDB` | `internal/api/db_handlers_test.go` | `MemoryDSN(true)` + `CreateTables` |
 | `setupTestServer` / `setupTestServerWithAppRoot` | `internal/api/server_test.go` | 建库 + `CreateTables` + 构造 `config.Config{RootPath: t.TempDir(), ...}` + `NewServer`，并注册三条 `t.Cleanup`（关 `taskManager`、`downloadQueue.CloseAndWait`、`authRateLimit.Stop`） |
 | `serveAPI` | `internal/api/server_test.go` | `httptest.NewRecorder()` + `server.buildHandler().ServeHTTP(rr, req)` —— **进程内**打完整中间件链，不开 socket |
@@ -153,7 +155,7 @@ graph TD
 | 日志片段 | 手写期望串：`tweet_id=1000000000000000001 source="unit_test" attempt=1 max_retries=2 url="https://example.invalid/media.bin?tag=test"` | 从生产日志复制整行 |
 | 用户名 | `alice` / `bob` / `testuser` / `slow_user` | 真实账号 |
 
-**一处待修正的存量偏差**：`internal/utils/utils_test.go#TestMediaExtFromUrl` 的表里，其余用例都用合成的 `xyz` 路径，但有一条用了 `https://pbs.twimg.com/media/HID747dbgAAjl4P.png?name=4096x4096` —— `HID747dbgAAjl4P` 是真实 CDN 媒体文件名形状（`[INFERENCE]` 无法确认来源，但形状与同表其他用例明显不同）。改动该测试时应顺手替换为合成 id。
+**该表已复核（2026-09-23）**：`internal/utils/utils_test.go#TestMediaExtFromUrl` 的全部用例都用合成 `xyz` 路径（`https://pbs.twimg.com/media/xyz.jpg:large`、`xyz.png?name=4096x4096` 等），没有真实 CDN 媒体文件名残留。以后若在该表里看到形状不同的字面量，按下面这条判据处理。
 
 判据（写新 fixture 时自问）：**这个字符串能否被反向查到某个真实账号/推文？** 能，就换成合成值。
 
@@ -265,10 +267,12 @@ client := resty.NewWithClient(server.Client())
 
 ### 3.5 `@lat:` 注释：只给"锁定规范条款"的测试加
 
-全仓只有 2 处：
+Go **测试文件**里只有 2 处：
 
 - `internal/api/web3_frontend_test.go#TestWeb3ThemePresentationContract` → `// @lat: [[lat.md/api-server#API Server#Web3 Console Theme#Presentation Contract]]`
 - `internal/api/frontend_datetime_test.go#TestFrontendDateTimeRoundTrip` → `// @lat: [[lat.md/api-server#API Server#Web UI#Shared Date-Time Contract]]`
+
+（全仓另有 2 处**非测试**锚点：`internal/utils/fs.go` 的生产函数与 `tools/tmd-download-button.user.js`；`lat check` 认的是链接，不限文件类型。）
 
 用途：把测试挂到 `lat.md/` 的 spec 章节，`lat check code-refs` 会校验链接存在（注释放在**被测测试函数上方**，不要放文件头；一个 spec 章节只挂一处）。**普通回归测试不要加**。
 
@@ -288,11 +292,11 @@ client := resty.NewWithClient(server.Client())
 |---|---|
 | `internal/api/download_queue_audit_test.go#TestDownloadQueueEnqueueAfterCloseReturnsError` | **真实错误身份**：`assert.ErrorIs(err, ErrQueueClosed)` —— 调用方能靠 `errors.Is` 分辨"被拒绝"与"排队成功"，而不是断言错误字符串 |
 | `internal/api/task_manager_entryid_test.go#TestRetryTaskPreservesCreationMetadata` | **状态转移 + 不变量**：重试后的任务仍带 `EntryID`（重试不得丢失创建期元数据） |
-| `internal/api/auth_refresh_age_test.go#TestRefreshRejectsAncientExpiredToken` / `#TestRefreshAcceptsFreshExpiredToken` | **边界两侧**：90 天前的过期 JWT 必须 401；1 分钟前过期的必须 200 且**换发新 token**（`assert.NotEqual(recentToken, resp.Data.Token)`） |
+| `internal/api/auth_refresh_age_test.go#TestRefreshRejectsAncientExpiredToken` / `#TestRefreshAcceptsFreshExpiredToken` | **边界两侧**（阈值 = `internal/api/auth_jwt.go#jwtMaxRefreshAge` 的 24h，**自 `IssuedAt` 起算**）：90 天前**签发**（89 天前过期）的 JWT 必须 401；30 分钟前签发、1 分钟前过期的必须 200 且**换发新 token**（`assert.NotEqual(recentToken, resp.Data.Token)`） |
 | `internal/api/body_limit_test.go#TestDecodeBodyRejectsOversizedJSON` / `#TestDecodeBodyAcceptsNormalJSON` | **边界两侧**：超限拒绝 / 正常接受 |
 | `internal/service/download_service_test.go#TestEffectiveAutoFollowDisabledWhenFollowMembersEnabled` | **优先级不变量**：`FollowMembers` 压过 `AutoFollow` |
 | `internal/service/download_service_test.go#TestShouldFollowMemberMatchesDownloadFiltering` | 纯函数的多分支真值表（含 nil 入参） |
-| `internal/entity/storage_internal_test.go#TestStoredEntityPathRejectsUnsafeNames` | **安全不变量**：`""`/`.`/`..`/`../escape`/`child\name`/`nul\x00name` 一律 `ErrInvalidName`；用 `runtime.GOOS` 加 Windows 专属分支 |
+| `internal/entity/storage_internal_test.go#TestStoredEntityPathRejectsUnsafeNames` | **安全不变量**：`""`/`.`/`..`/`../escape`/`child/name`/`child\name`/`nul\x00name` 一律 `ErrInvalidName`；`runtime.GOOS == "windows"` 时另加 `" "` 与 `"..."` 两个用例 |
 | `internal/entity/storage_internal_test.go#TestCleanupStagedDirectoriesDoesNotFollowSymlinks` | 启动清扫不得跟随符号链接（真实 FS 上验证，不是 mock） |
 | `internal/entity/storage_internal_test.go#TestCleanupStagedDirectoriesRetainsUnjournaledLegacyStage` | **失败即安全**：无日志记录的暂存目录必须保留，`cleanup.Removed == 0` |
 | `internal/logging/sanitize_test.go#TestSanitizeURLFailsClosedForMalformedQuery` / `#TestSanitizeURLFailsClosedForInvalidURL` | **fail-closed**：解析失败时输出 `malformed_query=[redacted]` / `invalid-url=[redacted]`，且断言 `NotContains(secret)` |
@@ -304,26 +308,40 @@ client := resty.NewWithClient(server.Client())
 | `internal/database/test/connect_test.go#TestConnect_WALMode`、`#TestConnect_ConnectionPoolSettings` | 对**可观测的 DB 状态**（`PRAGMA journal_mode`、`MaxOpenConnections`）断言，而非断言"调用了某函数" |
 | `internal/api/frontend_datetime_test.go#TestFrontendDateTimeRoundTrip` | 跨时区真实往返（`TZ=Asia/Singapore` / `America/New_York`），node 缺失时 `t.Skip` |
 
-### 4.2 需要避免：本仓库的真实反例
+### 4.2 需要避免：坏断言的形状
 
-这些测试**目前存在且通过**，但删掉被测实现的相关分支它们不会红。新增测试不要模仿；顺手改到相关文件时可以考虑删掉。
+判据同 §4 开头：**删掉被测实现的一个非平凡分支，这个测试会红吗？** 下面列的是"不会红"的典型形状。
 
-| 反例 | 问题 |
-|---|---|
-| `internal/service/download_service_test.go#TestDownloadOptions_AllCombinations` | **纯同义反复**：`assert.Equal(t, autoFollow, opts.AutoFollow)` —— 断言"刚赋的值等于刚赋的值"，3 层循环 8 次，零信息量 |
-| `internal/service/download_service_test.go#TestDownloadOptions_Combinations` | 同上：`assert.Equal(t, tc.expectRetry, !tc.opts.NoRetry)` 断言 `!NoRetry == !NoRetry` |
-| `internal/downloading/mark_downloaded_test.go#TestMarkedUserInfo_Fields` | **结构体字面量回声**：构造 `MarkedUserInfo{UserID: 12345}` 后断言 `info.UserID == 12345` |
-| `internal/api/types_test.go#TestUserDownloadTaskData` | `assert.JSONEq(wantJSON, ...)` 是**有效的 wire 契约**（保留）；但同一函数里的 `assert.Equal(t, tt.wantScreen, tt.data.ScreenName)` 是字段回声（该删） |
-| `internal/service/download_service_test.go#TestDownloadServiceImpl_Struct` | **接线断言**：`assert.NotNil(t, service)` + `assert.True(t, ok)`（类型断言）+ `assert.NotNil(t, impl.deps)` |
-| `internal/service/deps_test.go#TestDependencies_Struct` | 同上：断言刚赋进去的 `deps.Client` / `deps.Config.RootPath` |
-| `internal/service/download_service_test.go#TestDownloadServiceImpl_DependenciesVariations` | **转发断言**：`assert.Equal(t, tc.deps, impl.deps)`，测的是"构造函数把参数存下来了" |
-| `internal/service/download_service_test.go#TestDownloadServiceImpl_ValidReporterHandling` | **mock 回声**：`assert.Equal(t, mockReporter, reporter)` |
-| `internal/service/download_service_test.go#TestMockProgressReporter_*`（`_Recording`/`_MultipleTasks`/`_EmptyCalls`/`_ProgressStages`/`_ResultVariations`） | **测测试替身本身**：断言 `MockProgressReporter` 记下了刚喂给它的东西。替身不值得写行为测试 |
-| `internal/api/web2_frontend_test.go#TestWeb2DefinesEntityMutationEndpoints` | **源码字符串断言**：`assert.Contains(source, "dbUserEntityUpdate:")` 等 —— 改个变量名就红，但前端真的坏了它未必红。同类 `internal/api/web3_frontend_test.go#TestWeb3ThemePresentationContract` 的定位见 `tools/web3-e2e/README.md`：*locks the CSS contract without pretending that source-string assertions prove rendered geometry* —— 即**只当"契约锁"用，并明确知道它证明不了渲染结果**；渲染几何由浏览器 E2E 覆盖 |
-| `internal/api/server_test.go#TestNewServer` | 部分接线（`server.client != nil` / `server.db != nil`）；其中 `appRootPath` 断言尚可保留 |
-| `internal/api/download_queue_audit_test.go` | 文件末尾的 `var _ = sync.Once{}` / `var _ = errors.Is` / `var _ = time.Second` 是**导入抑制脚手架**，属于删除代码后的残留，应随重构清掉 |
+本节**刻意不登记"当前仓库里有哪几个实例"**：形状是稳定的，实例清单不是——它每轮清理都会漂移，登记本身就会过期（上一版的实例清单在 `e6f770a` 之后即已失效，见 §4.2.1）。清理时按形状逐条判断，不要照单比对。
 
-对比：`internal/service/download_service_test.go#TestDownloadServiceImpl_InterfaceCompliance` 只有一行 `var _ DownloadService = (*downloadServiceImpl)(nil)` —— 这是**编译期**接口满足性检查，零运行成本且永不误报，是可接受的形式（运行时用 `assert.True(ok)` 做同样的事则属于上面的接线断言）。
+| 形状 | 为什么它是坏断言 | 示意 |
+|---|---|---|
+| **同义反复 / 字段回声** | 断言"刚赋进去的值等于刚赋进去的值"，实现怎么改都成立 | `opts.AutoFollow = autoFollow` 之后 `assert.Equal(t, autoFollow, opts.AutoFollow)`；`info := MarkedUserInfo{UserID: 12345}` 之后断言 `info.UserID == 12345` |
+| **接线断言** | 只证明"对象被造出来了"，不证明它做了什么；构造函数被清空也照样过 | `assert.NotNil(t, service)`、运行时的 `assert.True(t, ok)`（类型断言）、`assert.NotNil(t, impl.deps)`、逐个 `assert.NotNil(t, server.xxx)` |
+| **转发断言** | 测的是"构造函数把参数存下来了"——字段赋值本身已经保证的事 | `impl, _ := NewDownloadService(deps)` 之后 `assert.Equal(t, deps, impl.deps)` |
+| **mock 回声 / 测测试替身本身** | 断言替身记下了刚喂给它的东西；替身不是产品代码，没有可回归的行为 | `assert.Equal(t, mockReporter, reporter)`；专门为 `MockProgressReporter` 的 getter 写行为测试 |
+| **源码字符串断言** | `assert.Contains(source, "dbUserEntityUpdate:")` 一类：改个变量名就红，而前端真的坏了它未必红。**例外见下** | 同上 |
+| **导入抑制脚手架** | 文件末尾的 `var _ = sync.Once{}` / `var _ = errors.Is` / `var _ = time.Second` 只是删代码后忘了删 import 的残留，零断言 | 同上 |
+
+**源码字符串断言的例外**：它作为**契约锁**仍有价值——`internal/api/web3_frontend_test.go#TestWeb3ThemePresentationContract` 的定位见 `tools/web3-e2e/README.md`：*locks the CSS contract without pretending that source-string assertions prove rendered geometry*，即**只当契约锁用，并明确知道它证明不了渲染结果**。用它的前提是：同一契约另有浏览器 E2E（或别的行为测试）覆盖渲染/运行结果，且测试里写明这一点。不满足这个前提的源码字符串断言就是坏断言。
+
+**可接受的形式**（与上面的"接线断言"对照）：`internal/service/download_service_test.go#TestDownloadServiceImpl_InterfaceCompliance` 只有一行 `var _ DownloadService = (*downloadServiceImpl)(nil)` —— **编译期**接口满足性检查，零运行成本且永不误报。运行时用 `assert.True(t, ok)` 做同一件事才属于接线断言。
+
+删任何一条断言前先答：**删掉它之后，哪个真实缺陷会在它这里变红？** 答不上来就是坏断言；对源码字符串断言还要多走一步——先确认别的测试已覆盖同一契约。
+
+#### 4.2.1 历史清理记录（已移除，勿再引入）
+
+`e6f770a`（*fix: close security, concurrency and data-integrity gaps*，提交说明里的 *drop assertions that cannot fail on a real defect*；该提交对 `internal/service/download_service_test.go` 是 −288/+14 行，对 `internal/api/download_queue_audit_test.go` 是 −7 行）删掉了下列**全部**实例，登记在此只为防止回潮：
+
+- `internal/service/download_service_test.go#TestDownloadOptions_AllCombinations`、`#TestDownloadOptions_Combinations` —— 同义反复
+- `internal/service/download_service_test.go#TestDownloadServiceImpl_Struct` —— 接线断言
+- `internal/service/download_service_test.go#TestDownloadServiceImpl_DependenciesVariations` —— 转发断言
+- `internal/service/download_service_test.go#TestDownloadServiceImpl_ValidReporterHandling` —— mock 回声
+- `internal/service/download_service_test.go#TestMockProgressReporter_*`（`_Recording` / `_MultipleTasks` / `_EmptyCalls` / `_ProgressStages` / `_ResultVariations`）—— 测测试替身本身
+- `internal/api/download_queue_audit_test.go` 末尾的 `var _ = sync.Once{}` / `var _ = errors.Is` / `var _ = time.Second` —— 导入抑制脚手架
+- `internal/api/types_test.go#TestUserDownloadTaskData` 的 `wantScreen` 字段回声（`assert.Equal(t, tt.wantScreen, tt.data.ScreenName)`）—— 同一函数里的 `assert.JSONEq` 属于 §4.1 的 wire 契约锁，**保留**
+
+`internal/api/web2_frontend_test.go#TestWeb2DefinesEntityMutationEndpoints` 作为源码字符串契约锁**保留**，理由见 §4.2 的例外说明。
 
 ## 5. 禁止 / 必须清单
 
@@ -338,7 +356,7 @@ client := resty.NewWithClient(server.Client())
 5. **NEVER 用 `MemoryDSN(false)`**：内存库会绑到单条连接，池开第二条连接就看不到表。所有调用点都是 `MemoryDSN(true)`。
 6. **NEVER 在内存库测试里断言迁移/schema 校验/时间戳归一化行为**：`MemoryDSN` + `sqlx.Connect` 路径根本不跑 `validateDatabase`/`MigrateDatabase`/`NormalizeLegacyTimestamps`。这类断言只能放 `internal/database/test`（走 `database.Connect`）。见 §2.1。
 7. **NEVER 改 DB schema 而不同步两处列清单**：`internal/database/schema.go` 的 `CREATE TABLE` 文本与 `internal/database/sqlite_schema.go#requiredSchema` 必须同时改，否则 `TestSchemaColumnsMatchRequiredSchema` 会红；新增**表**还要在 `#TestRequiredSchemaCoversSchemaTables` 的 `declared` 里显式声明或补 `requiredSchema` 条目。（对应 What NOT to Do 的 *Don't change DB schema without migration + test*）
-8. **NEVER 把 403/404 媒体错误塞进重试链路**：`internal/downloading/retry_user_test.go` 的真值表与 `internal/downloader/downloader_test.go#TestDownloader_DownloadStream_404DoesNotRetry`（数 GET 次数）已经锁住这个分类，改动时不要放宽它们。（对应 *Don't put 403/404 media errors in retry queue*）
+8. **NEVER 把 403/404 媒体错误塞进重试链路**：`internal/downloading/retry_user_test.go` 的真值表锁定 **404**，`internal/downloader/downloader_test.go#TestDownloader_DownloadStream_404DoesNotRetry`（数 GET 次数）与 `internal/downloading/tweet_download_test.go#TestDownloadTweetMedia_SkipsNonRetriableStatus` 也只用 404 用例；**403** 的判定在 `internal/downloader/downloader.go#IsNonRetriableStatusError`（`utils.IsStatusCode(err, 403) || utils.IsStatusCode(err, 404)`），当前没有直接喂 403 的测试，所以放宽它不会立刻变红——改动这条链路时要自己补一个 403 用例。（对应 *Don't put 403/404 media errors in retry queue*）
 9. **NEVER 把异步任务改成同步断言**：服务端任务经队列异步执行，测试用 channel 等结果，不要为了好测而让 handler 同步返回。（对应 *Don't convert async server tasks to sync HTTP*）
 10. **NEVER 留下未回收的测试资源**：用 `setupTestServer` 就不要再手工造 `Server`；自造时必须注册 `t.Cleanup`（`taskManager.Close`、`downloadQueue.CloseAndWait`、`authRateLimit.Stop`、`db.Close`）。泄漏的 goroutine 在 `-race` 全包跑时表现为超时/竞争报告。
 11. **NEVER 为了让改动"有测试"而写只断言 `NotNil` / 不报错 / 长度增长的测试**，也不要断言源码字符串（`assert.Contains(source, "dbXxxUpdate:")`）来冒充行为测试。见 §4.2。
@@ -350,7 +368,7 @@ client := resty.NewWithClient(server.Client())
 
 1. **MUST 先跑一次待改包的全量测试再动手**：`go test ./internal/<pkg>/ -count=1`，确认基线是绿的，避免把既有红当自己的回归。
 2. **MUST 让每个测试自建隔离状态**：`t.TempDir()`（不要写死路径、不要写仓库内路径）、`MemoryDSN(true)`、独立 `*Server`。
-3. **MUST 在测试里显式 `defer db.Close()` 或 `t.Cleanup(db.Close)`**：`internal/downloading/test_helper.go#setupTestDB` 故意不关，调用方负责。
+3. **MUST 在测试里显式 `defer db.Close()` 或 `t.Cleanup(db.Close)`**：`internal/downloading/test_helper_test.go#setupTestDB` 故意不关，调用方负责。
 4. **MUST 用 `-race` 跑涉及 goroutine / 队列 / 并发的包**：`go test -race -count=1 ./internal/api/ ./internal/downloading/ ./internal/consolelog/`。
 5. **MUST 让测试名描述行为结果**（`...ReturnsError` / `...Preserves...` / `...FailsClosed...`），而不是实现步骤。
 6. **MUST 在新增"锁定规范条款"的测试上按需加 `// @lat:` 注释**，且放在被测测试函数正上方、一个 spec 章节只挂一处。见 §3.5。
@@ -414,7 +432,7 @@ go test . -count=1
 
 ### 6.3 CI：`verify` 门禁
 
-`.github/workflows/go.yml`，**只在 tag push（`v*`）时触发**，且 `paths-ignore: ["**/*.md", "doc/**"]` —— 也就是说**改文档不会触发 CI**；普通分支/PR 目前没有跑测试的流水线（`lat.md/development.md`：*Ordinary branch/PR CI remains a separate delivery decision*）。另有一个 `.github/workflows/docker.yml` 同样 tag 触发，但**不跑测试**，只构建并推送镜像。
+`.github/workflows/go.yml`，**只在 tag push（`v*`）时触发**（`on.push.tags: ["v*"]`；未定义 `branches`/`tags-ignore`，所以普通分支 push 与 PR 都不触发）——因此**改文档不会触发 CI**。但要注意**原因不是**工作流里那两行 `paths-ignore: ["**/*.md", "doc/**"]`：GitHub 的 path filter 只对 branch push 求值，**对 tag push 不生效**（官方 workflow syntax：*Path filters are not evaluated for pushes of tags*），而本工作流只由 tag push 触发，所以那两行是**死配置**——任何 tag push 都会完整跑一遍 `verify`，与 tag 里改了哪些文件无关。真正的原因是没有任何以 branch push / PR 为触发条件的工作流（`lat.md/development.md`：*Ordinary branch/PR CI remains a separate delivery decision*）。另有一个 `.github/workflows/docker.yml` 同样 tag 触发（也带一份同样失效的 `paths-ignore`，另有 `workflow_dispatch`），但**不跑测试**，只构建并推送镜像。
 
 `verify` job（`ubuntu-latest`）的步骤即"发布前必须全绿"的定义：
 
@@ -562,7 +580,7 @@ node tools/web3-e2e/mock-server.js 25558
 | `/static/styles.css` | `web3/styles.css` |
 | `/static/shared/datetime.js` | `shared/datetime.js` |
 
-API 返回硬编码空数据：`/api/v1/tasks` → `[]`、`/api/v1/health` → `{status:'ok',version:'test'}`、`/api/v1/queue/status` → `{status:'idle',queue_size:0}`、`/api/v1/logs` → `{logs:[],totalPages:1}`、`/api/v1/logs/stats` → `{}`，其余 `/api/v1/*`（排除含 `/stream`、`/sse/` 的路径）→ `{success:true,data:{}}`，其他路径 → `204`。**它不读真实配置与数据库**，端口来自 `process.argv[2]`（默认 `25558`），启动后把实际 URL 打到 stdout。资源响应带 `Cache-Control: no-store`，避免改 CSS 后拿到缓存。
+API 一律返回 `{success:true,data:…}` 包装（`JSON.stringify({ success: true, data: apiData(url) })`），其中 `data` 是硬编码空数据：`/api/v1/tasks` → `[]`、`/api/v1/health` → `{status:'ok',version:'test'}`、`/api/v1/queue/status` → `{status:'idle',queue_size:0}`、`/api/v1/logs` → `{logs:[],totalPages:1}`、`/api/v1/logs/stats` → `{}`，其余 `/api/v1/*`（排除含 `/stream`、`/sse/` 的路径）→ `{}`，其他路径 → `204`。**它不读真实配置与数据库**，端口来自 `process.argv[2]`（默认 `25558`），启动后把实际 URL 打到 stdout。资源响应带 `Cache-Control: no-store`，避免改 CSS 后拿到缓存。
 
 **断言什么**：`01-responsive-logs.js` 点 Logs 导航后，对四件事求布尔值：
 
@@ -593,7 +611,7 @@ API 返回硬编码空数据：`/api/v1/tasks` → `[]`、`/api/v1/health` → `
 只有满足下面**任一**条，才把它提交为 `*_test.go`：
 
 1. **锁住一个可观测契约**，且未来有人会不小心破坏它：wire 格式（`internal/api/types_test.go#TestUserDownloadTaskData` 的 `assert.JSONEq` 部分）、错误身份（`ErrQueueClosed`）、HTTP 状态码与响应头。
-2. **边界与优先级**：阈值两侧（`auth_refresh_age` 的 90 天 vs 1 分钟）、`FollowMembers` 压过 `AutoFollow`、Windows 保留名 `CON`/`LPT1` vs 允许的 `COM0`/`LPT10`。
+2. **边界与优先级**：阈值两侧（`internal/api/auth_jwt.go#jwtMaxRefreshAge` = 24h，自 `IssuedAt` 起算：90 天前签发必 401 / 1 分钟前过期仍可续期）、`FollowMembers` 压过 `AutoFollow`、Windows 保留名 `CON`/`LPT1` vs 允许的 `COM0`/`LPT10`。
 3. **不变量**：安全（路径逃逸、符号链接、脱敏 fail-closed）、数据一致性（`latest_release_time` 的 UTC 归一化）、单一事实源（schema 文本 vs `requiredSchema`）。
 4. **状态转移 / 生命周期**：任务 queued→running→completed/failed、队列关闭后的终态、`Hub.Close` 的终态语义、订阅退订后 channel 关闭。
 5. **真实错误路径**：解析失败、DB 错误、HTTP 403/404 不进重试、取消上下文、超时后 body 读取被取消。
@@ -645,7 +663,7 @@ API 返回硬编码空数据：`/api/v1/tasks` → `[]`、`/api/v1/health` → `
 
 | 改什么 | 波及 |
 |---|---|
-| `internal/downloading/test_helper.go#setupTestDB` | `internal/downloading` 包内 **16 个测试文件**全部依赖它。改成内存库会丢掉"真实文件库 + WAL"的覆盖；改成自动 `Close` 会与调用方现有的 `defer db.Close()` 双关 |
+| `internal/downloading/test_helper_test.go#setupTestDB` | `internal/downloading` 包内 **10 个测试文件**依赖它（当前工作区该包共 17 个测试文件：本 helper + 10 个调用方 + 6 个不调用它的；§1 表里的 16 是 commit `1f5ff79` 的快照，差的那一个正是把 `test_helper.go` 重命名成 `*_test.go` 产生的）。改成内存库会丢掉"真实文件库 + WAL"的覆盖；改成自动 `Close` 会与调用方现有的 `defer db.Close()` 双关 |
 | `internal/api/server_test.go#setupTestServer` / `#setupTestServerWithAppRoot` | `internal/api` 的绝大多数集成测试。**去掉任何一条 `t.Cleanup`**（`taskManager.Close` / `downloadQueue.CloseAndWait` / `authRateLimit.Stop`）都会在 `-race` 全包跑时暴露为 goroutine 泄漏或竞争报告 |
 | `internal/api/server_test.go#serveAPI` | 所有"进程内打 handler"的 API 测试；改成真开 socket 会让测试受宿主代理影响（正是 §3.3 要避免的） |
 | `internal/api/db_handlers_test.go#createTestServer` | `internal/api/auth_refresh_age_test.go` 等直接构造 `authRateLimiter` 的测试 |
@@ -660,7 +678,7 @@ API 返回硬编码空数据：`/api/v1/tasks` → `[]`、`/api/v1/health` → `
 | `internal/downloading/types.go#userFetchRetryDelay` | `internal/downloading/retry_batch_test.go#TestBatchUserDownloadRetryMainLoop`（覆写它缩短等待）。改成 `const` 或加锁会直接编译失败/红 |
 | `internal/service/progress.go#NopReporter` | `internal/service/download_service_test.go#TestDownloadServiceImpl_NilReporterHandling`（断言 nil reporter 被替换为 `*NopReporter`） |
 | `internal/api/version.go#Version` | CI 的 `-ldflags -X` 注入；默认值 `"dev"` |
-| `internal/downloading` 的 403/404 分类 | `internal/downloading/retry_user_test.go` 真值表、`internal/downloading/tweet_download_test.go#TestDownloadTweetMedia_SkipsNonRetriableStatus`、`internal/downloader/downloader_test.go#TestDownloader_DownloadStream_404DoesNotRetry` |
+| `internal/downloader/downloader.go#IsNonRetriableStatusError`（403/404 分类） | 直接测试**缺失**：`internal/downloading/retry_user_test.go` 的真值表只覆盖 404，`internal/downloading/tweet_download_test.go#TestDownloadTweetMedia_SkipsNonRetriableStatus` 与 `internal/downloader/downloader_test.go#TestDownloader_DownloadStream_404DoesNotRetry` 也只用 404 —— 放宽 403 分支不会立刻变红 |
 | `internal/consolelog` 的 `Hub` 生命周期 | `internal/consolelog/hub_test.go` 的 19 个测试（环形缓冲、慢订阅者剔除、Close 终态、捕获管道） |
 | `internal/api/web/{web1,web2,web3}` 前端资源 | `internal/api/handlers_test.go`（静态资源/缓存头/路径穿越）、`internal/api/web2_frontend_test.go`、`internal/api/web3_frontend_test.go`、`internal/api/frontend_datetime_test.go`，以及 `tools/web3-e2e/mock-server.js` 的四个资源映射（**改前端文件名/路径必须同步这里**） |
 | `internal/api` 的主题 API（`GET`/`POST /api/v1/config/theme`） | `tools/web1-e2e/run-all.js` 用它把主题切回 web1 |
@@ -672,6 +690,6 @@ API 返回硬编码空数据：`/api/v1/tasks` → `[]`、`/api/v1/health` → `
 | `.github/workflows/go.yml` 的 `verify` 步骤 | 发布门禁。删掉 `go vet` / `lat check` 会让漂移（文档链接、schema 分叉）失去拦截 |
 | `go-version-file: go.mod` | Go 版本单一来源在 `go.mod`（`go 1.25.0`）；改它等于改 CI 与所有开发者的工具链 |
 | `lat.md@0.12.2` 版本钉 | 本地 `lat check` 与 CI 的一致性；升级要同时更新 `AGENTS.md` 与 `lat.md/development.md` 的记述 |
-| `paths-ignore` 里的 `doc/**` | **改本文档不会触发 CI**；因此文档的正确性靠 review，不靠流水线 |
+| `paths-ignore` 里的 `doc/**` | **死配置**：写在 `on.push` 下、对 tag push 不生效，删掉它不会改变任何运行结果。**改本文档不会触发 CI 的真正原因是没有任何 branch push / PR 触发的工作流**；文档正确性靠 review，不靠流水线 |
 | 矩阵 `os × arch` | 6 个产物名 `bin/tmdp-{os}-{arch}[.exe]`，`release` job 的 `sha256sum` 与 `upload-artifact` 的 `if-no-files-found: error` 都依赖它 |
 | `-ldflags` 的 `-X ...internal/api.Version` | 包路径写死；移动 `Version` 变量所在包会静默注入失败（版本回落成 `"dev"`，不会有测试报错） |

@@ -118,15 +118,22 @@ var (
 **公开路径的实际匹配范围**（`internal/api/middleware.go#isPublicPath`）：
 
 ```go
-var publicPathPrefixes = []string{
-	"/api/v1/health",
-	"/api/v1/auth/login",   // login 端点需要在没有 JWT 时也能被调用
-	"/api/v1/config/theme", // theme 切换器由内联 JS 调用，不经过 api 对象
-	"/static/",
+// publicPaths 是**精确匹配**的免认证路径（map，不是前缀列表）
+var publicPaths = map[string]struct{}{
+	"/":                    {},
+	"/favicon.ico":         {},
+	"/tasks": {}, "/data": {}, "/schedules": {}, "/system": {}, "/logs": {}, // SPA 路由
+	"/api/v1/health":       {},
+	"/api/v1/auth/login":   {},
+	"/api/v1/config/theme":  {},
+	"/api/v1/config/themes": {},
 }
+
+// publicPathPrefixes 是唯一允许前缀匹配的公开路径（静态资源目录）
+var publicPathPrefixes = []string{"/static/"}
 ```
 
-判定用的是 `strings.HasPrefix`，而白名单里写的是 `/api/v1/config/theme`（无复数 s）——因此 `/api/v1/config/themes` **被同一前缀顺带放行**。这不是疏漏而是必需：切换器要先列主题再切换，两个端点都得免认证。
+判定顺序：先查 `publicPaths[path]`（精确），再对 `publicPathPrefixes` 用 `strings.HasPrefix`。**前缀匹配是被有意移除的**——`publicPaths` 的注释写明：用前缀匹配会让未来任何同前缀的新路由被静默放行（例如公开前缀 `/api/v1/config/theme` 会一并放行 `/api/v1/config/themes`，以及以后新增的 `/api/v1/healthz`）。因此 `/api/v1/config/theme` 与 `/api/v1/config/themes` 是**各自显式列出**的：切换器要先列主题再切换，两个端点都得免认证。早先的文档说"`themes` 是被 `theme` 前缀顺带放行"——那是前缀匹配时代的行为，已不成立。
 
 ### 2.3 目录名校验（`setFrontendTheme`）
 
@@ -193,8 +200,8 @@ if os.Getenv("TMD_DEV") == "1" {
 
 最后一行是真实陷阱：`readFrontendFile` / `listThemes` 只看 `devWebRoot != ""`，不做降级。因此：
 
-- **`-trimpath` 构建的二进制不要用 `TMD_DEV=1`**。`runtime.Caller(0)` 在 `-trimpath` 下返回裁剪后的导入路径（如 `github.com/unkmonster/tmd/internal/api/handlers.go`），据此拼出的 `devWebRoot` 是相对路径、磁盘上不存在，`GET /` 会直接 500 `Failed to load web page`。CI 的发布构建正是 `go build -trimpath`（`.github/workflows/go.yml`）。
-- 本仓库的本地开发入口是 `start-server.bat`：检测到本机有 Go 且无现成二进制时 `set "TMD_DEV=1"` 并 `go run . -server %*`；也可显式设置 `TMD_DEV=1` 让它直接源码运行。
+- **`-trimpath` 构建的二进制不要用 `TMD_DEV=1`**。`runtime.Caller(0)` 在 `-trimpath` 下返回裁剪后的导入路径（如 `github.com/unkmonster/tmd/internal/api/handlers.go`），据此拼出的 `devWebRoot` 是相对路径、磁盘上不存在，`GET /` 会直接 500 `Failed to load web page`。（`runtime.Caller` 在 `-trimpath` 下的具体返回值是 **Go 工具链行为，本仓库未实测** `[INFERENCE]`；代码侧确定的两件事是：发布构建确实用 `go build -trimpath`（`.github/workflows/go.yml`），且 `readFrontendFile`/`listThemes` 只看 `devWebRoot != ""`、**没有 embed 兜底**——所以只要路径推导结果不可读就必然 500。）
+- 本仓库的本地开发入口是 `start-server.bat`：优先找现成二进制（`tmdp-Windows-amd64.exe`/`tmdp.exe`/`tmdp`/`tmd*.exe`）；都没有但本机有 Go 且有 `go.mod` 时，它先 `go build -ldflags "-X github.com/unkmonster/tmd/internal/api.Version=test" -o tmdp-test.exe .`，构建成功才 `set "TMD_DEV=1"` 并运行 `tmdp-test.exe -server %*`（即 `TMD_DEV=1` + 编译产物，而非源码直跑）；只有你**自己先设了** `TMD_DEV=1` 时，它才走 `go run . -server %*` 源码直跑。
 
 ### 3.2 热刷新范围
 
@@ -447,7 +454,7 @@ web3 用另一种等价写法：`connectSSE()` 开头 `if (sseSource) return;`�
 - **`onopen` 必须重置退避**。首次 `new EventSource` 到 `onopen` 之间不会有任何事件；若只在收到 `tasks` 事件时才重置，长时间没有任务推送的安静期会让 `attempts` 一直涨到上限，之后一次抖动就要等 30 秒。web1 的注释写得很直白：*"连接成功即重置指数退避：无任务事件推送的安静期不会让退避永久涨到上限"*。
 - **`onerror` 先 `close()` 再置 `null`**。`EventSource` 自带重连，不清掉的话会和服务端退避叠加成两套重连。
 - web1 独有的健康探测：`reconnectAttempts >= 10 && attempts % 5 === 0` 时打一次 `api.getHealth()` 探活，失败只记日志、不改变重连节奏。
-- web1 的 `_updateIndicator` 同时维护 `class`、`title` 与 `aria-label`（`role=status` + `aria-live`），指示器状态对屏幕阅读器可感知。
+- web1 的 `_updateIndicator` 维护 `class`（`connected`）、`title` 与 `aria-label`；`role="status"` + `aria-live="polite"` 是 `index.html` 里的**静态标记**（函数不碰这两个属性）。
 
 ### 6.4 `_logGen` 代际守卫与 `_tasksEpoch`
 
@@ -467,7 +474,7 @@ web3 用另一种等价写法：`connectSSE()` 开头 `if (sseSource) return;`�
 | 机制 | web1 | web2 | web3 |
 |---|---|---|---|
 | 行数上限 | `LOG_STREAM_MAX_LINES = 5000` + `_prependedCount` 配额 | 内联 `5000 + _prependedCount` | `LOG_MAX_LINES = 5000`，配额 `Math.min(prepended, LOG_MAX_LINES)` |
-| 批量插入 | `_logBatch` + `requestAnimationFrame` 合并成一次 `DocumentFragment` 插入 | 单行 append | 单行 append |
+| 批量插入 | `_logBatch` + `requestAnimationFrame` 合并成一次 `DocumentFragment` 插入 | 同 web1（`_logBatch` + rAF + `DocumentFragment`） | 单行 append |
 | 重连曲线 | `min(2000 * 1.5^(n-1), 30000)` | 同 web1 | `min(1000 * 1.5^min(n,8), 30000)` |
 | 放弃阈值 | `n > 60` → `toast` 提示刷新页面 | `n > 60` → `toast` 提示按 Refresh | `n >= 60` → 静默停止 |
 | 重连前刷新 JWT | `api._tryRefreshJWT().finally(reconnect)`（**无条件**尝试，注释：无 2 分钟窗口限制） | `tryRefreshJWT('LogSSE', reconnect)`（2 分钟窗口） | 无 |
@@ -568,7 +575,7 @@ document.getElementById('sseIndicator').onclick = () => {
 
 1. **属性和文本用不同的函数**——`escapeHtml` 只保证"不会变成标签"，它**不转义引号**，放进 `value="..."` 就能闭合属性。web1 因此有两个函数；web2/web3 的 `esc` 已经转义引号，可以一函数两用（但**不要**用 `esc` 去拼内联 JS 字符串，那是 `jsEsc` 的活）。
 2. **内联 JS 字符串必须用 `jsEsc`**：web3/web2 大量使用 `onclick="fn('...')"` 这一风格（见 `doc/web2-code-conventions.md` 的差异表），拼进去的值如果不是 `jsEsc` 过的，一个单引号就能注入任意脚本。
-3. **优先用 `textContent` / `createElement` 而非拼字符串**。web1 的 `toast`、`authDialog` 走 `textContent`；日志行渲染在插入后用 `querySelectorAll` 逐行处理，避免整体 `innerHTML` 拼装。
+3. **优先用 `textContent` / `createElement` 而非拼字符串**。web1 的 `toast`、`authDialog` 走 `textContent`；日志行是**逐行**由 `renderLogEntry()` 生成 HTML 字符串、先写进游离节点、再并入一次 `DocumentFragment` 插入（`_logBatch` + rAF），因此不会出现"整体 `innerHTML` 拼装"，也不需要对已插入的行做 `querySelectorAll` 后处理。
 
 ### 7.2 后端状态值必须先白名单映射再入 class / text
 
@@ -604,7 +611,7 @@ return string(runes[:3]) + "•••" + string(runes[len(runes)-3:])
 
 > `Field %q contains a masked placeholder value. Leave it empty to keep the current value, or enter the actual value.`
 
-前端因此必须：**密码框的 `value` 留空**（web2/web3 用 `value=""` + `placeholder="Leave empty to keep current"`），并不能把 `f.value` 回填进 password 输入框。web3 在 `saveConfigFields()` 里还做了客户端侧的 `v.includes('•••')` 拦截。cookies 走另一条路：用 `data-orig` 比较决定是否发 `__KEEP_OLD__`（web3 注释：*"掩码值原样回传会被拒绝"*）。
+前端因此必须：**密码框的 `value` 留空**（web2/web3 用 `value=""` + `placeholder="Leave empty to keep current"`），并不能把 `f.value` 回填进 password 输入框。web3 在 `saveConfigFields()` 里还做了客户端侧的 `v.includes('•••')` 拦截。cookies 走另一条路：用 `data-orig` 比较决定是否发 `__KEEP_OLD__`（web2 注释：*"未修改的字段发 `__KEEP_OLD__`：后端按数组索引取原值（掩码值原样回传会被拒绝）"*；web3 的注释则强调*"携带服务器 index（后端 `__KEEP_OLD__` 按 index 优先，位置兜底）"*——分工不同，别把两段注释混记成一份）。
 
 **API Key 明文不进浏览器存储**：web1 的安全面板注释明确写了"不持久化 API Key 明文到 localStorage（web2 的 `tmd_api_key` 行为有意不复刻）"。三主题在 `api_key` 变更后都会清掉本地 JWT 会话（因为旧 JWT 对应旧 key，已失效）：
 - web1：`clearStoredAuth()`
@@ -627,7 +634,7 @@ setTimeout(() => URL.revokeObjectURL(url), 10000);
 
 - **禁止**把导出做成 `<a href="/api/v1/logs/export?token=...">`：JWT 会留在浏览器历史、代理日志、Referer 里。
 - web1 的导出还接了统一的 refresh 链：401 → `api._tryRefreshJWT()` → 成功则重试一次 → 仍失败才 `requireAuthentication`。
-- 三主题都遵守同一形态（web2 `fetchLogsExport`、web3 `logExport`），且都用 `URL.revokeObjectURL` 回收。
+- 三主题都遵守同一形态（web2 `exportLogs`、web3 `logExport`），且都用 `URL.revokeObjectURL` 回收。
 - **`?token=` 只允许出现在 EventSource 上**（§6.1），那是 API 无法设头的唯一补偿手段。
 
 ### 7.5 其它已落地约束
@@ -701,7 +708,7 @@ web3 的改造（`internal/api/web/web3/app.js#enhanceThemeSwitcher`）是"主�
 3. 补无障碍属性：`role="button"`、`tabindex="0"`、`aria-label`、`aria-controls="ts-panel"`、`aria-expanded`，并支持 Enter / Space 激活；
 4. `web3/styles.css` 用 `#tmd-theme-switcher ... !important` 覆写注入的内联样式（含 `position:relative !important; inset:auto !important` 与面板上浮 `bottom:48px`），移动端再补 44px 触控尺寸。
 
-时序注意：切换器 HTML 是**在 `app.js` 之后**注入到 `</body>` 前的，所以必须在 `init()` 之后异步执行——web3 用的是 `setTimeout(enhanceThemeSwitcher, 0)`（注释：*"switcher markup is injected after app.js"*）。同步调用会拿不到 `#tdm-theme-switcher`。web3 的防护是 `if (!widget || !target || !button || !panel) return;`——找不到就静默跳过，不会崩。
+时序注意：切换器 HTML 是**在 `app.js` 之后**注入到 `</body>` 前的，所以必须在 `init()` 之后异步执行——web3 用的是 `setTimeout(enhanceThemeSwitcher, 0)`（注释：*"switcher markup is injected after app.js"*）。同步调用会拿不到 `#tmd-theme-switcher`。web3 的防护是 `if (!widget || !target || !button || !panel) return;`——找不到就静默跳过，不会崩。
 
 ### 8.3 视觉与无障碍底线
 
@@ -716,7 +723,7 @@ web3 的改造（`internal/api/web/web3/app.js#enhanceThemeSwitcher`）是"主�
 | reduced-motion | web1 / web3 的 `index.html` 内联块 | **全量**覆盖写在内联 `<style>` 里；新增动画元素必须加进该列表，不要在 `styles.css` 另写一份 |
 | 禁止 emoji 呈现 token | web3 测试的 `forbidden` 列表 | web3 的 `index.html` + `app.js` + `styles.css` 里不得出现 `🎨`、`📋`、`⚠️`，也不得用 `background-attachment: fixed` |
 
-CSS 变量双份定义（web1 / web3 都是）：`index.html` 内联 `:root` 是**防 FOUC 的最小变量集**，`styles.css` 是全集，两处必须一致——三主题的内联块都加了互引注释。
+CSS 变量双份定义（只有 web1 / web3 有）：`index.html` 内联 `:root` 是**防 FOUC 的最小变量集**，`styles.css` 是全集，两处必须一致——web1 与 web3 的内联块都加了互引注释；**web2 没有内联 `:root` 块**（它的 `index.html` 只 link `/static/styles.css`），所以别指望三个主题对称。
 
 ### 8.4 客户端路由 ↔ 服务端 SPA 路径
 
@@ -819,7 +826,7 @@ go test ./internal/api/ -run 'TestWeb2DefinesEntityMutationEndpoints|TestWeb3The
 |---|---|
 | `handleWeb` 读文件失败 → 500 分支 | `TestHandleWeb_Error` 是 `t.Skip`（embed 固定成功，无法在测试里模拟读失败） |
 | MIME 分支 `.png/.jpg/.svg/.json/.html/未知后缀` | 对应的 `TestHandleStatic_*` 全是 `t.Skip`（测试构建里没有这些 embed 文件），**只有 `.css` / `.js` 被真正验证** |
-| `setFrontendTheme` 的 `ContainsAny("/\\..")` 逐字符判定 | 现有测试只覆盖"目录不存在"（`TestHandleSetTheme_InvalidTheme`）；含点目录名的拒绝没断言 |
+| ~~`setFrontendTheme` 的 `ContainsAny("/\\..")` 逐字符判定~~ | **已覆盖**：`internal/api/handlers_test.go#TestSetFrontendThemeRejectsUnsafeAndMissingValues` 逐条断言 `""`/`"/"`/`"\\"`/`".."`/`"../web1"`/`"web1/.."`/`"web1\\web2"`/`"web1."`/`".web1"`/`"web-not-a-theme"`/`"shared"` 全被拒且当前主题不变（含点目录名的拒绝已有断言） |
 | 浏览器实际渲染（布局 / 触控尺寸 / 焦点） | Go 侧只做字符串断言；布局靠 `tools/web3-e2e/01-responsive-logs.js` 量几何 |
 
 `TestHandleWeb_*` / `TestHandleStatic_*` 直接调 handler，测试辅助函数 `serveStatic` 会手动 `req.SetPathValue("path", ...)` 模拟 mux 的路径参数——绕过 mux 的测试拿不到路径参数，必须照抄这个写法。
@@ -863,7 +870,7 @@ E2E 只覆盖 web1 与 web3 的几何，**web2 没有浏览器套件**——改 
 
 ### 10.5 CI 的等价命令
 
-`.github/workflows/go.yml` 的 `verify` job（tag 推送时触发，`doc/**` 与 `**/*.md` 变更会被 paths-ignore 跳过）：
+`.github/workflows/go.yml` 的 `verify` job（tag 推送时触发；工作流里那两行 `paths-ignore` 对 tag push 不生效，是死配置，理由见 `doc/architecture.md` 的 CI/CD 一节）：
 
 ```bash
 go test -race -count=1 ./...
@@ -891,7 +898,7 @@ npx --yes lat.md@0.12.2 check
 | 新增/改名 SPA 路径（web1 / web2 的 History API） | `internal/api/server.go#Server.buildHandler` 的 6 条 `GET` 路由、web1 的 `ROUTE_TO_PAGE`/`PAGE_TO_ROUTE`、`TestHandleWeb_DifferentRoutes` | 三处一起改 |
 | `listThemes` 的收录条件 | `GET /api/v1/config/themes` 出参、切换器的选项列表（它**直接**用返回值渲染） | `TestHandleGetThemes_ReturnsList`（断言含 `web1`/`web2`） |
 | 三主题里同一个数值字段的 `max` | §8.1 的 4 处字面量 + Go 常量 + `Placeholder` 文案 | 全量同步，否则 UI 与后端约束不一致 |
-| 把 `/api/v1/config/theme` 移出公开路径 | 三主题的切换器（裸 fetch、无 Authorization）→ 全部 401 | `internal/api/middleware.go#publicPathPrefixes` |
+| 把 `/api/v1/config/theme` 移出公开路径 | 三主题的切换器（裸 fetch、无 Authorization）→ 全部 401 | `internal/api/middleware.go#publicPaths`（精确匹配表；`/api/v1/config/themes` 是另一行，别只删一个） |
 | 让 `index.html` 不再含 `</body>` | 切换器注入静默失效（`bytes.Replace` 找不到目标，不报错） | — |
 | 新增日志流实现 | §6.5 的三份实现的差异；`LOG_*_MAX_LINES` | — |
 
@@ -935,7 +942,8 @@ npx --yes lat.md@0.12.2 check
 | `GET /` 回 500 `Failed to load web page` | `TMD_DEV=1` 但 `devWebRoot` 指向不存在路径（`-trimpath` 构建、或在错误的工作目录下运行）——**没有 embed 兜底** | §3.1 |
 | 点了主题切换器没反应 | `POST /api/v1/config/theme` 被移出公开路径 → 裸 fetch 拿到 401 | §2.2 |
 | 切换成功，重启后回到 web1 | 预期行为：`frontendTheme` 是内存态，不写 `conf.yaml` | §2.5 |
-| `config/themes` 里少了新主题 | 目录缺 `index.html`；或目录名含 `.`（`ContainsAny` 拒绝） | §2.1 / §2.3 |
+| `config/themes` 里少了新主题 | 目录缺 `index.html`——`listThemes` **只按这一条收录**，不做名字校验 | §2.1 |
+| `config/themes` 列得出来、却切不过去 | 目录名含 `.`：`listThemes` 仍会列出它（它只看 `IsDir()` + `index.html`），但 `POST /api/v1/config/theme` 会被 `setFrontendTheme` 的 `ContainsAny` 拒成 400 | §2.3 |
 | 切换器整体不出现 | 当前主题 `index.html` 缺 `</body>`（`bytes.Replace` 静默无匹配） | §2.4 |
 | `/static/xxx` 404，但文件确实在主题目录里 | URL 里带了主题名（如 `/static/web1/xxx`）；或文件名含 `..`（子串拒绝）；或想用主题私有的 `shared/` 子目录 | §4.1 / §4.2 |
 | 改了前端文件，浏览器没变化 | 跑的是 embed 二进制（需重编译）；或静态资源 `Cache-Control` 被改成 `max-age` | §3.2 / §4.3 |
@@ -947,7 +955,7 @@ npx --yes lat.md@0.12.2 check
 | 任务流正常但日志流不再刷新 | 日志流的放弃阈值（web1/web2 `>60`、web3 `>=60`）被跨多次断连累计触发 | §6.5 |
 | 页面挂几小时后变卡 | 日志流缺 `trimLogStream` 上限，DOM 无界增长 | §6.5 |
 | 点 SSE 指示器毫无反应 | 处理函数里调了 `init()`（被 `_initPromise` 记忆化，等于空操作），而不是 `resume()` + `refreshCurrentPage()` | §6.8 |
-| 回翻日志时行数在上限附近跳变 | `_prependedCount` 临时放宽上限（最多再借 5000 行） | §6.5 |
+| 回翻日志时行数在上限附近跳变 | `_prependedCount` 临时放宽上限：web1 / web2 **不封顶**（借多少加多少：`LOG_STREAM_MAX_LINES + _prependedCount` / `5000 + _prependedCount`），只有 web3 用 `Math.min(prepended, LOG_MAX_LINES)` 封顶（最多再借 5000 行） | §6.5 |
 | 站内导航正常，浏览器刷新 `/tasks` 得到 404 | 前端推了新路径但 `buildHandler` 没注册 | §8.4 |
 | 密码字段保存后变成 `abc•••xyz` 或被后端 400 | 前端把掩码值回传（未用 `__KEEP_OLD__` / 未清空输入框） | §7.3 |
 | 表格里出现畸形 class 或凭空多出属性 | 后端状态值未过白名单就拼进 class | §7.2 |

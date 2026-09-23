@@ -18,6 +18,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- 通知型 Bot（Gotify/Pushover）的"已通知任务"集合改为按任务快照淘汰，不再随运行时长单调增长（任务本体有 24h 清理，该集合此前没有）。
+- 清理一批不可达/零调用代码与死配置：`Server.started`、`responseRecorder.Hijack/Push`、`Heap.Pop/Peek` 的 panic 变体、`ErrNilHTTPResponse`、`VersionManager.SetFileWriter`/`CleanupOldVersions`、`FileStorageManager.versionManager`、`queryer` 接口、`downloadTemplateConfig.ShouldDownloadProfile`、`scheduler.releaseTriggeringLocked`、`bestVideoVariantURL`、`jwt.WithIssuer/WithSubject`（被 `WithoutClaimsValidation` 跳过）、两个 workflow 里对 tag push 无效的 `paths-ignore`、`updateUserEntityMetadata` 的空 SET 分支、`refreshRecord` 的稳定身份比较；测试辅助 `setupTestDB` 从生产文件 `test_helper.go` 移入 `test_helper_test.go`（此前 `testing` 会被编进二进制）。
+- `start-server.bat` 的 Go 自动编译回退此前因批处理解析期展开而失效（括号块内的 `%errorlevel%`/`%TMD_EXE%` 取到陈旧值），改为顺序语句 + `goto` 标签。
+
+### Fixed
+
+- 修复 `Retry-After` 取值过大时 `time.Duration` 乘法溢出为负时长，反而让账号完全不被冷却（解析后限幅 1 小时）。
+- 修复 JSON 导入重试在同一推文出现在多个来源文件时只清理其中一个来源（map 遍历序随机），导致失败记录永远清不干净。
+- 修复 `root_path` 为卷根（`C:\`、`/`）时 JSON 导入路径校验会拒绝该根下的所有路径。
+- 修复 Windows 上库中已有实体名含 `:`、DOS 设备名等字符时 `Path()`/删除/改名永久失败（读取侧只做可寻址性归一化，写入侧名称校验不变）。
+- 修复日志脱敏对已掩码 URL 的 userinfo 二次掩码（scheme 与字段名被吞进指纹、同一凭据出现两种指纹）。
+- 修复调度器手动触发在 panic 时误报成功：HTTP 层此前收到 200 + 空 `task_id`，与 `ScheduleStatus.LastError=panic` 自相矛盾。
+
 - 实体 `PATCH name` 会同步移动对应存储目录；用户实体的统计字段先以单条字段级更新提交，目录改名最后执行。同进程同实体变更会串行；目标目录冲突或进程外陈旧写入返回 409，操作窗口内记录消失返回 404。
 - 用户/列表实体 `DELETE` 现在同时删除对应存储目录；版本化暂存名与持久恢复日志让进程重启后也能恢复中断删除或清理已提交删除。
 - 新命名规则会在下次 profile/list/batch 同步时一次性重命名不规范的旧目录，包括尾点/尾空格、控制字符、空标题、URL 片段和超长名称；同卷移动使用 `os.Rename`，已有媒体内容不会重写。

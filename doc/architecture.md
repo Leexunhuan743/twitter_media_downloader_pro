@@ -255,7 +255,7 @@ tmd/
 
 ### 运行测试
 
-项目包含 **94 个测试文件**（`internal/api` 25、`internal/downloading` 19、`internal/database` 17 最多，其余分布在 `internal/bot`、`internal/logging`、`internal/twitter`、`internal/service` 等包），覆盖核心业务逻辑：
+项目包含 **94 个测试文件**（快照：commit `1f5ff79`，2026-09-23，共 1196 个 `func Test`），其中 `internal/api` 25 个最多、`internal/downloading` 16、`internal/database` 3 + `internal/database/test` 13，其余分布在 `internal/bot`、`internal/logging`、`internal/twitter`、`internal/service` 等包；**完整分布与复核命令见 [doc/testing.md](testing.md) §1**（数字随提交漂移，以那里的命令输出为准）。
 
 ```bash
 # 运行所有测试（含竞态检测）
@@ -307,7 +307,10 @@ go tool cover -html=covprofile -o coverage.html
 ```yaml
 go.yml（Go Release）:
   触发条件:
-    - 创建版本标签 (v*)，且改动不全是 Markdown / doc 文件
+    - 创建版本标签 (v*)（on.push.tags: ["v*"]；未定义 branches/tags-ignore，
+      所以普通分支 push 与 PR 都不会触发）
+    - 注意 on.push 下还有一份 paths-ignore（"**/*.md"、"doc/**"）——它是
+      **死配置**，见下方说明
 
   verify（发布前置门禁，release-build 以 needs: verify 依赖它）:
     1. go test -race -count=1 ./...
@@ -324,6 +327,7 @@ docker.yml（Docker Publish）:
   触发条件:
     - 创建版本标签 (v*)
     - workflow_dispatch（手动触发）
+    - 同样带一份对 tag push 不生效的 paths-ignore（死配置）
 
   执行步骤:
     1. 多平台镜像构建 (linux/amd64 + linux/arm64)
@@ -332,12 +336,14 @@ docker.yml（Docker Publish）:
 
 注意：`go.yml` 的 `verify` job 会在构建前依次跑 `go test -race -count=1 ./...`、`go vet ./...` 与 `npx --yes lat.md@0.12.2 check`，任一失败即中止发布；`docker.yml` 不含测试 job。两个工作流均未接入 Coveralls。
 
+**关于两个工作流里的 `paths-ignore`（重要，容易误读）**：它们把 `paths-ignore: ["**/*.md", "doc/**"]` 写在 `on.push` 下，但 GitHub 的 path filter **只对 branch push 求值，对 tag push 不生效**（官方 workflow syntax：*Path filters are not evaluated for pushes of tags*）。这两个工作流又**只由 tag push 触发**，所以这两处 `paths-ignore` 是**死配置**——任何 tag push 都会完整跑一遍 `verify`，与这个 tag 改了哪些文件无关（哪怕整个 release 只动了 `doc/`）。"改文档不触发 CI"这个结论本身成立，但原因是**没有任何以 branch push / PR 为触发条件的工作流**，而不是 `paths-ignore`。
+
 ### 独立工具
 
 | 工具 | 位置 | 用途 |
 |------|------|------|
 | **tmd-db-migrate** | `tools/tmd-db-migrate.py` | 跨平台数据库路径迁移，当下载目录从 Windows 迁移到 Linux 等场景时重写 `foo.db` 中的 `parent_dir` 路径。详见 [foo.db 跨平台迁移说明](foo.db%20跨平台迁移说明.md) |
-| **convert_db_to_legacy.py** | `tools/convert_db_to_legacy.py` | 将新格式数据库转换为旧格式的辅助脚本 |
+| **convert_db_to_legacy.py** | `tools/convert_db_to_legacy.py` | 将新格式数据库转换为旧格式的辅助脚本（**历史工具**：无仓内调用方、无测试、无 dry-run、会覆盖目标文件） |
 | **TMD Download Button** | `tools/tmd-download-button.user.js` | Tampermonkey 用户脚本：在 X/Twitter 个人资料页注入下载按钮，一键推送下载任务 |
 | **web1-e2e** | `tools/web1-e2e/` | web1 前端浏览器回归脚本（无需测试框架，在浏览器页面上执行并输出结构化检查报告） |
 | **web3-e2e** | `tools/web3-e2e/` | web3 响应式布局验收脚本，附带只读 mock server |
