@@ -269,7 +269,7 @@ flowchart LR
 | `.loongtweet` | `internal/downloading/profile/downloader.go` 的 `profileDirName` 与 `internal/downloading/tweet_download.go` 的 `saveTweetJson`/`saveLoongTweet` | 推文 `*.json`/`*.txt`；profile 在其下再套一层 |
 | `.loongtweet/.profile` | `profileSubDirName` | `avatar.jpg`、`banner.jpg`、`description.txt`、`profile.json`、`.versions/` |
 | `.data` | `path.NewStorePath` | DB 与错误转储 |
-| `.tmd-remove-v1-<hash>-*` | `internal/entity/storage.go` 的 `stagedDirectoryVersionPrefix` | 实体目录删除的暂存名，启动时由 `entity.CleanupStagedDirectories` 回收 |
+| `.tmd-remove-<rand>` | `internal/entity/storage.go` 的 `stagedDirectoryPrefix` | 实体目录删除的暂存名（journal 先写、改名在后），启动时由 `entity.CleanupStagedDirectories` 回收 |
 
 `internal/downloading/profile/storage.go#FileStorageManager.GetFilePath` 是 profile 文件名（`avatar.jpg` 等）的唯一来源；`GetFilePathWithExt` 只做 `avatar`/`banner` + 传入后缀的字符串拼接，**不带白名单**——扩展名的白名单过滤发生在调用方 `internal/downloading/profile/downloader.go#imageExtFromURL`（`{.jpg,.jpeg,.png,.gif,.webp}`，否则 `.jpg`）。
 

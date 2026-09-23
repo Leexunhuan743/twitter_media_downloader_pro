@@ -113,10 +113,11 @@ cp .data/foo.db.backup.20260923_101500-shm .data/foo.db-shm
 
 删除实体目录不是直接 `RemoveAll`，而是**两阶段提交**（`internal/entity/storage.go#stageEntityDirectoryRemoval`）：
 
-1. 把实体目录换名为同父目录下的暂存名，形如 `.tmd-remove-v1-<32位hexhash>-<随机>`；hash 是规范化 basename 的 SHA-256 前 16 字节（`stagedDirectoryNameHash`，先 TrimRight 尾点/空格再哈希——保证 Windows 与 Linux 扫到同一个候选）。
-2. 把 `原路径`、`暂存路径` 写入 `entity_removal_journal` 表；数据库删除成功后才真正删目录并删 journal。
+1. **先把** `原路径`、`暂存路径` 写入 `entity_removal_journal` 表；
+2. **再**把实体目录换名为同父目录下的暂存名，形如 `.tmd-remove-<随机后缀>`；
+3. 数据库删除成功后才真正删目录并删 journal。
 
-因此：**磁盘上出现 `.tmd-remove-v1-*` 目录 = 一次实体删除在"改名完成、收尾未完成"的窗口里被中断**（进程被杀/崩溃/断电），或收尾已经完成但还没到下次启动清理。**`entity_removal_journal` 表里有行但目录已不存在** = 已提交删除，journal 是残留证据。两者都由启动时 `entity.CleanupStagedDirectories`（`internal/entity/storage.go`，`main.go#initializeClients` 在连库后立即调用）对账收口。
+**journal 先于改名是刻意设计**：因此任何由本程序创建的暂存目录必然已有 journal 行，"磁盘上出现暂存目录 = 一次实体删除在收尾窗口里被中断（进程被杀/崩溃/断电），或收尾已完成但还没到下次启动清理"。**`entity_removal_journal` 表里有行但目录已不存在** = 崩在"写 journal 之后、改名之前"，原目录未被触碰，启动对账会把这条陈旧 journal 行删掉。两者都由启动时 `entity.CleanupStagedDirectories`（`internal/entity/storage.go`，`main.go#initializeClients` 在连库后立即调用）对账收口。
 
 启动对账扫描三类父目录：调用方传入的配置根（`pathHelper.Root`、`pathHelper.Users`）、journal 记录中的目录、`user_entities`/`lst_entities` 表里的每个 `parent_dir`。
 
@@ -129,10 +130,10 @@ cp .data/foo.db.backup.20260923_101500-shm .data/foo.db-shm
 | `restored=N` | 有 N 个暂存目录被**改名还原**成正式实体目录 | 该实体的数据库记录**仍存在**（`user_entities`/`lst_entities` 有行）→ 说明删除并未提交，中断的删除被恢复。这是**好事**：媒体回来了。 |
 | `removed=M` | 有 M 个暂存目录被**彻底删除** | 该实体的数据库记录**已不存在** → 删除已提交，暂存目录只是收尾没做完，可以安全 `RemoveAll`。 |
 
-判定依据是"暂存目录 ↔ 活跃记录"配对，不依赖 journal 单方面：
+判定依据是"暂存目录 ↔ 活跃记录"配对，且**只有 journal 行能作为归属证据**：
 
 - 有 journal：`journal.OriginalPath` 对应的活跃记录还在 → restore；记录没了 → remove；恢复目标已存在（或归一化变体已存在）→ 保留 + 告警。
-- 无 journal 的版本化暂存（`.tmd-remove-v1-*`）：用 hash 反查活跃候选，**唯一**候选且目标目录缺失 → restore（覆盖"改名后、journal 落库前"的崩溃窗口）；候选 ≥2 或 0 个 → 保留 + 告警。
+- 无 journal：**一律保留 + 告警**（无论名字是否带旧式的 `v1-<hash>` 段）。没有 journal 就无从证明它属于哪条记录，更无从证明它已被提交删除。
 
 ### 2.3 哪些暂存目录被故意保留、为什么
 
@@ -140,9 +141,7 @@ cp .data/foo.db.backup.20260923_101500-shm .data/foo.db-shm
 
 | 保留情形 | 代码依据 | 人工判定依据 |
 |---|---|---|
-| 无 journal 的**旧版**暂存名（`.tmd-remove-<随便>`，无 `v1-` 前缀） | `retain unjournaled legacy staged entity directory ...: no removal journal` | 无 hash、无 journal，无法证明归属。先看内容是不是媒体；用 sqlite3 查 journal 表确认无对应行后，再人工决定。 |
-| 无 journal 的版本化暂存但**活跃候选 0 个** | `retain unjournaled staged entity directory ...: no matching active entity record` | 可能是用户手建的"长得像暂存名"的目录，或 journal 落库前崩溃且记录也已删除。查 `user_entities`/`lst_entities` 有没有同名记录。 |
-| 活跃候选 **≥2 个**（同名尾点变体等） | `recovery target is ambiguous` | 归一化后多个记录指向同一目录（如 Linux 上 `foo.` 与 `foo`）。核对两条记录，确定哪个才是真的。 |
+| **任何无 journal 的暂存目录**（`.tmd-remove-*`，包括旧版本留下的 `.tmd-remove-v1-<hash>-*`） | `retain unjournaled staged entity directory ...: no removal journal` | 没有 journal 行就没有归属证据。先看内容是不是媒体；用 sqlite3 查 `entity_removal_journal` 表确认无对应行，再对照 `user_entities`/`lst_entities` 判断是否孤儿，最后人工决定（可直接改名回原路径或自行删除）。 |
 | 恢复目标已存在 | `active recovery target ... already exists` | 暂存里是旧媒体，目标里已有新内容；人工比较时间戳再合并。 |
 | 暂存路径同时是活跃路径 / 被 journal 记录但**不是普通目录**（文件、符号链接） | `path is both active and journaled` / `path is not a regular directory` | 数据不一致，先备份再人工处理；对账绝不跟随符号链接（`TestCleanupStagedDirectoriesDoesNotFollowSymlinks` 锁定）。 |
 
@@ -292,6 +291,12 @@ go run ./tools/xapi-probe -user <name> -uid <uid> -list <listID> -save-dir tools
 - **手动重试**：`RetryAllFailed()` 先重试 `errors.json` 再重试 `json_errors.json`（`download_service.go#RetryAllFailed`，Web 面板"重试全部失败"）；`ClearErrors()` 两个文件一起清。
 - **`-no-retry`（CLI）与 `no_retry`（API/调度/Bot）**：**只跳过"同一任务内"的失败重试这一遍**，`errors.json`/`json_errors.json` **仍然照常写入**（`download_service.go#JsonFileDownload` 注释：`noRetry=true 时跳过重试，失败项仍会持久化到 json_errors.json 供下次运行使用`；常规路径 `defer s.saveDumper(...)` 不受 NoRetry 影响）。用途：快速验证配置/排查单文件问题，不想让每次运行都拖着重试尾巴；失败项仍可后续用 `RetryAllFailed` 或下次运行处理。
 - **`FromUpload` 例外**：上传的 JSON 任务重试会被拒（409，见 §8），因为上传目录在任务结束后已清理。
+
+### 4.4 已知限制：无 `Content-Length` 时"流式"退化为整块进内存
+
+媒体下载按文件大小选策略（`internal/downloader/downloader.go`）：先发一次 `HEAD` 拿 `Content-Length`，`> 10MB` 走流式、否则走 Buffer；而**回退路径**（HEAD 失败，例如 CDN 对 HEAD 返回 405；或响应是 chunked、长度为 -1）会直接走 `downloadBuffer`，它把整个响应体读进内存后才交给 `FileWriter`。
+
+后果：这两种情形下 ≥10MB 的文件不享受流式的内存上限，**峰值内存 ≈ 单文件大小 × 并发数**。缓解手段按成本从低到高：降低 `max download routine`；确认代理/CDN 不屏蔽 HEAD 请求；若要根治需要把回退路径也改成流式（`SetDoNotParseResponse` + 原始 body 作为 Reader 交 `FileWriter`，并显式 `Close`），本仓库当前**未做**该改动。
 
 ---
 

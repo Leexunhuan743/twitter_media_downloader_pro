@@ -25,7 +25,7 @@ flowchart TD
   PF --> VS[".versions/"]
   UD --> MEDIA["媒体文件"]
   LD --> SL["&lt;member 名&gt; -&gt; users/&lt;UserTitle&gt; 符号链接"]
-  UD -.->|"删除时改名"| ST[".tmd-remove-v1-&lt;hash&gt;-&lt;rand&gt;"]
+  UD -.->|"删除时改名"| ST[".tmd-remove-&lt;rand&gt;"]
 ```
 
 | 路径 | 角色 | 唯一实现 |
@@ -40,7 +40,7 @@ flowchart TD
 | `<UserDir>/.loongtweet/.profile/` | profile 下载产物 | `internal/downloading/profile/downloader.go#ensureProfileDirs` |
 | `<UserDir>/.loongtweet/.profile/.versions/` | profile 旧文件备份（`VersionManager`） | 同上 |
 | `<ListDir>/<member 名>` | **符号链接**，指向成员用户实体目录的绝对路径；同名记录在 `user_links` 表 | `internal/downloading/entity.go#updateUserLink`、`internal/downloading/batch_download.go`（`os.Symlink(upath, linkpath)` 成功后写 `database.CreateUserLink`） |
-| `<parent>/.tmd-remove-v1-<hash>-<rand>` | 删除暂存目录，与实体目录**同级**（见 §5） | `internal/entity/storage.go#stageEntityDirectoryRemoval` |
+| `<parent>/.tmd-remove-<rand>` | 删除暂存目录，与实体目录**同级**（见 §5） | `internal/entity/storage.go#stageEntityDirectoryRemoval` |
 
 要点：
 
@@ -117,7 +117,7 @@ normalizeStoredName(name):
 
 两个失败文案刻意带 `legacy name is ...` 前缀：这说明**记录本身已经不可寻址**，调用方（`Sync`）要用 `Rename` 迁移到合规名，而不是重试同一操作。`entity_test.go#TestSyncMigratesLegacyNamesWithTrailingWindowsCharacters` 覆盖这条迁移路径。
 
-关键推论（也是 §5、§6 的跨平台哈希动机）：**「同一个数据库在不同平台上算出的目录路径可能不同」**。写库记录 `"foo."` 后把库搬到 Linux，路径仍是 `foo.`；反之从 Linux 带到 Windows，`Path()` 只认 `foo`。
+关键推论：**「同一个数据库在不同平台上算出的目录路径可能不同」**。写库记录 `"foo."` 后把库搬到 Linux，路径仍是 `foo.`；反之从 Linux 带到 Windows，`Path()` 只认 `foo`。这条推论直接决定了两处实现：写入侧 `ValidateName` 拒绝尾点（§2.1），以及启动对账里对 journal 的 `original_path` 做**双方向尾点/空格变体匹配**（§6.4）。
 
 ### 2.3 空名记录为什么不可寻址
 
@@ -312,13 +312,15 @@ UPDATE lst_entities  SET name=? WHERE id=? AND name=?
 
 ## 5. Remove：暂存改名 + journal + 提交
 
-删除一个实体要同时撤销「数据库行」与「磁盘目录」，但文件系统与 SQLite 没有共同事务。解法是**三步法**：先把目录改名到一个不可能与正常实体同名的暂存名，再写一条 journal 记录这次改名，最后才删数据库行 —— **删行即提交点**（`internal/entity/user.go#UserEntity#Remove`、`internal/entity/list.go#ListEntity#Remove`）。
+删除一个实体要同时撤销「数据库行」与「磁盘目录」，但文件系统与 SQLite 没有共同事务。解法是**三步法**：先写一条 journal 记录这次删除，再把目录改名到一个不可能与正常实体同名的暂存名，最后才删数据库行 —— **删行即提交点**（`internal/entity/user.go#UserEntity#Remove`、`internal/entity/list.go#ListEntity#Remove`）。
+
+> **写序是关键**：journal 先于改名，因此**任何由本程序创建的暂存目录必然已有 journal 行**。此前顺序相反（先改名后写 journal），存在「磁盘上已有暂存目录、数据库里没有 journal」的窗口，才不得不把规范名哈希编码进目录名作为第二套归属证明；改序后那套机制整体删除（见 §5.2）。
 
 | 步 | 动作 | 失败时 |
 |----|------|--------|
 | 0 | `requireRecord` → 锁定（实体锁 → 父级锁）→ `requireRecorded` → `refreshRecord` | 返回 |
 | 0' | 空名遗留记录：**只删行、不碰文件系统**（§2.3） | 返回 |
-| 1 | `stageEntityDirectoryRemoval(db, path)`：改名 + 写 journal | 内部自行回滚 |
+| 1 | `stageEntityDirectoryRemoval(db, path)`：写 journal + 改名 | 内部自行回滚 |
 | 2 | `database.DelUserEntity(db, id)` | `staged.rollback(...)`（改名回去 + 删 journal） |
 | 3 | 重置内存状态（`created = false`、`Id` 置无效）→ `staged.commit(db)` | `commit` 返回错误（journal 保留，留给下次启动清扫重试） |
 
@@ -328,46 +330,42 @@ UPDATE lst_entities  SET name=? WHERE id=? AND name=?
 
 1. `os.Lstat(path)`：**目录不存在 → 直接返回空 `stagedPath`**，后续 `rollback`/`commit` 都变成无操作。这条让「目录已被手工删掉」的记录仍能删干净。
 2. 存在但不是目录 → 报错（宁可留错，也不删一个同名文件）。
-3. `os.CreateTemp(filepath.Dir(path), stagedDirectoryPattern(path))` **占位拿名字**，随后立刻 `Close` + `Remove` 释放名字 —— 只为拿到一个同目录下唯一的名字，避免与并发方撞名。
-4. `os.Rename(path, tempPath)` → 目录进入暂存态。**同目录改名**，不跨设备，几乎不可能失败。
-5. `database.CreateEntityRemovalJournal(db, {StagedPath, OriginalPath})`。写 journal 失败时立即回滚（把目录改名回去），**不允许出现「目录已暂存但没有 journal」的新数据**。
+3. `os.CreateTemp(filepath.Dir(path), stagedDirectoryPattern())` **占位拿名字**，随后立刻 `Close` + `Remove` 释放名字 —— 只为拿到一个同目录下唯一的名字，避免与并发方撞名。
+4. `database.CreateEntityRemovalJournal(db, {StagedPath, OriginalPath})`：**先把暂存路径与原始路径登记进 journal**。
+5. `os.Rename(path, tempPath)` → 目录进入暂存态。**同目录改名**，不跨设备。改名失败时立刻删掉第 4 步写的 journal 行，维持「journal 行 ⇔ 暂存目录」的对应关系。
 
 暂存名格式：
 
 ```
-.tmd-remove-v1-<sha256(归一化名) 前 16 字节的 hex，共 32 字符>-<随机后缀>
-└──────┬──────┘└┬┘└──────────┬──────────┘
-   保留前缀    版本       名称指纹
+.tmd-remove-<随机后缀>
 ```
 
 | 常量 | 值 | 位置 |
 |------|----|------|
 | `stagedDirectoryPrefix` | `.tmd-remove-` | `internal/entity/storage.go` |
-| `stagedDirectoryVersionPrefix` | `.tmd-remove-v1-` | 同上 |
-| `stagedDirectoryHashBytes` / `stagedDirectoryHashLength` | 16 / 32 | 同上 |
 
-这个前缀在 `ValidateName` 里被**大小写不敏感**地保留（§2.1），所以用户无法手工造出一个看起来像暂存目录的实体名。
+这个前缀在 `ValidateName` 里被**大小写不敏感**地保留（§2.1），所以用户无法手工造出一个看起来像暂存目录的实体名。早于本次精简的版本使用过 `.tmd-remove-v1-<32 位 hex>-<随机后缀>`；前缀相同，启动对账仍能识别，只是不再解析其中的哈希（见 §6.2）。
 
-### 5.2 哈希为何先去尾点/尾空格
+### 5.2 为什么不再需要「名内哈希」
 
-`stagedDirectoryNameHash` 先 `TrimRight(name, " .")` 再算 SHA-256，取前 16 字节 hex（`internal/entity/storage.go#stagedDirectoryNameHash`）。三个用途都依赖这个指纹一致：
+`journal` 本身就是归属证明：启动清扫只对**有 journal 行**的暂存目录做「恢复 / 删除」判断（§6.3），无 journal 的一律保留。因此原先那套「把 `sha256(归一化名)` 编进暂存名 + 启动时按哈希反查候选记录」的机制被整体删除：
 
-1. **构造暂存名**（第 3 步的 `CreateTemp` 模式）；
-2. **反查候选记录**：启动清扫把活跃记录按 `hash(记录目录名)` 建索引，再用暂存目录名解析出的哈希去查（§6）；
-3. **校验 journal 自洽**：`normalizeRemovalJournal` 要求 `parseStagedDirectoryHash(暂存名) == stagedDirectoryNameHash(OriginalPath 的 base)`，否则整条 journal 被判非法（`internal/entity/storage.go#normalizeRemovalJournal`）。
+| 删除物 | 原用途 |
+|--------|--------|
+| `stagedDirectoryNameHash` / `parseStagedDirectoryHash` | 构造暂存名、从暂存名反解指纹 |
+| `stagedDirectoryVersionPrefix`、`stagedDirectoryHashBytes/Length` | 暂存名的版本段与指纹长度 |
+| `activeByParentAndHash` 索引 + 同路径去重 | 无 journal 暂存目录的候选反查与歧义判定 |
+| `normalizeRemovalJournal` 的指纹比对 | 校验 journal 自洽（现在只校验：绝对路径、同父、暂存名带内部前缀） |
+| 「无 journal 的 versioned 暂存目录」整段恢复分支 | 覆盖「改名成功但 journal 未写」的旧窗口 |
 
-必须裁剪的原因（代码注释原文）：Windows 把尾点/尾空格解析到与裁剪名相同的路径，`storedEntityPath` 也据此归一 —— 若指纹不裁剪，**同一个实体在 Windows 上算一个哈希、在 Linux 上算另一个**，于是「暂存目录名 ↔ 活跃记录」这一对映射在跨平台扫描时对不上，恢复会**静默退化为零候选**（即 §6.2 类别 D 的「保留」分支，暂存媒体再也回不到原位）。
-
-而「匹配失败 = 删掉活媒体」那条更危险的路径在 **journaled 分支**：那里 `active` 判定失败会直接落到 `os.RemoveAll(stagedPath)`，把暂存目录当成「已提交的删除」清掉（§6.3）。所以指纹裁剪（保证候选可查）与 §6.4 的尾点/空格变体匹配（保证 `active` 判得准）是两道互补的保险，缺一就会出现「记录还活着、目录已被清掉」。
-
-**中间的点不裁剪**：只有尾部的点会被 Win32 吞掉，扩展名里的点是真实字符（注释：`Interior dots (extensions) are preserved`）。
+**保留**的是尾点/尾空格变体匹配（§6.3）与「无法证明归属就保留」策略：前者让 journal 的 `OriginalPath` 与活跃记录在跨平台尾点差异下仍能对上，后者保证任何无法证明为孤儿的媒体都不会被递归删除。
 
 ### 5.3 崩溃窗口与对应恢复
 
 | 崩在哪 | 磁盘 | 数据库 | 启动对账的动作 |
 |--------|------|--------|----------------|
-| 改名之后、journal 之前 | 有暂存目录，**无 journal** | 行仍在 | 无 journal 的 v1 暂存目录：按指纹找回候选记录 → **改名恢复** |
-| journal 之后、删行之前 | 暂存目录 + journal | 行仍在 | journal 命中且记录活跃 → **改名恢复**，删 journal |
+| journal 之后、改名之前 | **无暂存目录**、有 journal 行 | 行仍在 | journal 的暂存路径不存在 → 删掉这条陈旧 journal 行；**原目录未被触碰** |
+| 改名之后、删行之前 | 暂存目录 + journal | 行仍在 | journal 命中且记录活跃 → **改名恢复**，删 journal |
 | 删行之后、`commit` 之前 | 暂存目录 + journal | 行已删 | journal 命中但记录不存在 → **`RemoveAll` + 删 journal**（真正的提交） |
 
 `commit` 的顺序是 `RemoveAll` → 删 journal：若 `RemoveAll` 失败，journal **故意保留**，下次启动重试（`internal/entity/storage.go#stagedDirectoryRemoval.commit`）。反方向的 `rollback` 则先确认原路径未被占用，再改名回去，最后删 journal（`#stagedDirectoryRemoval.rollback`）。
@@ -394,12 +392,11 @@ type StagedDirectoryCleanupResult struct { Removed int; Restored int }
 | 每条 journal | `filepath.Dir(journal.StagedPath)` | 即便 root 配置变了、旧父目录已不在配置里，也能扫到 |
 | 每条活跃记录 | `parent_dir` 列（`user_entities` ∪ `lst_entities`） | 同上，覆盖历史 parent_dir |
 
-除目录集合外还建两个索引：
+除目录集合外还建一个索引：
 
-- `activePaths`：全部活跃记录经 **`storedEntityPath`** 解析出的路径集合（解析失败的记录记一条错误并跳过）；
-- `activeByParentAndHash`：`parentKey → hash(目录 base) → []路径`。同一 `(parent, hash)` 下**按 `comparablePath` 去重**，注释说明这是为了避免假歧义：遗留 `"foo."` 与 `"foo"` 归一化后指向同一目录，若不去重会被误判成「两个候选」而永久阻塞恢复（`storage_internal_test.go#TestCleanupStagedDirectoriesDeduplicatesSamePathCandidates`）。
+- `activePaths`：全部活跃记录经 **`storedEntityPath`** 解析出的路径集合（解析失败的记录记一条错误并跳过）。它用于判断「暂存路径是否同时是活跃实体目录」（§6.2 类别 B）与「journal 的 `original_path` 是否还对应一条活跃记录」（§6.3）。
 
-journal 侧先经 `normalizeRemovalJournal` 过滤：路径必须绝对、`staged_path` 与 `original_path` 必须**同级**、暂存名必须能解析出哈希、且该哈希必须等于 `hash(original_path 的 base)`。任一不满足 → 记错误、**不采信该 journal**（`internal/entity/storage.go#normalizeRemovalJournal`）。两条 journal 指向同一暂存路径也记错误，只保留第一条。
+journal 侧先经 `normalizeRemovalJournal` 过滤：路径必须绝对、`staged_path` 与 `original_path` 必须**同级**、暂存名必须带内部前缀（`.tmd-remove-`）。任一不满足 → 记错误、**不采信该 journal**（`internal/entity/storage.go#normalizeRemovalJournal`）。两条 journal 指向同一暂存路径也记错误，只保留第一条。
 
 扫描目录时按 `comparablePath` 去重；`os.ReadDir` 遇到 `IsNotExist` 静默跳过（配置里写了不存在的根不是错误）；只处理名字以 `.tmd-remove-` 开头（大小写不敏感）的条目。
 
@@ -410,10 +407,9 @@ journal 侧先经 `normalizeRemovalJournal` 过滤：路径必须绝对、`stage
 | A. 非常规目录 | `!info.IsDir()` 或带 `os.ModeSymlink` | journaled → 记错误保留；未 journaled → **静默跳过**（不跟随符号链接，`storage_internal_test.go#TestCleanupStagedDirectoriesDoesNotFollowSymlinks`） |
 | B. 该路径本身是活跃实体目录 | 暂存路径 ∈ `activePaths` | journaled → 记错误保留（「既是活跃路径又是 journaled」属矛盾状态）；未 journaled → 静默跳过（历史上可能真有以此为名的实体记录，`#TestCleanupStagedDirectoriesPreservesReferencedLegacyPrefix`） |
 | C. 有 journal | 暂存路径命中 `journalByStagedPath` | 按 §6.3 恢复或删除，然后删 journal |
-| D. 无 journal + 有 v1 版本号 | `parseStagedDirectoryHash` 成功 | 按指纹找候选，唯一命中且目标空闲 → 改名还原；否则保留 |
-| E. 无 journal + 无版本号（旧版残留） | 前缀命中但不匹配 v1 格式 | **一律保留**并记错误 |
+| D. 无 journal（含旧 `v1-<hash>` 命名） | 前缀命中但无对应 journal 行 | **一律保留**并记错误 |
 
-D 与 E 都不允许 `RemoveAll`，理由写在代码注释里：**没有 journal 的暂存目录不能作为「行已被提交删除」的证据** —— 它可能是用户手工创建的、恰好撞上保留前缀的目录，也可能是一次 journal 之前中断的删除。只凭前缀就 `RemoveAll`，等于把「前缀碰撞」当成删除授权（`internal/entity/storage.go#CleanupStagedDirectories` 中的两处 retain 注释）。
+D 类不允许 `RemoveAll`，理由写在代码注释里：**没有 journal 的暂存目录不能作为「行已被提交删除」的证据** —— 它可能是用户手工创建的、恰好撞上保留前缀的目录，也可能是**本次精简之前**的旧版本留下的中断删除（旧版本先改名后写 journal）。只凭前缀就 `RemoveAll`，等于把「前缀碰撞」当成删除授权（`internal/entity/storage.go#CleanupStagedDirectories` 的 retain 注释）。
 
 ### 6.3 journaled 分支：以「记录是否还在」定向
 
@@ -438,8 +434,7 @@ flowchart TD
 2. 暂存路径同时是活跃实体目录，且存在对应 journal；
 3. journaled 但恢复目标**已存在**（含归一化变体已存在：`active recovery target ... already exists (normalized)`）；
 4. journaled 但恢复目标**歧义**（同父目录下多个记录的裁剪名相同，`recovery target is ambiguous`）；
-5. 未 journaled 的 v1 暂存目录：候选 **0 个**（`no matching active entity record`）或 **> 1 个**（歧义）；
-6. 未 journaled 的旧版（无版本号）暂存目录：**无条件保留**。
+5. 未 journaled 的暂存目录：**无条件保留**（无论名字是否带 `v1-<hash>`）。
 
 反向的清理动作只有两个：journaled + 记录已消失 → `RemoveAll`；以及**收尾阶段**删除「journal 存在但暂存路径已不存在」的悬空 journal 行（`DeleteEntityRemovalJournal`，`TestCleanupStagedDirectoriesRemovesStaleJournal`）。
 
@@ -451,7 +446,6 @@ flowchart TD
 |------|------|------|
 | journal 分支（正向） | journal 的 `OriginalPath` **带**尾点（`foo.`），活跃记录是归一化名（`foo`） | 用裁剪名当恢复目标，命中的是记录的磁盘名（`storage_internal_test.go#TestCleanupStagedDirectoriesRestoresJournaledStageWithTrailingSuffix`） |
 | journal 分支（反向） | journal 的 `OriginalPath` **是**裁剪名（Windows 源删除流程经 `storedEntityPath` 归一），活跃记录保留了尾点（Linux） | 在同父目录下找「裁剪后 base 相等」的记录：唯一命中 → 恢复到记录的实际路径；多个命中 → 保留（歧义）（`#TestCleanupStagedDirectoriesRestoresJournaledStageWithTrimmedOriginalPath`） |
-| unjournaled v1 分支 | 记录路径带尾点、但磁盘目录已被 Windows 风格归一化成裁剪名 | 发现裁剪变体**已存在** → 保留暂存目录（`active recovery target ... already exists (normalized)`），不再改名覆盖 |
 
 这些分支的共同取向是：**只要存在两种「说得通」的落点，就保留**。保存在磁盘上的媒体可以事后人工归位；被 `RemoveAll` 掉就没有第二次机会。
 
@@ -554,9 +548,9 @@ if req.ParentDir != nil {
 1. **禁止「先读整行再写回整行」实现改名** —— 会把并发期间的 `media_count` / `latest_release_time` 覆盖回旧值；用 `UpdateUserEntityNameIfCurrent` / `UpdateLstEntityNameIfCurrent` 的 name-only CAS。
 2. **禁止用裸字符串比较路径**（`==` 或 `EqualFold`）代替 `comparablePath`（`filepath.Clean` + Windows 小写）；跨平台一致性的唯一入口。
 3. **禁止跟随符号链接做递归删除**；暂存目录判定显式排除 `os.ModeSymlink`（§6.2 类别 A）。
-4. **禁止对「无 journal 的暂存目录」执行 `RemoveAll`**，无论它看起来多像残留（§6.2 类别 D/E）。
-5. **禁止改动暂存名格式而不给 `parseStagedDirectoryHash` / `normalizeRemovalJournal` 加迁移**：长度与分隔符都是硬编码解析（`internal/entity/storage.go` 的三个常量）。
-6. **禁止改动 `stagedDirectoryNameHash` 的裁剪规则**：尾点/尾空格**必须**裁（跨平台指纹一致），中间的点**不可**裁（扩展名是真实字符）（§5.2）。
+4. **禁止对「无 journal 的暂存目录」执行 `RemoveAll`**，无论它看起来多像残留（§6.2 类别 D）。
+5. **禁止颠倒删除写序**（必须先写 `entity_removal_journal`、再 `os.Rename`）：顺序一旦反过来，磁盘上就会重新出现"有暂存目录、无 journal"的状态，而那正是「无 journal 一律保留、永不自动回收」策略要避免的死角（§5.1）。
+6. **禁止让 `entity_removal_journal` 行与暂存目录的对应关系失衡**：改名失败必须撤掉刚写的 journal 行，「journal 行在但目录不在」只能来自崩溃并被启动对账清理（§5.1、§5.3）。
 7. **禁止在未持有父级锁时做归属判断或目录改名** —— 这是两个实体撞进同一目录的唯一入口。
 8. **禁止让 `entityDirectoryOwnedByAnother` 的失败路径跳过回滚**（会让孤儿空目录永久残留）（§3.4）。
 
@@ -600,7 +594,7 @@ go vet ./internal/entity/ ./internal/database/ ./internal/downloading/
 |------|------|
 | 实体报 409 但目录看起来不存在 | 是否有另一条记录归一化/大小写变体指向同一路径（§3.3、§4.2） |
 | 目录出现在新名下、库里还是旧名 | Rename 的接管情形（§4.3 情形 2），下次 `Sync` 会收敛 |
-| `users/` 下出现空的 `.tmd-remove-v1-*` | journal 是否还在（`entity_removal_journal` 表）；有 journal 且行已删 = 等 `commit`（§5.3） |
+| `users/` 下出现空的 `.tmd-remove-*` 目录 | journal 是否还在（`entity_removal_journal` 表）；有 journal 且行已删 = 等 `commit`（§5.3）；无 journal = 保留待人工判断 |
 | 磁盘有目录、库里没记录、启动也没删 | 无 journal 的暂存目录一律保留（§6.2）—— 需要人工确认后手动处理 |
 | 改名后统计字段回退 | 是否有人改成了整行 UPDATE（§4.4） |
 | 列表目录里找不到媒体 | 媒体在 `users/` 下（§1 要点 1） |
