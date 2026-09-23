@@ -1,6 +1,6 @@
 # TMDP 日志系统实现文档
 
-> 基于当前代码审计后的日志实现说明。最后校准：2026-08-11（client.log 经 SanitizingLogger 整块脱敏 + OnRequestLog/OnResponseLog 头/体预脱敏 + `SetDebugBodyLimit(256KB)`；无 scheme 的 `user:pass@host` 与空格值/未闭合引号敏感字段值现均被掩码）。
+> 基于当前代码审计后的日志实现说明。最后校准：2026-09-23（按当前代码复核轮转工厂、NO_COLOR 语义、`internal/logging/sanitize.go` 全量脱敏入口、consolelog.Hub 溢出行为、Web 日志 API 过滤参数；修正了不存在的 `[consolelog] Slow subscriber closed` 输出与 `page_size`/`sort` 参数别名）。此前校准：2026-08-11（client.log 经 SanitizingLogger 整块脱敏 + OnRequestLog/OnResponseLog 头/体预脱敏 + `SetDebugBodyLimit(256KB)`；无 scheme 的 `user:pass@host` 与空格值/未闭合引号敏感字段值现均被掩码）。
 
 本文档描述 TMDP 当前日志栈、日志输出约定、Web UI 消费路径、Bot 告警路径，以及维护日志时需要遵守的实现规则。它以真实代码为准。
 
@@ -87,23 +87,43 @@ logrus 全局 logger
 
 当前不使用 `github.com/rifflock/lfshook`。文件日志通过 `internal/logging.LumberjackHook` 写入，Hook 写入前调用 `logging.SanitizeLogText()`：按完整 UTF-8 rune 去除 ANSI/C1 控制序列，再脱敏凭据并清理不安全控制字符，避免彩色控制符、秘密或多字节文本截断进入 `tmd2.log`。
 
-主日志文件（实际由 `logging.NewRotatingWriter` 工厂构造，`internal/logging/rotation.go:11-21`，单文件 2MB、2 份备份、14 天、gzip 压缩）：
+`internal/logging/sanitize.go` 的脱敏入口（写日志前必须经其中之一，禁止手写正则）：
+
+| 符号 | 行为 |
+| --- | --- |
+| `StripANSI()` | 按完整 UTF-8 rune 扫描（非按字节），移除 CSI（`ESC [ …`）、OSC/字符串型（`ESC ]`/`P`/`X`/`^`/`_` 及 C1 `\x90`/`\x98`/`\x9d`/`\x9e`/`\x9f`）、C1 CSI（`\x9b`）等控制序列；多字节字符（中文/西里尔/日文/emoji）原样保留。 |
+| `SanitizeLogText()` | `RedactSensitiveText(StripANSI(text))`，再删除除 `\n`/`\t` 外的控制字符（保留多行日志的换行）。 |
+| `RedactSensitiveText()` | 自由文本脱敏：绝对 URL；无 scheme 的 `user:pass@host`（含被 `url.Parse` 解析成 `scheme:opaque`、`User` 恒为 nil 的形态）；`key=value` / `key: value` 敏感字段（空格值、未闭合引号值、`Bearer`/`Basic` 前缀值均掩码）；裸 `Bearer <token>`。幂等：已掩码指纹原样保留。 |
+| `MaskSecret()` | 输出稳定短指纹 `[redacted:<16 位 hex>]`（sha256 前 8 字节）；空串返回空串，已是指纹则原样返回。 |
+| `SanitizeURL()` | 掩码 userinfo、query 值、fragment，以及 path 中的 Telegram bot token（`/bot<id>:<secret>`、`/file/bot<id>:<secret>`，`telegramBotPathTokenRe`）；`url.Parse` 失败时整串替换为 `invalid-url=<指纹>`，query 解析失败时整串替换为 `malformed_query=<指纹>`（失败闭合，不保留部分解析结果）；编码进 key 的 `token%3DSECRET` 会被拆开后掩码。 |
+| `SanitizeHeaders()` | 克隆 header，按字段名（大小写不敏感，`-`/`_` 归一）掩码敏感值。 |
+| `RequestTarget()` | `SanitizeURL(r.URL.RequestURI())`，用于 access log。 |
+
+敏感字段名集合见 `sensitiveFieldNames`（`token`、`authorization`、`cookie`、`ct0`、`api_key`、`jwt`、`session_token` 等；`-`/`_` 视为等价）。
+
+resty 客户端日志链：`internal/cli/executor.go#SetClientLogger` 用 `internal/logging/sanitizing_logger.go#NewSanitizingLogger` 包装 resty 的 `FormattedLogger`（先格式化再整体 `SanitizeLogText`），并注册 `OnRequestLog`/`OnResponseLog` 对 header 与 body 预脱敏，`SetDebugBodyLimit(256<<10)` 限制单块 body 大小。`LumberjackHook.Fire` 在 `entry.String()` 之后同样再过一遍 `SanitizeLogText`——即使调用方漏了脱敏，落盘仍是安全的。
+
+主日志文件（实际由 `logging.NewRotatingWriter` 工厂构造，`internal/logging/rotation.go#NewRotatingWriter`，单文件 2MB、2 份备份、14 天、gzip 压缩）：
 
 ```go
-logWriter := logging.NewRotatingWriter(filepath.Join(appRootPath, "tmd2.log"))
+logPath := filepath.Join(appRootPath, "tmd2.log")
+logWriter := logging.NewRotatingWriter(logPath)
 ```
 
 HTTP client 日志：
 
 ```go
-cliLogWriter := logging.NewRotatingWriter(filepath.Join(appRootPath, "client.log"))
+cliLogPath := filepath.Join(appRootPath, "client.log")
+cliLogWriter := logging.NewRotatingWriter(cliLogPath)
 ```
+
+两个 writer 在 `main.go#run` 中各有一个 `defer ...Close()`，且都由 `logging.NewLumberjackHook`/`cli.SetClientLogger` 消费，互不共用同一文件。
 
 ---
 
 ## 4. 初始化和关闭顺序
 
-初始化入口是 `main.go:initLogger`：
+初始化入口是 `main.go#initLogger`：
 
 ```go
 func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
@@ -128,7 +148,8 @@ func initLogger(dbg bool, logFile io.Writer, logHub *consolelog.Hub) {
 
 关键点：
 
-- formatter 由 `logging.NewTextFormatter()`（`internal/logging/rotation.go`）构造：`FullTimestamp`、`DisableSorting`、`PadLevelText: false`；主日志终端默认覆盖 `ForceColors = true`，但在 `NO_COLOR` 非空时改为 `DisableColors = true`（文件端始终由 LumberjackHook 剥离 ANSI），HTTP client 日志端覆盖 `DisableQuote = true`。
+- formatter 由 `logging.NewTextFormatter()`（`internal/logging/rotation.go#NewTextFormatter`）构造：`FullTimestamp`、`DisableSorting`、`PadLevelText: false`；主日志终端默认覆盖 `ForceColors = true`，但在 `NO_COLOR` 非空时改为 `DisableColors = true`（文件端始终由 LumberjackHook 剥离 ANSI），HTTP client 日志端覆盖 `DisableQuote = true`。
+- `NO_COLOR` 语义（`main.go#configureTerminalColors`）：**非空即关色**，不判断取值；同时关掉两处——logrus `TextFormatter.DisableColors`，以及 `github.com/gookit/color` 的 package 级 `Enable`（该库自身即以 `os.Getenv("NO_COLOR") == ""` 初始化）。
 - `consolelog.StartCapture()` 替换 `os.Stdout` 和 `os.Stderr` 为 pipe writer。
 - `capturePipe()` 把内容写回原始终端，同时逐行写入 Hub。
 - logrus 输出指向当前 `os.Stderr`，所以终端和 Web UI 都能看到同一条日志。
@@ -162,21 +183,18 @@ ERRO[2026-07-29T04:55:01+08:00] [download-queue] Task panic task_id=task_xxx err
 
 数据结构要点：
 
-- 默认环形缓冲：`DefaultLimit = 5000`。
+- 默认环形缓冲：`DefaultLimit = 5000`（`internal/consolelog/hub.go#DefaultLimit`）。
 - 每个订阅者 channel 缓冲：`subscriberBuffer = 100`。
-- `Hub.Add()` 会 trim、strip ANSI、忽略空行。
-- 订阅者满缓冲时会被关闭，并输出：
-
-```text
-WARN[...] [consolelog] Slow subscriber closed reason=queue_overflow
-```
+- 单行上限 `maxStoredLineBytes` = 16 KiB，超出部分截断并追加 ` [truncated]`（按 rune 边界截断）。
+- `Hub.Add()` 会对每条日志执行 `logging.SanitizeLogText`（去 ANSI/C1 + 凭据脱敏）、`TrimSpace`，丢弃空行，再截断超长行。
+- 订阅者写满缓冲时会被直接关闭并从 Hub 移除；Hub **不**打印任何告警——这是有意为之，避免慢订阅者溢出时重新进入 logrus 造成捕获递归（见 `TestHubOverflowDoesNotReenterLogrus`）。因此并不存在 `[consolelog] Slow subscriber closed reason=queue_overflow` 这类输出；同类溢出提示在事件总线侧：`[sse] Slow subscribers closed count=… event=… reason=queue_overflow`（`internal/api/event_bus.go#EventBus.Publish`）。
 
 生命周期：
 
-- `StartCapture()` 是幂等的；已有 active capture 时直接返回。
+- `StartCapture()` 对同一 Hub 重复调用是幂等的（直接返回）；若另一个 Hub 已持有 capture，返回 `ErrCaptureAlreadyActive`；Hub 已关闭则返回 `ErrHubClosed`。
 - `StopCapture()` 是幂等的；没有 active capture 时无操作。
-- `Hub.Close()` 会关闭订阅者并停止 capture。
-- capture goroutine 由 `captureWg` 等待退出，避免关闭后仍有后台读取。
+- `Hub.Close()` 会关闭订阅者，并只在「本 Hub 持有当前 capture」时停止 capture；已保留的行仍可通过 `Snapshot()` 读取。
+- capture goroutine 由 `captureSession.wg` 等待退出（`stopCaptureLocked` 中 `activeCapture.wg.Wait()`），避免关闭后仍有后台读取。
 
 ---
 
@@ -197,19 +215,20 @@ WARN[...] [consolelog] Slow subscriber closed reason=queue_overflow
 | --- | --- |
 | `level` | `debug`、`info`、`warn`、`error`、`all` |
 | `q` | 大小写不敏感搜索 |
-| `domain` | 域前缀筛选，匹配行首 `[xxx]` 域（`log_handlers.go:29-30`；SSE 流同样支持，`sse_logs.go:24`） |
+| `domain` | 域前缀筛选（`internal/api/log_handlers.go#matchLogDomain`；SSE 流同样支持，`internal/api/sse_logs.go#handleLogStream`）：在可选的 `LEVEL[时间戳]` 前缀之后匹配 `[xxx]` 域，域只含 `[a-z0-9_-]+`，大小写不敏感，`all`/空 不筛选 |
 | `start_time` | `RFC3339`、`2006-01-02T15:04:05`、`2006-01-02` |
 | `end_time` | 同 `start_time` |
 | `page` | 页码 |
-| `pageSize` / `page_size` | 每页数量，默认 100，最大 200 |
-| `sort` / `sortOrder` | 使用通用分页解析 |
+| `pageSize` | 每页数量，默认 100，最大 200（`defaultLogsPageSize`/`maxLogsPageSize`；只认 `pageSize`，无 `page_size` 别名） |
+| `sortBy` / `sortOrder` | 通用分页解析（`internal/api/pagination.go#NewPaginationWithDefaults`；`sortOrder` 仅接受 `asc`/`desc`，默认 `desc`） |
 
 注意：
 
 - `handleGetLogs()` 从 Hub 快照中逆序过滤，最新日志优先。
+- `level=error` 同时匹配 `ERRO[` 与 `FATA[` 前缀（`matchLogLevel`）；SSE 端 `level` 只接受 `debug`/`info`/`warn`/`error`/`all`，传 `fatal` 会被 400 拒绝（`isValidLogLevel`），GET 端不做该校验。
 - `handleLogExport()` 导出的是当前 `tmd2.log`，不是 Hub 的 5000 行快照。
-- `handleLogStats()` 将 fatal 计入 error 统计，避免错误类告警被漏到 info。
-- Access log 使用 `logging.RequestTarget()`，会脱敏 `?token=` 等查询参数；无法解析的查询串整体替换为稳定指纹，不保留部分解析结果。
+- `handleLogStats()` 将 fatal 计入 error 统计；无级别前缀的行（如第三方原生输出）默认计入 info。
+- Access log 使用 `logging.RequestTarget()`，会脱敏 `?token=` 等查询参数；无法解析的查询串整体替换为稳定指纹（`malformed_query=<指纹>`），不保留部分解析结果。
 
 ---
 
@@ -222,6 +241,7 @@ WARN[...] [consolelog] Slow subscriber closed reason=queue_overflow
 - 订阅 `consolelog.Hub`。
 - 只处理错误级别：`ERRO[`、`FATA[`。
 - 1 秒内最多回调一次，避免错误风暴刷屏。
+- 订阅因慢订阅溢出被关闭（通道 `ok=false`）时自动重订阅：记录 `[bot] Log alert subscription overflowed; resubscribing`，退避 `botLogResubscribeDelay` = 100ms 后重试（`internal/api/bot_notify.go#RunBotLogLoop`）。
 - Bot 平台自己的发送失败使用各自 `[bot-*]` 前缀记录为 Warn。
 
 实现注意：
@@ -327,7 +347,7 @@ log.Warnf("[download] Failed media tweet_id=%d url=%s error=%q",
 
 `internal/downloader/*`：
 
-- 单文件下载不使用 `log.WithFields`，而是通过自定义 `orderedLogFields`（`internal/downloader/downloader.go:74-96`）手工拼接 `key=value` 字段，logger 为 `log.StandardLogger()`（downloader.go:121）；`tweet_id` 优先排在最前，其余字段按 key 排序，再追加调用方传入字段。
+- 单文件下载不使用 `log.WithFields`，而是通过自定义 `orderedLogFields`（`internal/downloader/downloader.go#orderedLogFields`）手工拼接 `key=value` 字段，logger 为 `log.StandardLogger()`（`internal/downloader/downloader.go#NewDownloader`）；`tweet_id` 优先排在最前，其余字段按 key 排序，再追加调用方传入字段。
 - `DownloadRequest.LogFields` 用于透传 `tweet_id` 等上下文。
 - URL 必须 sanitize。
 - 流式下载 retry/fallback 是 Warn；模式选择是 Debug。
@@ -384,7 +404,7 @@ log.Warnf("[download] Failed media tweet_id=%d url=%s error=%q",
 | `[api]` | HTTP access 和通用 API |
 | `[auth]` | API 认证 |
 | `[task]` | 任务状态 |
-| `[tasks]` | 任务执行（run 函数构建失败等，`download_handlers.go:48,481,530`） |
+| `[tasks]` | 任务执行（run 函数构建失败等，`internal/api/download_handlers.go#enqueueTask`、`#buildTaskRunFunc` 调用点） |
 | `[download-queue]` | 下载队列 |
 | `[download]` | 下载服务和下载业务 |
 | `[batch]` | 批量下载内部阶段 |
@@ -403,9 +423,11 @@ log.Warnf("[download] Failed media tweet_id=%d url=%s error=%q",
 | `[sse]` | SSE |
 | `[upload]` | 上传处理 |
 | `[theme]` | Web UI 主题 |
-| `[web]` | Web 页面服务（如首页加载失败，`handlers.go:109`） |
+| `[web]` | Web 页面服务（如首页加载失败，`internal/api/handlers.go#handleWeb`） |
 | `[bot]` / `[bot-*]` | Bot 生命周期和平台日志 |
 | `[consolelog]` | 控制台捕获 |
+| `[listener]` | 信号监听（如收到关停信号，`signal.go#notifyOnShutdownSignal`） |
+| `[recovery]` | panic 恢复（`internal/utils/recovery.go#RecoverWithLog`） |
 | `[cli]` | CLI 执行 |
 
 规则：

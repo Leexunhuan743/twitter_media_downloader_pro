@@ -112,8 +112,8 @@ Web UI 在首次遇到 401 时会弹出认证对话框，输入 Key 后自动获
 
 | 修改方式 | 生效时机 | 说明 |
 |---------|---------|------|
-| Web UI 配置编辑（简易/YAML 模式） | **立即生效** | `handleSaveConfigFields` 同时更新内存和 `conf.yaml`；authMiddleware 运行时读取 |
-| Web UI 安全标签页 | **立即生效** | 同上路径 |
+| Web UI 配置编辑（简易/YAML 模式） | `api_key` 立即生效；其余字段需重启 | `handleSaveConfigFields` 同时更新内存和 `conf.yaml`；`authMiddleware` 每请求读取配置，故 `api_key` 变更立即生效，其余字段（如 `root_path`）需重启后由各子系统生效 |
+| Web UI 安全标签页 | `api_key` 立即生效；其余字段需重启 | 同上路径 |
 | 直接编辑 `conf.yaml` | 需重启 | 程序不监听文件变化 |
 | 环境变量 `TMD_API_KEY` | 需重启 | 只在启动时读取 |
 
@@ -127,6 +127,7 @@ Web UI 在首次遇到 401 时会弹出认证对话框，输入 Key 后自动获
 | `GET /favicon.ico` | 浏览器图标 |
 | `GET /static/*` | 静态文件（JS/CSS） |
 | `GET /api/v1/health` | 健康检查 |
+| `POST /api/v1/auth/login` | 用 API Key 换取 JWT（需在尚未持有 JWT 时调用） |
 | `GET /api/v1/config/theme` | 获取当前主题 |
 | `POST /api/v1/config/theme` | 切换主题 |
 | `GET /api/v1/config/themes` | 列出可用主题 |
@@ -229,7 +230,7 @@ GET /api/v1/health
   "success": true,
   "data": {
     "status": "ok",
-    "version": "v3.4.25",
+    "version": "v3.7.2",
     "timestamp": "2024-01-15T10:30:00Z"
   }
 }
@@ -1717,6 +1718,8 @@ curl "http://localhost:25556/api/v1/db/user-previous-names?q=elonmusk"
 }
 ```
 
+部分错误响应还包含 `detail` 字段（调试细节，供服务端排查，不展示给最终用户 UI）。`error` 字段始终是面向用户的安全信息，绝不包含底层 `err.Error()` 原文。
+
 ### HTTP 状态码
 
 | 状态码 | 说明          |
@@ -1727,8 +1730,11 @@ curl "http://localhost:25556/api/v1/db/user-previous-names?q=elonmusk"
 | 401 | 未认证（需要有效的 Bearer Token，详见[认证章节](#认证)）|
 | 404 | 资源不存在       |
 | 405 | 方法不允许       |
+| 409 | 资源冲突（如调度正在触发中、实体目录重命名冲突） |
+| 413 | 请求体超过大小上限（JSON 默认 1 MiB / raw 与批量 16 MiB / 上传总 1 GiB） |
+| 429 | 请求过于频繁（登录/刷新端点按 IP 限流） |
 | 500 | 服务器内部错误     |
-| 503 | 服务不可用（数据库连接失败）|
+| 503 | 服务不可用（数据库连接失败或服务器关停中）|
 
 ### 日志记录
 
@@ -3070,7 +3076,7 @@ POST /api/v1/schedules/{id}/trigger
 }
 ```
 
-如果该调度正在触发中，请求会返回 `400 Bad Request`，错误信息为 `schedule "..." is already triggering, please wait for the current trigger to complete`。
+错误响应：调度不存在 → `404 Not Found`；调度已禁用 → `409 Conflict`（`Schedule is disabled`）；调度正在触发中 → `409 Conflict`（`Schedule is already triggering`）。
 
 #### 获取原始调度文件内容
 

@@ -67,7 +67,7 @@ Video variant selection is unified: [[internal/twitter/tweet.go#SelectVideoVaria
 
 Every media name is derived from its URL by one rule, and nothing looks for files written by an earlier rule.
 
-`downloadTweetMedia` derives the extension with [[internal/utils/fs.go#MediaExtFromUrl]], which truncates it at the first colon: old exports store photo URLs as `.../xyz.jpg:large`, and `path.Ext` returns `.jpg:large`, which the name normalizer (keeping only `[alnum . - _]`) merges into the bogus `.jpglarg`, itself truncated to the 8-byte extension budget. There is no compatibility lookup: a media file is written at the name the current rule computes, so re-processing already-downloaded tweets re-downloads them and overwrites in place rather than leaving duplicates.
+`downloadTweetMedia` derives the extension with [[internal/utils/fs.go#MediaExtFromUrl]], which truncates it at the first colon: old exports store photo URLs as `.../xyz.jpg:large`, and `path.Ext` returns `.jpg:large`, which the name normalizer (keeping only `[alnum . - _]`) merges into the bogus `.jpglarg`, itself truncated to the 8-byte extension budget. There is no compatibility lookup: a media file is written at the name the current rule computes. Path resolution never overwrites — [[internal/utils/fs.go#UniquePathResolver]] checks the filesystem (and its own reservations) and appends `(N)` when the computed path is already taken, so re-processing already-downloaded media lands on `name(1).ext` rather than replacing the existing file, and a naming-policy change leaves the old-named file in place as an orphan while the new name is downloaded fresh.
 
 | URL | Extension |
 |-----|-----------|

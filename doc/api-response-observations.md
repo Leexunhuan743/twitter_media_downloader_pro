@@ -1,5 +1,8 @@
 # API Response Observations
 
+> **⚠️ 历史快照说明**
+> 本文档记录的是 **2026-08-15** 单次真实运行的观测数据，属于当时的现场快照，**不是 API 行为规范**。此后限流/并发参数与客户端实现可能有变更；当前限流参数以 `internal/config/config.go#DefaultMaxDownloadRoutine`（默认 `min(50, GOMAXPROCS*10)`、上限 100）与 `internal/twitter/client.go` 为准。文中的统计数字、样本文件与结论仅代表该次运行。
+
 记录 TMD 实际运行时观察到的 Twitter/X GraphQL API 返回，用于排查 429 `error code: 1015` 等问题。
 
 ## 最近一次真实触发

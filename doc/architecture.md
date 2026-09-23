@@ -67,6 +67,8 @@ internal/service
 │  (Server 层)     │   │  (CLI 层)       │     │  (路径工具)        │
 │                  │   │                │     │                   │
 │  - server.go     │   │  - args.go     │     │  - store.go       │
+│  - auth_jwt.go   │   │                │     │                   │
+│  - middleware.go │   │                │     │                   │
 │  - download_*    │   │  - executor.go │     │                   │
 │  - task_manager  │   │                │     │                   │
 │  - download_queue│   │                │     │                   │
@@ -220,8 +222,9 @@ type DownloadService interface {
 tmd/
 ├── main.go                        # 应用入口（命令行解析、模式选择）
 ├── start-server.bat               # Windows Server 模式启动脚本
+├── signal*.go                     # 进程信号处理（优雅关停接线，按平台分文件）
 ├── internal/
-│   ├── api/                       # API Server 模块（web/web1|web2|web3 三主题）
+│   ├── api/                       # API Server 模块（web/shared 共享资源 + web1|web2|web3 三主题）
 │   ├── cli/                       # CLI 命令模块
 │   ├── config/                    # 配置管理
 │   ├── service/                   # Service 层（核心业务编排）
@@ -238,7 +241,7 @@ tmd/
 │   ├── logging/                   # 日志基础设施（rotation / sanitize / lumberjack hook）
 │   └── utils/                     # 工具函数
 ├── doc/                           # 详细文档
-├── tools/                         # 工具脚本（tmd-db-migrate、convert_db_to_legacy.py、Tampermonkey脚本）
+├── tools/                         # 工具与诊断（数据库迁移/格式转换、Tampermonkey 脚本、web1-e2e / web3-e2e 浏览器回归、xapi-probe 诊断）
 ├── .github/workflows/             # CI/CD 配置
 ├── go.mod                         # Go 模块定义
 ├── go.sum                         # 依赖校验和
@@ -252,7 +255,7 @@ tmd/
 
 ### 运行测试
 
-项目包含 **73 个测试文件**，覆盖核心业务逻辑：
+项目包含 **94 个测试文件**（`internal/api` 25、`internal/downloading` 19、`internal/database` 17 最多，其余分布在 `internal/bot`、`internal/logging`、`internal/twitter`、`internal/service` 等包），覆盖核心业务逻辑：
 
 ```bash
 # 运行所有测试（含竞态检测）
@@ -304,10 +307,16 @@ go tool cover -html=covprofile -o coverage.html
 ```yaml
 go.yml（Go Release）:
   触发条件:
-    - 创建版本标签 (v*)
+    - 创建版本标签 (v*)，且改动不全是 Markdown / doc 文件
 
-  执行步骤:
-    1. 6 平台交叉构建 (Windows / Linux / macOS × amd64 / arm64)
+  verify（发布前置门禁，release-build 以 needs: verify 依赖它）:
+    1. go test -race -count=1 ./...
+    2. go vet ./...
+    3. npx --yes lat.md@0.12.2 check（校验知识图谱）
+
+  release-build → release:
+    1. 6 平台交叉构建 (Windows / Linux / macOS × amd64 / arm64)，
+       构建参数 CGO_ENABLED=0、-trimpath、-ldflags "-w -s -X github.com/unkmonster/tmd/internal/api.Version=<tag>"
     2. 生成 checksums.txt
     3. 自动创建 GitHub Release 并上传二进制
 
@@ -321,7 +330,7 @@ docker.yml（Docker Publish）:
     2. 推送 GHCR (ghcr.io) + Docker Hub
 ```
 
-注意：两个工作流均**不含测试 job**（无 `go test`），也未接入 Coveralls。
+注意：`go.yml` 的 `verify` job 会在构建前依次跑 `go test -race -count=1 ./...`、`go vet ./...` 与 `npx --yes lat.md@0.12.2 check`，任一失败即中止发布；`docker.yml` 不含测试 job。两个工作流均未接入 Coveralls。
 
 ### 独立工具
 
@@ -329,3 +338,7 @@ docker.yml（Docker Publish）:
 |------|------|------|
 | **tmd-db-migrate** | `tools/tmd-db-migrate.py` | 跨平台数据库路径迁移，当下载目录从 Windows 迁移到 Linux 等场景时重写 `foo.db` 中的 `parent_dir` 路径。详见 [foo.db 跨平台迁移说明](foo.db%20跨平台迁移说明.md) |
 | **convert_db_to_legacy.py** | `tools/convert_db_to_legacy.py` | 将新格式数据库转换为旧格式的辅助脚本 |
+| **TMD Download Button** | `tools/tmd-download-button.user.js` | Tampermonkey 用户脚本：在 X/Twitter 个人资料页注入下载按钮，一键推送下载任务 |
+| **web1-e2e** | `tools/web1-e2e/` | web1 前端浏览器回归脚本（无需测试框架，在浏览器页面上执行并输出结构化检查报告） |
+| **web3-e2e** | `tools/web3-e2e/` | web3 响应式布局验收脚本，附带只读 mock server |
+| **xapi-probe** | `tools/xapi-probe/` | 诊断 429 / `error code: 1015` 的探测程序，对比应用默认与浏览器风格请求头 |

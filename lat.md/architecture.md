@@ -45,7 +45,7 @@ CLI and server modes intentionally share dependencies but differ in control flow
 | Execution | Runs synchronously and returns process success/failure | Enqueues work and returns `task_id` immediately |
 | Progress | `service.NewLogReporter` writes CLI logs | `SSEProgressReporter` updates TaskManager and EventBus |
 | Lifetime | Signal cancels the root context; `db.Close()` is deferred | `GracefulShutdown` stops HTTP, scheduler, queue, bots, EventBus/log hub, and DB |
-| Web UI | Not started | Embedded `web1`/`web2` assets are served by `internal/api` |
+| Web UI | Not started | Embedded `web1`/`web2`/`web3` assets are served by `internal/api` |
 
 The shared service boundary is important: changing download behavior should usually happen below `internal/service`, while changing task/API/UI behavior should stay in `internal/api`.
 

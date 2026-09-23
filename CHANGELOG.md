@@ -9,11 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- 微信 Bot 首次登录的二维码现在解码后写入 `{appRoot}/wechat-qr.png`（`0600`），日志只记录路径与字节数；登录窗口结束后自动删除（此前只有 SDK 回调能拿到、用户无法扫码）。
+- `GET /api/v1/db/lists?sortBy=owner_user_id` 排序白名单补齐真实列名（此前 web3 传列名会被静默回退为按 id 排序）。
+- `GET /api/v1/logs` 与 `GET /api/v1/logs/stream` 的 `level=fatal` 现被接受，未知级别返回 400（此前 SSE 流在已写 `: connected` 帧后才校验，前端静默失效）。
+- `GET /api/v1/schedules` 与 `/api/v1/schedules/stats` 在调度器未初始化时新增 `scheduler_error` 字段；手动触发类端点在此时改为 503。
+
 ### Changed
 
 - 实体 `PATCH name` 会同步移动对应存储目录；用户实体的统计字段先以单条字段级更新提交，目录改名最后执行。同进程同实体变更会串行；目标目录冲突或进程外陈旧写入返回 409，操作窗口内记录消失返回 404。
 - 用户/列表实体 `DELETE` 现在同时删除对应存储目录；版本化暂存名与持久恢复日志让进程重启后也能恢复中断删除或清理已提交删除。
 - 新命名规则会在下次 profile/list/batch 同步时一次性重命名不规范的旧目录，包括尾点/尾空格、控制字符、空标题、URL 片段和超长名称；同卷移动使用 `os.Rename`，已有媒体内容不会重写。
+- **安全**：`PATCH /api/v1/db/user-links/{id}` 与 `DELETE /api/v1/db/user-links/{id}` 现在会同步重命名/删除列表目录里的磁盘符号链接；删除用户时也会清掉其全部链接，不再留下永不回收的悬空链接。
+- **安全**：飞书 Bot 的 HTTP 回调改用带校验的 `ListenSecurityCallback`；`verify_token` 与 `encrypt_key` 任一缺失时服务端拒绝启用该 Bot（此前回调路径按精确匹配免认证、事件却零校验，未认证者可伪造事件触发 `/dl`、`/cancel` 等命令）。
+- **安全**：公开路径白名单从前缀匹配改为精确匹配（`/api/v1/config/themes` 等不再被同前缀误放行）；API Key 比较改为常量时间；`/auth/check` 对超出续期窗口（24h）的过期令牌返回 401 `X-Token-Type: too-old`（此前恒 200，前端永远清不掉死令牌）。
+- **安全**：web2 前端 `esc()` 现在转义引号（此前属性上下文存在存储型 XSS，Twitter 显示名可闭合 `value="..."` 注入事件处理器）；web3 任务详情不再调用不存在的 `/api/v1/tasks/{id}/timeline`、首屏任务序与增量方向一致、multipart 上传超时对齐 5 分钟、错误消息优先展示后端 `detail`。
+- **安全**：上传的 JSON 临时文件目录改 `0700`、文件 `0600`（此前 0755/0644，同机其他用户可读）；启动时清理上次强杀遗留的 `uploads/*`；`errors.json`/`json_errors.json` 读写改为包级互斥（此前并发读者可能读到半个 JSON）。
+- **安全**：`.tmp_*` 媒体临时文件在下次写入同目录时自动清扫超过 1 小时的遗留（强杀/断电残留），每目录每进程一次。
+- 下载队列在关停时不再因"排队任务全被取消"而在 `cond.Wait` 上永久睡死（此前关停会拖满 45 秒预算）；关停期间新建立的 task SSE 流会收到 `server_shutdown` 后主动退出。
+- 磁盘满检测修复：profile/推文下载现在能识别 Windows `ERROR_DISK_FULL`（此前 `syscall.ENOSPC` 判定在 Windows 恒为 false 且文件级错误被吞掉）。
 
 ### Fixed
 

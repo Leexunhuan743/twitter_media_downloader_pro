@@ -4,6 +4,13 @@
 
 ​	![ 2024-06-25 093928.png](https://s2.loli.net/2024/06/25/O6PwWGoqYLZAJXc.png)
 
+要复制的两个值：
+
+- `auth_token`：Cookie 列表中名为 `auth_token` 的那一行
+- `ct0`：Cookie 列表中名为 `ct0` 的那一行（同时用于请求头 `X-Csrf-Token`）
+
+复制后填写到 `conf.yaml` 的 `cookie.auth_token` / `cookie.ct0`，或运行 `tmdp -conf` 由向导录入，也可以在 Web 管理界面的「系统 → 配置」中填写。
+
 # 获取 list_id, user_id, screen_name
 ## list_id
 

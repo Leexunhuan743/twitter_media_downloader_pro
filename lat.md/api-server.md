@@ -152,13 +152,12 @@ internal/api/web/
 │   └── styles.css (~48KB)
 ├── web2/          # New streamlined theme
 │   ├── index.html
-│   ├── app.js     (~161KB)
-│   ├── styles.css (~26KB)
-│   └── favicon.svg
+│   ├── app.js     (~162KB)
+│   └── styles.css (~26KB)
 └── web3/          # Dark glassmorphism theme
     ├── index.html
-    ├── app.js     (~109KB)
-    └── styles.css (~23KB)
+    ├── app.js     (~117KB)
+    └── styles.css (~26KB)
 ```
 
 - **No build step** — pure HTML/CSS/JS, embedded via Go `//go:embed`
@@ -189,7 +188,7 @@ Web3 assets must keep responsive background continuity, themed native controls, 
 
 ## Web1 Console Architecture
 
-`web1/app.js` is a single-file vanilla JS SPA (~5100 lines) with a custom store + subscriber pattern.
+`web1/app.js` is a single-file vanilla JS SPA (~6600 lines) with a custom store + subscriber pattern.
 
 ### Task Console
 

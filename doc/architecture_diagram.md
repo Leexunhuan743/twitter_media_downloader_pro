@@ -118,7 +118,7 @@
               │              │    │                  │
               │ YAML 配置    │    │ 接管 stdout/     │
               │ 环境变量覆盖  │    │ stderr → OS pipe │
-              │ 7 个 TMD_ 配置项，│  │ → 解析行         │
+              │ 8 个 TMD_ 配置项，│  │ → 解析行         │
               │ 另有 TMD_HOME /  │  │ → 环形缓冲区     │
               │ TMD_PORT         │  │ → 扇出 subscribers│
               │ 交互式配置    │    │                  │

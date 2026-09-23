@@ -28,7 +28,7 @@ Bot Platform (Telegram/Discord/WeChat/Feishu/etc.)
           ├── Start() / Stop()           ← 生命周期管理
           ├── handle* (消息接收)          ← 命令解析和路由
           ├── cmd* (命令处理)             ← /dl /status /cancel 等
-          └── RunBotEventLoop / RunBotLogLoop  ← 事件/日志订阅
+          └── RunBotEventLoop / RunBotLogLoop  ← 事件/日志订阅（共享实现见 internal/api/bot_notify.go）
                 │
                 ▼
   internal/api/
@@ -40,7 +40,7 @@ Bot Platform (Telegram/Discord/WeChat/Feishu/etc.)
   internal/service/DownloadService  ← 下载业务编排
 ```
 
-Bot 只调用 `api.TaskManager`、`api.EventBus`、`consolelog.Hub`，不直接接触下载逻辑。双向 Bot（Telegram/Discord/WeChat/Feishu）还持有注入的 `server.EnqueueTask`（main.go:402/405/414/417），创建任务后经它与 HTTP API 同一条路径入队执行（`download_handlers.go` 的 `EnqueueTask`，58-72 行）。
+Bot 只调用 `api.TaskManager`、`api.EventBus`、`consolelog.Hub`，不直接接触下载逻辑。双向 Bot（Telegram/Discord/WeChat/Feishu）还持有注入的 `server.EnqueueTask`（`main.go#initBot` 按平台分支注入），创建任务后经它与 HTTP API 同一条路径入队执行（`internal/api/download_handlers.go#Server.EnqueueTask`）。
 
 ### Bot 接口
 
@@ -77,12 +77,12 @@ Server 在 `Start()` 中并行调用各个 `b.Start()`，Bot 外部网络初始�
   → parseDLArgs → (type="user", target="elonmusk")
   → api.NewUserDownloadTask(target, api.DownloadFlags{...})  // 统一任务构造入口
   → taskManager.CreateTask(TaskTypeUserDownload, taskData)
-  → server.EnqueueTask(task) 入队下载（telegram/commands.go；不调用则任务永远停留在 queued）
+  → server.EnqueueTask(task) 入队下载（`internal/bot/telegram/commands.go#Bot.cmdDownload`；不调用则任务永远停留在 queued）
   → 返回 task_id 给用户
   → DownloadQueue 异步执行下载
 ```
 
-任务数据必须经 api 包的统一构造器（`NewUserDownloadTask` / `NewListDownloadTask` / `NewFollowingDownloadTask` / `NewBatchDownloadTask`）创建，禁止在各平台内手写 TaskData 字面量——新增任务字段只会在 api/types.go 一处变更。
+任务数据必须经 api 包的统一构造器（`NewUserDownloadTask` / `NewListDownloadTask` / `NewFollowingDownloadTask` / `NewBatchDownloadTask`）创建，禁止在各平台内手写 TaskData 字面量——新增任务字段只会在 `internal/api/types.go#NewUserDownloadTask` 一处变更。
 
 **通知推送**：
 
@@ -101,9 +101,10 @@ error/fatal 级别日志
   → consolelog.Hub.Publish(line)
   → RunBotLogLoop 收到日志行（1条/秒速率限制，筛选以 ERRO[/FATA[ 前缀开头的日志行）
   → sendLogAlert() 推送给用户
+  → 若订阅因慢消费被 Hub 摘除，则等待 100ms 后自动重订阅（`internal/api/bot_notify.go#RunBotLogLoop`）
 ```
 
-> **通知范围**：任务完成/失败通知**仅发送给发起该任务的用户**（Telegram 的聊天会话、Discord 频道、WeChat/Feishu 的个人用户）。错误日志（error/fatal 级别）推送给所有已交互过的用户（WeChat/Feishu）或配置中的 `allowed_users`（Telegram/Discord）。
+> **通知范围**：任务完成/失败通知**仅发送给发起该任务的用户**（Telegram 的聊天会话、Discord 频道、WeChat/Feishu 的个人用户）：命令型平台在创建任务时登记「会话/频道/用户 → 任务 ID」，通知后删除该登记（`internal/bot/telegram/notify.go#Bot.notifyTaskChanges`、`internal/bot/discord/notify.go#Bot.notifyTaskChanges`、`internal/bot/wechat/notify.go#Bot.notifyTaskChanges`、`internal/bot/feishu/notify.go#Bot.notifyTaskChanges`）；单向推送平台（Gotify/Pushover）没有发起者概念，改用 `notifiedTasks` 集合按任务 ID 全局去重（`internal/bot/gotify/bot.go#Bot.notifyTaskChanges`、`internal/bot/pushover/bot.go#Bot.notifyTaskChanges`）。错误日志（error/fatal 级别）推送给所有已交互过的用户（WeChat/Feishu）或配置中的 `allowed_users`（Telegram/Discord）。
 ---
 
 ## 配置方式
@@ -127,6 +128,9 @@ telegram:
 支持选项：`auto_follow`/`af`、`skip_profile`/`sp`、`no_retry`/`nr`、`follow_members`/`fm`
 示例：`/dl elonmusk auto_follow=true skip_profile=true`
 
+> 文本命令平台的选项由 `internal/bot/bot.go#ParseDownloadOptions` 解析：只从参数串**末尾**剥离已知键，且值必须恰好为 `true` 或 `false`，因此未知键或 `af=1` 这类写法不会被识别为选项。
+> 命令路由：`/dl` 与 `/download` 等价、`/start` 与 `/help` 等价，未知命令回复提示（`internal/bot/telegram/handlers.go#Bot.handleCommand`、`internal/bot/discord/handlers.go#Bot.handleInteraction`、`internal/bot/wechat/bot.go#Bot.handleMessage`、`internal/bot/feishu/handlers.go#Bot.handleMessage`）。
+
 ### Discord
 
 ```yaml
@@ -142,6 +146,8 @@ discord:
 
 **可用命令**：`/dl [type:user|list|foll] <target>`（可选参数 auto_follow、skip_profile、no_retry、follow_members）、`/status <id>`、`/cancel <id>`、`/tasks`、`/help`
 
+> 与文本命令平台不同，Discord 的选项是 Slash Command 的原生 option：`target`/`type` 为 string（`type` 带 user/list/foll 三个 choice），四个开关为 boolean，由 discordgo 结构化解析，**不走** `key=value` 文本解析。命令注册见 `internal/bot/discord/handlers.go#Bot.registerCommands`。
+
 ### WeChat iLink
 
 ```yaml
@@ -155,7 +161,7 @@ wechat:
 | `credential_path` | 凭证文件路径（首次登录后自动生成） | 任意可写路径，相对于工作目录 |
 | `allowed_users` | 允许使用的联系人 ID | 留空即允许所有用户；当前版本不打印 `FromUserID`，无法从日志获取 |
 
-**首次使用**：启动后 Bot 在后台等待扫码（登录超时 2 分钟），查看服务端日志中的 QR Code URL，用微信扫码登录。后续自动复用凭证。连接断开后 Bot 会自动重连。
+**首次使用**：启动后 Bot 在后台等待扫码（登录超时 2 分钟）。二维码是 base64 图片形式的登录凭据，**不会打印到日志**——`internal/bot/wechat/bot.go#Bot.runWithReconnect` 把它解码后写到 app root 下的 `wechat-qr.png`（权限 `0600`），日志只记录路径与字节数：`[bot-wechat] Login QR written path="…/wechat-qr.png" bytes=N hint=scan_to_login`。用手机扫描该文件即可完成登录；登录窗口结束后（成功或失败）该文件会被自动删除，不留存凭据。若 app root 不可写，日志会给出 `Login QR unavailable` 警告，此时需要借助 SDK 回调自行渲染。后续自动复用凭证。连接断开后 Bot 会自动重连。
 **可用命令**：`/dl [user|list|foll] <target> [opt=val ...]`、`/status <id>`、`/cancel <id>`、`/tasks`、`/help`
 支持选项同 Telegram。
 
@@ -165,11 +171,13 @@ wechat:
 feishu:
   app_id: "cli_xxxxxxxxxxxx"
   app_secret: "xxxxxxxxxxxxxxxxxxxxxxxxxx"
-  verify_token: "xxxxxxxxxxxx"
-  encrypt_key: ""                 # 可选，不配置则不加密
+  verify_token: "xxxxxxxxxxxx"      # 必填：缺少时服务端拒绝启用该 Bot
+  encrypt_key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"   # 必填（理由见下）
   allowed_users: ["ou_xxxxxxxxxxxxx"]
   callback_path: "/api/v1/bot/feishu/callback"   # 可选，默认值
 ```
+
+> **为什么 verify_token 与 encrypt_key 都必填**：回调路径 `/api/v1/bot/feishu/callback` 按精确匹配**免 TMD 认证**（第三方平台不带 Bearer），事件合法性只靠飞书侧的校验——`X-Lark-Signature` 签名用 encrypt_key 计算，verification token 校验用 verify_token。两者任一缺失，SDK 都无法完成校验，等于把未经验证的事件接到可执行 `/dl`、`/cancel`、`/tasks` 的命令入口上。因此 TMD 在启动时若发现二者缺失，会拒绝启用该 Bot 并记录 `[bot-feishu] Disabled reason=missing_verify_token_or_encrypt_key app_id=...`。
 
 | 参数 | 说明 | 获取方式 |
 |---|---|---|
@@ -204,7 +212,7 @@ gotify:
 |---|---|---|
 | `server_url` | Gotify 服务器地址 | 自行部署的 Gotify 服务端地址 |
 | `token` | 应用 Token | Gotify Web UI → Apps → Create Application |
-| `priority` | 通知优先级（可选，默认5） | Gotify 官方语义：2=Default, 5=High, 8=Emergency（bot.go 中未配置时回退 5）|
+| `priority` | 通知优先级（可选，默认5） | Gotify 官方语义：2=Default, 5=High, 8=Emergency（`internal/bot/gotify/bot.go#Bot.sendNotification` 中未配置时回退 5）|
 
 **触发场景**：任务完成/失败时推送标题和摘要；错误日志（error/fatal 级别）推送完整日志行（限速 1 条/秒）。
 
@@ -295,7 +303,7 @@ Error: something went wrong
 
 ### 日志告警推送
 
-所有平台通过 `api.RunBotLogLoop` 接收日志，筛选以 `ERRO[` / `FATA[` 前缀开头的日志行（`isBotAlertLogLine`，bot_notify.go:70-73），以 1 条/秒速率限制发送：
+所有平台通过 `api.RunBotLogLoop` 接收日志，筛选以 `ERRO[` / `FATA[` 前缀开头的日志行（`internal/api/bot_notify.go#isBotAlertLogLine`），以 1 条/秒速率限制发送：
 
 - **Telegram/Discord**：遍历 `config.AllowedUsers`（配置静态列表）
 - **WeChat**：遍历 `b.userTokens`（运行时收集的已交互用户）
@@ -308,8 +316,8 @@ Error: something went wrong
 |---|---|---|---|---|
 | Telegram | 长轮询 `getUpdates`（60s timeout, `AllowedUpdates:["message"]`） | 文本命令 `/cmd` | 独立 Bot 账号 + Token | 库自动处理 |
 | Discord | WebSocket Gateway（discordgo） | Slash Command 结构化 | 独立 Bot 账号 + Token | 库自动（Resume） |
-| WeChat iLink | 长轮询 SDK（`Run` 阻塞 + `runWithReconnect` 外层） | 文本命令 `/cmd` | 个人微信号（QR 扫码登录） | 2min Login timeout + 30s 重试间隔 |
-| 飞书/Lark | HTTP Webhook 回调（`NonBlockingCallback` + 10s 超时，feishu/bot.go `lark.WithTimeout`） | 文本命令 `/cmd` | 企业自建应用 + AppID/Secret | HTTP（被动） |
+| WeChat iLink | 长轮询 SDK（`Run` 阻塞 + `runWithReconnect` 外层，`internal/bot/wechat/bot.go#Bot.runWithReconnect`） | 文本命令 `/cmd` | 个人微信号（QR 扫码登录） | 2min Login timeout + 30s 重试间隔 |
+| 飞书/Lark | HTTP Webhook 回调（`lark.WithNonBlockingCallback(true)` + `lark.WithTimeout(10 * time.Second)`，见 `internal/bot/feishu/bot.go#Bot.Start`） | 文本命令 `/cmd` | 企业自建应用 + AppID/Secret | HTTP（被动） |
 | Gotify | — | — | 应用 Token | — |
 | Pushover | — | — | 应用 Token | — |
 
@@ -331,10 +339,21 @@ Error: something went wrong
 添加新的 Bot 平台只需三步：
 
 1. **创建实现包** `internal/bot/{name}/`，实现 `Bot` 接口
-2. **添加配置** 在 `internal/config/config.go` 的 `BotConfig` 下加结构体即可（BotConfig 无 normalize/trim 逻辑，config.go:45-83 仅有纯结构体定义）
-3. **注册到工厂** 在 `main.go` 的 `initBot()` 中加条件分支
+2. **添加配置** 在 `internal/config/config.go#BotConfig` 下加结构体即可（BotConfig 无 normalize/trim 逻辑，仅为纯结构体定义）
+3. **注册到工厂** 在 `main.go#initBot` 中加条件分支
 
-如果平台使用 HTTP Webhook 回调（如飞书），还需要调用 `server.RegisterBotCallback(path, handler)` 注册路由。
+如果平台使用 HTTP Webhook 回调（如飞书），还需要调用 `server.RegisterBotCallback(path, handler)` 注册路由（`internal/api/server.go#Server.RegisterBotCallback`）。该调用必须发生在 `Server.Start()` **之前**：`runServer` 的顺序是 `server.InitBot(initBot(botConf, server))` → `server.Start(port)`，飞书正是在 `initBot` 内用 `feishuBot.CallbackPath()` / `feishuBot.CallbackHandler()` 完成注册。被注册的精确路径同时进入公开路径白名单，第三方平台回调因此无需携带 TMD Bearer（未注册的 `/api/v1/bot/` 路径仍返回 401）。
+
+**平台启动条件**（`main.go#initBot`）：只有对应配置块非空、且满足下表全部非空字段时才创建实例，否则该平台静默不启动。
+
+| 平台 | 创建所需的非空字段 |
+|---|---|
+| Telegram | `token` |
+| Discord | `token` |
+| Gotify | `token` + `server_url` |
+| Pushover | `token` + `user` |
+| WeChat iLink | `credential_path` |
+| 飞书/Lark | `app_id` + `app_secret` |
 
 ---
 
@@ -345,7 +364,7 @@ Error: something went wrong
 ### 前提
 
 1. TMD 以 **Server 模式** 运行（启动时加 `-server` 参数，或 Docker 部署）
-2. 首次启动后，配置文件 `bot_config.yaml` 会自动生成在 TMD 数据目录下（通常为 `~/.tmd2/bot_config.yaml` 或 `%APPDATA%\.tmd2\bot_config.yaml`）
+2. 首次启动后，配置文件 `bot_config.yaml` 会自动生成在 TMD 数据目录下（通常为 `~/.tmd2/bot_config.yaml` 或 `%APPDATA%\.tmd2\bot_config.yaml`）。生成发生在 `main.go#runServer`：仅当文件**缺失**时写入内嵌模板（`internal/config/bot_config.go#WriteDefaultBotConfig`，写入权限 0600）；文件存在但为空则跳过，其他解析错误仅告警不中断启动
 3. 用文本编辑器打开 `bot_config.yaml`，去掉想用的平台前面的 `#` 注释，填好参数，保存后**重启 TMD** 生效
 
 > **提示**：所有平台可以同时启用，互不干扰。不需要的平台保持注释状态即可。
@@ -419,9 +438,9 @@ wechat:
   allowed_users: []
 ```
 
-2. 重启 TMD，查看服务端日志（控制台或 `tmd2.log`），会输出一个 QR Code URL
-3. 用微信扫描二维码（**只能在微信中打开该 URL**，复制到浏览器无效）
-4. 扫码后 Bot 自动登录，后续重启会自动复用凭证，无需重复扫码
+2. 重启 TMD，服务端日志出现 `[bot-wechat] Login QR written path="…/wechat-qr.png" bytes=N hint=scan_to_login` 即表示已进入等待扫码状态（2 分钟超时）
+3. 打开该路径下的 `wechat-qr.png` 用微信扫码；它是登录凭据（写盘 0600），因此日志里只有路径、没有二维码内容，且登录窗口结束后会被自动删除
+4. 扫码成功后 Bot 自动登录，后续重启会自动复用凭证，无需重复扫码
 5. 想限制谁能使用 Bot？`allowed_users` 留空即允许所有用户（当前版本不打印 `FromUserID`，无法从日志获取）：
 
 ```yaml
@@ -450,7 +469,7 @@ feishu:
   allowed_users: ["ou_xxxxxxxxxxxxx"]
 ```
 
-10. `allowed_users`（用户 open_id）的获取方式：留空即允许所有用户，或通过[飞书开放平台 API](https://open.feishu.cn/document/server-docs/contact-v3/user/get) 查询（当前版本不打印 openID，feishu/handlers.go 仅用于权限校验）
+10. `allowed_users`（用户 open_id）的获取方式：留空即允许所有用户，或通过[飞书开放平台 API](https://open.feishu.cn/document/server-docs/contact-v3/user/get) 查询（当前版本不打印 openID，`internal/bot/feishu/handlers.go#Bot.handleMessage` 仅用于权限校验）
 11. 重启 TMD
 
 ---
@@ -516,14 +535,14 @@ docker restart tmd
 配置完成后重启 TMD，在控制台或 `tmd2.log` 中查找以下日志：
 
 ```
-[bot-telegram] Started account=<BotUsername>          # telegram/bot.go:53
-[bot-discord] Started account=<BotUsername>           # discord/bot.go:58
-[bot-wechat] Starting credential_path=".weixin-token.json"   # wechat/bot.go:83
-[bot-feishu] Started app_id=cli_xxxxxxxxxxxx callback_path=/api/v1/bot/feishu/callback   # feishu/bot.go:76
-[bot-gotify] Started server=http://gotify.lan:8080    # gotify/bot.go:50
-[bot-pushover] Started device="iphone" sound="gamelan"  # pushover/bot.go:48
-[bot] Started provider=telegram                       # server.go:315
-[bot] Stopped provider=telegram                       # server.go:439（GracefulShutdown 时）
+[bot-telegram] Started account=<BotUsername>          # internal/bot/telegram/bot.go#Bot.Start
+[bot-discord] Started account=<BotUsername>           # internal/bot/discord/bot.go#Bot.Start
+[bot-wechat] Starting credential_path=".weixin-token.json"   # internal/bot/wechat/bot.go#Bot.Start
+[bot-feishu] Started app_id=cli_xxxxxxxxxxxx callback_path=/api/v1/bot/feishu/callback   # internal/bot/feishu/bot.go#Bot.Start
+[bot-gotify] Started server=http://gotify.lan:8080    # internal/bot/gotify/bot.go#Bot.Start
+[bot-pushover] Started device="iphone" sound="gamelan"  # internal/bot/pushover/bot.go#Bot.Start
+[bot] Started provider=telegram                       # internal/api/server.go#Server.Start
+[bot] Stopped provider=telegram                       # internal/api/server.go#Server.stopStartedBots（GracefulShutdown 时）
 ```
 
 不存在的平台不会有日志。启动后向 Bot 发送 `/help`，返回帮助信息说明 Bot 正常工作。
@@ -531,11 +550,11 @@ docker restart tmd
 ### Discord 特别说明
 
 Discord Slash Command 注册为**全局命令**，更新后最长需要 **1 小时**才能在所有服务器生效。
-如需即时测试，可将 `ApplicationCommandCreate` 的第二个参数改为你的服务器 ID（开发者可见），命令会立刻注册到该服务器。
+如需即时测试，可将 `ApplicationCommandBulkOverwrite` 的第二个参数（guildID）改为你的服务器 ID（开发者可见），命令会立刻注册到该服务器（`internal/bot/discord/handlers.go#Bot.registerCommands`；当前实现传 `""`，即注册为全局命令）。
 
 ### 安全提示
 
 - **`allowed_users` 是唯一的访问控制**：Bot 对所有未授权的用户回复 `⛔ Unauthorized`。留空时允许所有用户使用。
 - **凭据保护**：`bot_config.yaml` 中的 token、secret、user key 等不应提交到 Git 或分享给他人。
-- **API Key 配合使用**：Bot 接口通过 Server 的 API Key 认证保护（如果已启用），详见 `conf.yaml` 的 `api_key` 字段。
+- **API Key 与 Bot 的关系**：Bot 的命令交互走平台自身的协议（Telegram 长轮询 / Discord Gateway / WeChat 长连接 / Feishu 回调），不经过 HTTP API，因此不受 `conf.yaml` 的 `api_key` 控制。HTTP API 中唯一的 Bot 面（Feishu 回调）按设计**免** TMD 认证——由 `internal/api/server.go#Server.RegisterBotCallback` 登记精确路径后，`internal/api/middleware.go#Server.authMiddleware` 放行，事件合法性靠飞书自身的 `verify_token`/`encrypt_key` 校验；未登记的 `/api/v1/bot/` 路径在启用 API Key 时仍返回 401。
 - **WeChat 扫码安全**：QR Code 仅限首次登录使用，凭证自动保存到 `credential_path`，请确保该文件不被泄露。

@@ -48,15 +48,25 @@
 
 | 值 | 效果 | 数据库操作 |
 |----|------|-----------|
-| **空（不提供）** | 使用当前时间 | `UPDATE ... SET latest_release_time=NOW()` |
-| `"2024-01-01T00:00:00"` | 使用指定时间 | `UPDATE ... SET latest_release_time='2024-01-01 00:00:00'` |
-| `"null"` 或 `"nil"` | 设置为 NULL | `UPDATE ... SET latest_release_time=NULL` |
+| **空（不提供）** | 使用服务器当前时间 | `UPDATE ... SET latest_release_time=<当前时刻的 UTC 文本>` |
+| RFC3339，如 `"2024-06-01T00:00:00+08:00"` / `"2024-06-01T00:00:00Z"` | 按**绝对时刻**标记 | 归一化为 UTC 后写入 |
+| 无时区本地墙钟，如 `"2024-01-01T00:00:00"` | 按**服务器本地时区**解释该墙钟 | 归一化为 UTC 后写入 |
+| `"null"` 或 `"nil"`（大小写不敏感） | 设置为 NULL（全量标记） | `UPDATE ... SET latest_release_time=NULL` |
 
 ### 时间格式
 
-- 格式：`2006-01-02T15:04:05`
-- 示例：`2024-06-15T10:30:00`
-- 时区：使用本地时区解析
+`-mark-time` 由 `downloading.ParseMarkTimeValue`（`internal/downloading/mark_downloaded.go#ParseMarkTimeValue`）统一解析，CLI 侧经 `internal/cli/args.go#validateMarkTime` 预校验（`internal/cli/args.go#ParseArgs` 调用）。接受三种形式：
+
+- **RFC3339**（带时区偏移，按绝对时刻解析）：`2024-06-01T00:00:00+08:00`、`2024-06-01T00:00:00Z`
+- **无时区本地墙钟** `2006-01-02T15:04:05`（按服务器本地时区解释，时区信息不可用时回退 UTC）：`2024-06-15T10:30:00`
+- **`null` / `nil`**（大小写不敏感）：全量标记哨兵，等价于清除时间戳
+
+无论以哪种形式输入，写入 `latest_release_time` 前都会经 `database.NormalizeTime` 归一为 UTC。
+
+解析失败时的错误文案（两处保留各自措辞）：
+
+- CLI：`invalid mark-time format %q, expected 2006-01-02T15:04:05, RFC3339 (e.g. 2024-01-15T10:30:00Z) or null`（`internal/cli/args.go#validateMarkTime`）
+- 下游：`invalid mark-time format '<值>', expected: 2006-01-02T15:04:05 (example: 2024-01-15T10:30:00) or RFC3339 (example: 2024-01-15T10:30:00Z) or 'null' for full download: <底层错误>`（`internal/downloading/mark_downloaded.go#ParseMarkTimeValue`）
 
 ---
 
@@ -73,14 +83,15 @@
                            ↓
 ┌──────────────────────────────────────────────────────────────┐
 │  service.DownloadService.MarkDownloaded                      │
-│  internal/service/download_service.go:625                   │
+│  internal/service/download_service.go#MarkDownloaded         │
 │    ├── resolveUsers / resolveLists / resolveFollowings       │
 │    └── downloading.MarkUsersAsDownloaded()                   │
 └──────────────────────────┬──────────────────────────────────┘
                            ↓
 ┌──────────────────────────────────────────────────────────────┐
 │  downloading.MarkUsersAsDownloaded()                         │
-│  internal/downloading/mark_downloaded.go:23                  │
+│  internal/downloading/mark_downloaded.go                     │
+│    #MarkUsersAsDownloaded                                    │
 │    ├── 解析 markTimeStr → timestamp/nil                      │
 │    ├── 遍历 lists → lst.GetMembers() → markSingleUserWithInfo│
 │    └── 遍历 users → markSingleUserWithInfo                   │
@@ -183,7 +194,9 @@ curl -X POST http://localhost:25556/api/v1/batch/mark \
   -d '{"users":["elonmusk"],"lists":["123456"],"timestamp":"2024-06-01T00:00:00+08:00"}'
 ```
 
-> **时区差异**：API 的 `timestamp` 字段是 Go `time.Time`（`MarkDownloadedTaskData.Timestamp`），JSON 反序列化要求 **RFC3339 格式且必须带时区**（如 `2024-06-01T00:00:00+08:00` 或 `2024-06-01T00:00:00Z`），不带时区会反序列化失败返回 400。CLI 的 `-mark-time` 则使用本地时区解析（`time.ParseInLocation("2006-01-02T15:04:05", ...)`），可以省略时区。
+> **时区差异**：API 的 `timestamp` 字段是 Go `time.Time`（`internal/api/types.go#MarkDownloadedTaskData.Timestamp`，`ListMarkDownloadedTaskData` / `FollowingMarkDownloadedTaskData` / `BatchMarkDownloadedTaskData` 同构），JSON 反序列化要求 **RFC3339 格式且必须带时区**（如 `2024-06-01T00:00:00+08:00` 或 `2024-06-01T00:00:00Z`），不带时区会反序列化失败返回 400（`Invalid request body`，见 `internal/api/download_handlers.go#handleBatchMark`）。服务端再用 `internal/api/download_handlers.go#formatTaskMarkTime` 把 `*time.Time` 重新格式化为 RFC3339 字符串传入 `MarkDownloaded`，因此 API 链路产生的永远是**带偏移的绝对时刻**，不会被按服务器本地时区二次解释。
+>
+> CLI 的 `-mark-time` 走同一解析器 `internal/downloading/mark_downloaded.go#ParseMarkTimeValue`：先试 RFC3339，失败再按服务器本地时区解释无时区墙钟，因此可以省略时区。
 
 ---
 
@@ -203,7 +216,7 @@ API 模式:
     → service.DownloadService.MarkDownloaded(ctx, taskID, ...)
 ```
 
-### Service 层入口 (`internal/service/download_service.go:625`)
+### Service 层入口 (`internal/service/download_service.go#MarkDownloaded`)
 
 ```go
 func (s *downloadServiceImpl) MarkDownloaded(ctx context.Context, taskID string,
@@ -214,12 +227,16 @@ func (s *downloadServiceImpl) MarkDownloaded(ctx context.Context, taskID string,
     reporter.OnProgress(taskID, Progress{Stage: "resolving"})
 
     // 1. 解析用户/列表/关注
-    users := s.resolveUsers(ctx, screenNames)
-    lists := s.resolveLists(ctx, listIDs)
-    lists = append(lists, s.resolveFollowings(ctx, followingNames)...)
+    users, userFailures := s.resolveUsers(ctx, screenNames)
+    lists, listFailures := s.resolveLists(ctx, listIDs)
+    followingLists, followingFailures := s.resolveFollowings(ctx, followingNames)
+    lists = append(lists, followingLists...)
+    // 汇总解析失败明细（统一格式）
+    logResolveFailures(append(append(userFailures, listFailures...), followingFailures...))
 
     if len(users) == 0 && len(lists) == 0 {
-        return fmt.Errorf("no users or lists to mark (all failed to resolve)")
+        log.Warn("[download] Mark skipped reason=no_resolved_targets")
+        return fmt.Errorf("no users or lists to mark (all failed to resolve) [task=%s]", taskID)
     }
 
     reporter.OnProgress(taskID, Progress{Stage: "marking",
@@ -233,9 +250,8 @@ func (s *downloadServiceImpl) MarkDownloaded(ctx context.Context, taskID string,
     }
 
     // 3. 委托 downloading 层执行
-    pathHelper, err := path.NewStorePath(s.deps.Config.RootPath)
+    pathHelper, err := s.storePathFor(fmt.Sprintf("task_id=%s", taskID))
     if err != nil {
-        log.Errorf("[download] Store path failed task_id=%s error=%q", taskID, safeDownloadError(err))
         return err
     }
     results, err := downloading.MarkUsersAsDownloaded(ctx, s.deps.Client,
@@ -250,7 +266,7 @@ func (s *downloadServiceImpl) MarkDownloaded(ctx context.Context, taskID string,
 }
 ```
 
-### 核心函数 (`internal/downloading/mark_downloaded.go:23`)
+### 核心函数 (`internal/downloading/mark_downloaded.go#MarkUsersAsDownloaded`)
 
 ```go
 func MarkUsersAsDownloaded(ctx context.Context, client *resty.Client,
@@ -266,17 +282,20 @@ func MarkUsersAsDownloaded(ctx context.Context, client *resty.Client,
               strings.ToLower(markTimeStr) == "nil" {
         timestamp = nil
     } else {
-        parsedTime, err := time.ParseInLocation("2006-01-02T15:04:05", markTimeStr, time.Local)
+        // RFC3339 优先（绝对时刻）；否则按服务器本地时区解释无时区墙钟
+        parsedTime, err := ParseMarkTimeValue(markTimeStr)
         if err != nil {
-            return nil, fmt.Errorf("invalid mark-time format: %v", err)
+            return nil, err
         }
         timestamp = &parsedTime
     }
 
     // 2. 处理列表中的用户
     for _, lst := range lists {
+        if err := context.Cause(ctx); err != nil { return results, err }
+        if lst == nil { continue }
         membersResult, err := lst.GetMembers(ctx, client)
-        // ... 遍历 membersResult.Users ...
+        // ... 遍历 membersResult.Users（nil 元素跳过）...
         for _, user := range membersResult.Users {
             info := markSingleUserWithInfo(db, user, dir, timestamp, maxLen)
             results = append(results, info)
@@ -285,6 +304,8 @@ func MarkUsersAsDownloaded(ctx context.Context, client *resty.Client,
 
     // 3. 处理直接指定的用户
     for _, user := range users {
+        if err := context.Cause(ctx); err != nil { return results, err }
+        if user == nil { continue }
         info := markSingleUserWithInfo(db, user, dir, timestamp, maxLen)
         results = append(results, info)
     }
@@ -293,7 +314,7 @@ func MarkUsersAsDownloaded(ctx context.Context, client *resty.Client,
 }
 ```
 
-### 标记单个用户 (`internal/downloading/mark_downloaded.go:109`)
+### 标记单个用户 (`internal/downloading/mark_downloaded.go#markSingleUserWithInfo`)
 
 ```go
 func markSingleUserWithInfo(db *sqlx.DB, user *twitter.User,
@@ -343,7 +364,7 @@ func markSingleUserWithInfo(db *sqlx.DB, user *twitter.User,
 }
 ```
 
-### 用户同步 (`internal/downloading/user_sync.go:13`)
+### 用户同步 (`internal/downloading/user_sync.go#syncUserAndEntity`)
 
 ```go
 func syncUserAndEntity(db *sqlx.DB, user *twitter.User, dir string, maxLen int) (*entity.UserEntity, error) {
@@ -353,9 +374,9 @@ func syncUserAndEntity(db *sqlx.DB, user *twitter.User, dir string, maxLen int) 
         return nil, err
     }
 
-    // 2. 生成期望的文件夹名（name(screen_name) 格式，按 maxLen 截断）
-    userNaming := naming.NewUserNaming(user.Name, user.ScreenName, maxLen)
-    expectedTitle := userNaming.SanitizedTitle()
+    // 2. 生成期望的文件夹名（name(screen_name) 格式，按 maxLen 截断）；
+    //    UserDirTitle 等价于 naming.NewUserNaming(name, screenName, maxLen).SanitizedTitle()
+    expectedTitle := naming.UserDirTitle(user.Name, user.ScreenName, maxLen)
 
     // 3. 创建或定位用户实体
     ent, err := entity.NewUserEntity(db, user.Id, dir)
@@ -371,7 +392,7 @@ func syncUserAndEntity(db *sqlx.DB, user *twitter.User, dir string, maxLen int) 
 }
 ```
 
-### 用户名变更检测 — 数据库层 (`internal/database/user_sync.go:9`)
+### 用户名变更检测 — 数据库层 (`internal/database/user_sync.go#SyncUser`)
 
 当前使用 UPSERT 实现幂等写入，用户名变更检测在 upsert 之前完成：
 
@@ -404,20 +425,30 @@ func SyncUser(db *sqlx.DB, userId uint64, name string, screenName string,
             screen_name=excluded.screen_name, name=excluded.name,
             protected=excluded.protected, friends_count=excluded.friends_count,
             is_accessible=excluded.is_accessible`
-    db.Exec(stmt, userId, screenName, name, isProtected, friendsCount, accessible)
+    if _, err := db.Exec(stmt, userId, screenName, name, isProtected, friendsCount, accessible); err != nil {
+        return fmt.Errorf("failed to upsert user %d (%s): %w", userId, screenName, err)
+    }
 
     // 新用户：记录初始名称作为基线
     if isNew {
-        RecordUserPreviousName(db, userId, name, screenName)
+        if err := RecordUserPreviousName(db, userId, name, screenName); err != nil {
+            return fmt.Errorf("failed to record initial name for new user %d (%s): %w", userId, screenName, err)
+        }
     }
     return nil
 }
 ```
 
-### 文件夹重命名逻辑 (`internal/entity/sync.go:11`)
+### 文件夹重命名逻辑 (`internal/entity/sync.go#Sync`)
 
 ```go
 func Sync(e Entity, expectedName string) error {
+    if e == nil {
+        return fmt.Errorf("entity is nil")
+    }
+    if err := ValidateName(expectedName); err != nil {
+        return err
+    }
     if !e.Recorded() {
         return e.Create(expectedName)   // 新用户：创建文件夹
     }
@@ -452,7 +483,7 @@ type Entity interface {
 }
 ```
 
-### 用户实体重命名 (`internal/entity/user.go:63`)
+### 用户实体重命名 (`internal/entity/user.go#UserEntity.Rename`)
 
 `UserEntity.Rename` 现在先校验新名称，按实体锁串行操作并刷新数据库记录，再暂存目录改名。数据库通过 `UpdateUserEntityNameIfCurrent` 做名称级 CAS；写入失败、记录消失或陈旧写入都会回滚文件系统变更。
 
@@ -482,7 +513,7 @@ CREATE TABLE IF NOT EXISTS user_entities (
     id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
     name VARCHAR NOT NULL,                  -- 文件夹名称
-    latest_release_time DATETIME,           -- 最新推文时间（可为NULL）
+    latest_release_time DATETIME,           -- 最新推文时间（UTC 文本，可为NULL）
     parent_dir VARCHAR COLLATE NOCASE NOT NULL,
     media_count INTEGER,
     PRIMARY KEY (id),
@@ -494,8 +525,9 @@ CREATE TABLE IF NOT EXISTS user_entities (
 ### 数据库操作函数 (`internal/database/user_entity.go`)
 
 ```go
-// 设置时间戳
+// 设置时间戳（写入前归一为 UTC）
 func SetUserEntityLatestReleaseTime(db *sqlx.DB, id int, t time.Time) error {
+    t = NormalizeTime(t)  // t.UTC()，见 internal/database/timestamps.go#NormalizeTime
     stmt := `UPDATE user_entities SET latest_release_time=? WHERE id=?`
     _, err := db.Exec(stmt, t, id)
     return err
@@ -508,6 +540,21 @@ func ClearUserEntityLatestReleaseTime(db *sqlx.DB, id int) error {
     return err
 }
 ```
+
+### `latest_release_time` 的时区归一（必须为 UTC）
+
+`latest_release_time` 以 **TEXT** 存储，SQLite 按 BINARY（字典序）比较文本，带不同时区偏移的等值时刻排序不同，会让 `MAX()`/`<` 比较保留更旧的基线并触发重复下载。因此**所有写入路径都归一为 UTC**：
+
+| 符号 | 作用 |
+|------|------|
+| `internal/database/timestamps.go#NormalizeTime` | `t.UTC()`，幂等；所有写入路径的统一入口 |
+| `internal/database/user_entity.go#SetUserEntityLatestReleaseTime` | mark 路径写入前归一 |
+| `internal/database/user_entity.go#UpdateUserEntityTweetStat` | 批量统计路径写入前归一 |
+| `internal/database/user_entity.go#UpdateUserEntityMetadata` | 元数据更新路径（API PATCH） |
+| `internal/entity/user.go#UserEntity.SetLatestReleaseTime` | 归一后同步写回内存记录，保证内存值 == 存储值 |
+| `internal/database/timestamps.go#NormalizeLegacyTimestamps` | 启动时把旧版本写入的非 UTC 偏移值改写为 UTC；幂等，失败仅告警不阻塞启动（`internal/database/connect.go#Connect` 调用） |
+
+统计路径 `UpdateUserEntityTweetStat` 使用 `CASE WHEN latest_release_time IS NULL OR latest_release_time < ? THEN ? ELSE latest_release_time END`，即时间戳**只前进不后退**（`media_count` 同理取较大值）。
 
 ### 标记返回结构
 
@@ -527,7 +574,7 @@ type MarkedUserInfo struct {
 
 ### 下载时的时间过滤 — 增量下载原理
 
-每次下载用户时，`BatchDownload` 从 `user_entities.latest_release_time` 读取时间戳，作为 `TimeRange.Min` 传入 `GetMedias()`，实现增量下载：
+每次下载用户时，`BatchUserDownload`（`internal/downloading/batch_download.go#BatchUserDownload`，由 `internal/service/download_service.go#downloadServiceImpl.BatchDownload` → `executeDownloadTemplate` 驱动）从 `user_entities.latest_release_time` 读取时间戳，作为 `TimeRange.Min` 传入 `GetMedias()`，实现增量下载：
 
 ```go
 // batch_download.go — 简化示意
@@ -535,6 +582,8 @@ minTime, err := ent.LatestReleaseTime()
 // ...
 tweets, err := user.GetMedias(ctx, cli, &utils.TimeRange{Min: minTime})
 ```
+
+`latest_release_time` 以 UTC 文本存储（见上文「时区归一」），`LatestReleaseTime()` 返回的 `time.Time` 与推文 `CreatedAt` 的比较按绝对时刻进行（`internal/twitter/user.go#filterTweetsByTimeRange`）。
 
 ### 关键行为
 
@@ -563,7 +612,7 @@ tweets, err := user.GetMedias(ctx, cli, &utils.TimeRange{Min: minTime})
     │       ↓
     │   RecordUserPreviousName() 记录初始名称
     │
-    ├── naming.NewUserNaming(name, screenName, maxLen)
+    ├── naming.UserDirTitle(name, screenName, maxLen)
     │       ↓
     │   expectedTitle = "DisplayName(screen_name)"
     │
@@ -615,8 +664,13 @@ if err != nil {
     return info
 }
 
-// 4. 时间戳设置失败处理
-if err := entity.SetLatestReleaseTime(*timestamp); err != nil {
+// 4. 时间戳设置/清除失败处理（timestamp == nil 走 Clear 分支）
+if timestamp == nil {
+    if err := entity.ClearLatestReleaseTime(); err != nil {
+        info.Error = fmt.Sprintf("failed to clear latest release time: %v", err)
+        return info
+    }
+} else if err := entity.SetLatestReleaseTime(*timestamp); err != nil {
     info.Error = fmt.Sprintf("failed to set latest release time: %v", err)
     return info
 }
@@ -641,24 +695,28 @@ if err != nil {
 
 ## 日志输出
 
-CLI 模式下，使用 `LogReporter` 输出日志（不输出 `=== MARK_DOWNLOADED_RESULTS ===` 格式）。以 `tmd -user elonmusk -mark-downloaded` 为例，真实输出格式：
+CLI 模式下，使用 `LogReporter` 输出日志（`internal/cli/executor.go#Execute` 以 `service.NewLogReporter(log.Infof)` 装配；不输出 `=== MARK_DOWNLOADED_RESULTS ===` 格式）。以 `tmd -user elonmusk -mark-downloaded -mark-time "2024-06-15T10:30:00"` 为例，真实输出格式（`INFO[...]` 前缀由 logrus TextFormatter 加，见 `internal/logging/rotation.go#NewTextFormatter`；终端下带颜色，`NO_COLOR` 非空时纯文本）：
 
 ```
-[download] Mark start task_id=cli users=1 lists=0 following=0
-[download] Mark downloaded start mode=timestamp timestamp=2024-06-15T10:30:00+08:00 lists=0 users=1
-[task] Progress stage=marking current="1 users, 0 lists"
-[download] Mark user complete user="Elon Musk(elonmusk)" uid=44196397 entity_id=5
-[download] Mark downloaded complete success=1 failed=0
-[task] Result message="Marked 1 users as downloaded"
+INFO[2026-06-15T10:30:00+08:00] [download] Mark start task_id=cli users=1 lists=0 following=0
+INFO[2026-06-15T10:30:00+08:00] [task] Progress stage=resolving current=""
+INFO[2026-06-15T10:30:00+08:00] [download] Mark downloaded start mode=timestamp timestamp=2024-06-15T10:30:00+08:00 lists=0 users=1
+INFO[2026-06-15T10:30:00+08:00] [task] Progress stage=marking current="1 users, 0 lists"
+INFO[2026-06-15T10:30:00+08:00] [download] Mark user complete user="Elon Musk(elonmusk)" uid=44196397 entity_id=5
+INFO[2026-06-15T10:30:00+08:00] [download] Mark downloaded complete success=1 failed=0
+INFO[2026-06-15T10:30:00+08:00] [task] Result message="Marked 1 users as downloaded"
 ```
 
 对应源码：
-- `[download] Mark start ...` — `internal/service/download_service.go:628`
-- `[download] Mark downloaded start mode=timestamp ...` — `internal/downloading/mark_downloaded.go:28`（`-mark-time "null"/"nil"` 时为 `mode=full`，见 :31）
-- `[task] Progress stage=marking current=...` — `internal/service/progress.go:76-77`
-- `[download] Mark user complete user=... uid=... entity_id=...` — `internal/downloading/mark_downloaded.go:160`（每成功标记一个用户输出一行）
-- `[download] Mark downloaded complete success=... failed=...` — `internal/downloading/mark_downloaded.go:105`
-- `[task] Result message=...` — `internal/service/progress.go:101`（`OnComplete` 无 Main/Profile 统计时输出）
+- `[download] Mark start ...` — `internal/service/download_service.go#downloadServiceImpl.MarkDownloaded`
+- `[task] Progress stage=resolving ...` — `internal/service/progress.go#LogReporter.OnProgress`（`resolving` 不在静默阶段列表中，走 `default` 分支）
+- `[download] Mark downloaded start mode=timestamp ...` — `internal/downloading/mark_downloaded.go#MarkUsersAsDownloaded`（`-mark-time "null"/"nil"` 时为 `mode=full`，同一函数内）
+- `[task] Progress stage=marking current=...` — `internal/service/progress.go#LogReporter.OnProgress`
+- `[download] Mark user complete user=... uid=... entity_id=...` — `internal/downloading/mark_downloaded.go#markSingleUserWithInfo`（每成功标记一个用户输出一行）
+- `[download] Mark downloaded complete success=... failed=...` — `internal/downloading/mark_downloaded.go#MarkUsersAsDownloaded`
+- `[task] Result message=...` — `internal/service/progress.go#LogReporter.OnComplete`（`OnComplete` 无 Main/Profile 统计时输出）
+
+标记失败时另有 `[download] Mark user failed user=... uid=... phase=<sync|clear_latest_release_time|set_latest_release_time|entity_id> error=...`（`internal/downloading/mark_downloaded.go#markSingleUserWithInfo`），以及 `[download] Mark list members fetch failed list=... error=...`（同文件 `#MarkUsersAsDownloaded`）。
 
 ---
 
@@ -713,10 +771,14 @@ tmd -user newuser123 -mark-downloaded
 
 ### 1. 不下载任何内容
 
-`-mark-downloaded` **只更新数据库**，不会：
-- 获取推文
-- 下载媒体文件
-- 创建 .loongtweet 文件
+`-mark-downloaded` **不会下载推文或媒体**：
+- 不获取用户时间线推文（不调用 `GetMedias`）
+- 不下载媒体文件
+- 不创建 `.loongtweet` 目录与推文元数据文件（`internal/downloading/tweet_download.go#saveLoongTweet` / `#saveTweetJson` 不参与）
+
+但它**并非只改数据库**，仍会：
+- 调用 Twitter API 解析目标用户，标记列表/关注列表时先 `GetMembers` 拉取成员
+- `syncUserAndEntity` 同步 `users` 表并创建/重命名用户目录（`os.MkdirAll`），与正常下载共用同一套实体逻辑
 
 ### 2. 幂等性
 
@@ -754,17 +816,32 @@ tmd -user elonmusk -mark-downloaded -mark-time "2024-06-01T00:00:00"  # 覆盖
 
 `-user` 参数接受 Twitter **screen_name**（例如 `elonmusk`），不是数字 user_id。
 
-### 6. 时间格式严格
+### 6. 时间格式
 
-格式必须为 `2006-01-02T15:04:05`：
+接受的格式有三种（由 `internal/downloading/mark_downloaded.go#ParseMarkTimeValue` 统一解析，CLI 侧先经 `internal/cli/args.go#validateMarkTime` 校验）：
+
 ```bash
-# ✅ 正确
+# ✅ 正确：无时区本地墙钟（按服务器本地时区解释）
 tmd -user elonmusk -mark-downloaded -mark-time "2024-06-15T10:30:00"
 
-# ❌ 错误
+# ✅ 正确：RFC3339（带时区偏移，按绝对时刻解释；API / Web 前端提交的就是这一种）
+tmd -user elonmusk -mark-downloaded -mark-time "2024-06-15T10:30:00+08:00"
+tmd -user elonmusk -mark-downloaded -mark-time "2024-06-15T02:30:00Z"
+
+# ✅ 正确：全量标记（大小写不敏感），等价于清除时间戳
+tmd -user elonmusk -mark-downloaded -mark-time "null"
+tmd -user elonmusk -mark-downloaded -mark-time "nil"
+
+# ❌ 错误：仅日期，缺少时间部分
 tmd -user elonmusk -mark-downloaded -mark-time "2024-06-15"
+
+# ❌ 错误：分隔符不合法（只接受 T 分隔的 RFC3339 或本地墙钟）
 tmd -user elonmusk -mark-downloaded -mark-time "2024/06/15 10:30:00"
 ```
+
+错误时 CLI 报 `invalid mark-time format "<值>", expected 2006-01-02T15:04:05, RFC3339 (e.g. 2024-01-15T10:30:00Z) or null`。
+
+> 注意：无时区输入按下述规则解释——**服务器本地时区**；写入数据库前统一归一为 UTC（见上文「`latest_release_time` 的时区归一」）。因此同一墙钟串在不同 `TZ` 的机器上代表不同绝对时刻。
 
 ### 7. 数据库文件位置
 
@@ -786,6 +863,8 @@ tmd -user elonmusk -mark-downloaded -mark-time "2024/06/15 10:30:00"
 | `internal/downloading/mark_downloaded.go` | `MarkUsersAsDownloaded` / `markSingleUserWithInfo` 核心实现 |
 | `internal/downloading/user_sync.go` | `syncUserAndEntity` 用户同步 |
 | `internal/database/user_sync.go` | `SyncUser` 用户信息同步（UPSERT） |
+| `internal/database/user_entity.go` | `SetUserEntityLatestReleaseTime` / `ClearUserEntityLatestReleaseTime` / `UpdateUserEntityTweetStat` |
+| `internal/database/timestamps.go` | `NormalizeTime` / `NormalizeLegacyTimestamps`（`latest_release_time` UTC 归一） |
 | `internal/entity/user.go` | `SetLatestReleaseTime` / `ClearLatestReleaseTime` |
 | `internal/entity/sync.go` | `Sync` 实体路径同步函数 |
 | `internal/entity/interface.go` | `Entity` 接口定义 |
@@ -795,4 +874,4 @@ tmd -user elonmusk -mark-downloaded -mark-time "2024/06/15 10:30:00"
 
 ---
 
-*文档更新日期：2026-06-04*
+*文档更新日期：2026-09-23*

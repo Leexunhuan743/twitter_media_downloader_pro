@@ -371,6 +371,7 @@ service
   │     ├── github.com/unkmonster/tmd/internal/downloading
   │     ├── github.com/unkmonster/tmd/internal/downloading/profile
   │     ├── github.com/unkmonster/tmd/internal/logging
+  │     ├── github.com/unkmonster/tmd/internal/naming     → 期望目录名（UserDirTitle）
   │     ├── github.com/unkmonster/tmd/internal/path
   │     ├── github.com/unkmonster/tmd/internal/twitter
   │     └── github.com/unkmonster/tmd/internal/utils

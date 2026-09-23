@@ -4,18 +4,20 @@
 
 ### 1.1 核心下载端点 (download_handlers.go)
 
+路由注册见 `internal/api/server.go#Server.buildHandler`。「处理器」列为 `buildHandler` 实际注册的函数；带路径参数的三组端点先由 `*Route` 包装器校验 `screen_name`/`list_id`，再转交内部函数（如 `handleUserDownloadRoute` → `handleUserDownload`）。
+
 | 端点 | 方法 | 处理器 | 功能 |
 |------|------|--------|------|
-| `/api/v1/users/{screen_name}/download` | POST | `handleUserDownload` | 下载用户推文 |
-| `/api/v1/users/{screen_name}/profile` | POST | `handleUserProfile` | 下载用户资料 |
-| `/api/v1/users/{screen_name}/mark` | POST | `handleUserMark` | 标记用户已下载 |
-| `/api/v1/users/{screen_name}/following/download` | POST | `handleFollowingDownload` | 下载关注列表 |
-| `/api/v1/users/{screen_name}/following/mark` | POST | `handleFollowingMark` | 标记关注已下载 |
-| `/api/v1/lists/{list_id}/download` | POST | `handleListDownload` | 下载列表推文 |
-| `/api/v1/lists/{list_id}/profile` | POST | `handleListProfile` | 下载列表资料 |
-| `/api/v1/lists/{list_id}/mark` | POST | `handleListMark` | 标记列表已下载 |
-| `/api/v1/json/file/download` | POST | `handleJsonFileDownload` | JSON文件下载 |
-| `/api/v1/json/folder/download` | POST | `handleJsonFolderDownload` | 文件夹下载 |
+| `/api/v1/users/{screen_name}/download` | POST | `handleUserDownloadRoute` | 下载用户推文 |
+| `/api/v1/users/{screen_name}/profile` | POST | `handleUserProfileRoute` | 下载用户资料 |
+| `/api/v1/users/{screen_name}/mark` | POST | `handleUserMarkRoute` | 标记用户已下载 |
+| `/api/v1/users/{screen_name}/following/download` | POST | `handleFollowingDownloadRoute` | 下载关注列表 |
+| `/api/v1/users/{screen_name}/following/mark` | POST | `handleFollowingMarkRoute` | 标记关注已下载 |
+| `/api/v1/lists/{list_id}/download` | POST | `handleListDownloadRoute` | 下载列表推文 |
+| `/api/v1/lists/{list_id}/profile` | POST | `handleListProfileRoute` | 下载列表资料 |
+| `/api/v1/lists/{list_id}/mark` | POST | `handleListMarkRoute` | 标记列表已下载 |
+| `/api/v1/json/file/download` | POST | `handleJsonFileDownload` | JSON文件下载（`multipart/form-data` 时转入 `handleJsonFileUpload`） |
+| `/api/v1/json/folder/download` | POST | `handleJsonFolderDownload` | 文件夹下载（`multipart/form-data` 时转入 `handleJsonFolderUpload`） |
 | `/api/v1/batch/download` | POST | `handleBatchDownload` | 批量下载 |
 | `/api/v1/batch/mark` | POST | `handleBatchMark` | 批量标记下载 |
 
@@ -49,21 +51,27 @@
 | `/api/v1/db/lists/{id}` | DELETE | `handleDBListDelete` | 删除列表 |
 | `/api/v1/db/lists/{id}/entities` | GET | `handleDBLstEntitiesByListID` | 获取列表实体（按列表） |
 | `/api/v1/db/user-entities` | GET | `handleDBUserEntities` | 查询用户实体 |
-| `/api/v1/db/user-entities/{id}` | GET/PATCH/DELETE | ... | CRUD操作 |
+| `/api/v1/db/user-entities/{id}` | GET | `handleDBUserEntityDetail` | 获取用户实体详情 |
+| `/api/v1/db/user-entities/{id}` | PATCH | `handleDBUserEntityUpdate` | 更新用户实体 |
+| `/api/v1/db/user-entities/{id}` | DELETE | `handleDBUserEntityDelete` | 删除用户实体 |
 | `/api/v1/db/list-entities` | GET | `handleDBListEntities` | 查询列表实体 |
-| `/api/v1/db/list-entities/{id}` | GET/PATCH/DELETE | ... | CRUD操作 |
+| `/api/v1/db/list-entities/{id}` | GET | `handleDBListEntityDetail` | 获取列表实体详情 |
+| `/api/v1/db/list-entities/{id}` | PATCH | `handleDBListEntityUpdate` | 更新列表实体 |
+| `/api/v1/db/list-entities/{id}` | DELETE | `handleDBListEntityDelete` | 删除列表实体 |
 | `/api/v1/db/user-links` | GET | `handleDBUserLinks` | 查询用户链接 |
-| `/api/v1/db/user-links/{id}` | GET/PATCH/DELETE | ... | CRUD操作 |
+| `/api/v1/db/user-links/{id}` | GET | `handleDBUserLinkDetail` | 获取用户链接详情 |
+| `/api/v1/db/user-links/{id}` | PATCH | `handleDBUserLinkUpdate` | 更新用户链接 |
+| `/api/v1/db/user-links/{id}` | DELETE | `handleDBUserLinkDelete` | 删除用户链接 |
 | `/api/v1/db/stats` | GET | `handleDBStats` | 数据库统计 |
 
-### 1.4 配置管理端点 (config_handlers.go)
+### 1.4 配置管理端点 (config_handlers.go + handlers.go)
 
 | 端点 | 方法 | 处理器 | 功能 |
 |------|------|--------|------|
-| `/api/v1/config` | GET | `handleConfig` | 获取配置（脱敏） |
-| `/api/v1/config/theme` | GET | `handleGetTheme` | 获取当前主题 |
-| `/api/v1/config/theme` | POST | `handleSetTheme` | 切换主题 |
-| `/api/v1/config/themes` | GET | `handleGetThemes` | 获取可用主题列表 |
+| `/api/v1/config` | GET | `handleConfig` (config_handlers.go) | 获取配置（脱敏：仅 RootPath/MaxDownloadRoutine/MaxUserFetchConcurrent/MaxFileNameLen 等安全字段） |
+| `/api/v1/config/theme` | GET | `handleGetTheme` (handlers.go) | 获取当前主题（两种方法均免认证） |
+| `/api/v1/config/theme` | POST | `handleSetTheme` (handlers.go) | 切换主题（`internal/api/handlers.go#setFrontendTheme`，仅改运行时内存变量，不写 conf.yaml；默认 web1，可选 web1/web2/web3，重启回落默认值） |
+| `/api/v1/config/themes` | GET | `handleGetThemes` (handlers.go) | 获取可用主题列表（`internal/api/handlers.go#listThemes`） |
 | `/api/v1/config/raw` | GET/PUT | `handleGetConfigRaw`/`handleUpdateConfigRaw` | 原始配置操作 |
 | `/api/v1/config/fields` | GET/PUT | `handleGetConfigFields`/`handleSaveConfigFields` | 结构化配置 |
 
@@ -71,7 +79,7 @@
 
 | 端点 | 方法 | 处理器 | 功能 |
 |------|------|--------|------|
-| `/api/v1/cookies` | GET/PUT | `handleCookies`/`handleSaveCookies` | Cookie管理 |
+| `/api/v1/cookies` | GET/PUT | `handleGetCookies`/`handleSaveCookies` | Cookie管理 |
 | `/api/v1/cookies/raw` | GET/PUT | `handleGetCookiesRaw`/`handleUpdateCookiesRaw` | 原始Cookie操作 |
 
 ### 1.6 日志端点 (log_handlers.go)
@@ -81,30 +89,31 @@
 | `/api/v1/logs` | GET | `handleGetLogs` | 获取日志 |
 | `/api/v1/logs/stats` | GET | `handleLogStats` | 日志级别统计 |
 | `/api/v1/logs/export` | GET | `handleLogExport` | 导出日志文件 |
-| `/api/v1/logs/stream` | GET | `handleLogStream` | 日志流(SSE) |
+| `/api/v1/logs/stream` | GET | `handleLogStream` | 日志流(SSE，实现在 sse_logs.go) |
 
-### 1.7 系统端点 (server.go)
+### 1.7 系统端点 (server.go + auth_jwt.go + download_handlers.go + sse_tasks.go)
 
 | 端点 | 方法 | 处理器 | 功能 |
 |------|------|--------|------|
-| `/api/v1/health` | GET | `handleHealth` | 健康检查 |
-| `/api/v1/auth/login` | POST | `handleAuthLogin` | 登录（API Key 换取 JWT） |
-| `/api/v1/auth/refresh` | POST | `handleAuthRefresh` | 刷新 JWT |
-| `/api/v1/auth/check` | GET | `handleAuthCheck` | 校验当前 JWT 状态 |
-| `/api/v1/server/shutdown` | POST | `handleServerShutdown` | 关闭服务器 |
-| `/api/v1/sse/tasks` | GET | `handleSSETasks` | 任务实时推送(SSE) |
-| `/api/v1/errors` | GET | `handleErrors` | 失败推文摘要 |
-| `/api/v1/errors/retry` | POST | `handleRetryAllFailed` | 重试所有失败推文 |
-| `/api/v1/errors` | DELETE | `handleClearErrors` | 清除失败推文记录 |
-| `/api/v1/queue/status` | GET | `handleQueueStatus` | 队列状态（待处理/活动/分离任务数） |
+| `/api/v1/health` | GET | `handleHealth` (server.go) | 健康检查（DB `Ping` 失败返回 503） |
+| `/api/v1/auth/login` | POST | `handleAuthLogin` (auth_jwt.go) | 登录（API Key 换取 JWT） |
+| `/api/v1/auth/refresh` | POST | `handleAuthRefresh` (auth_jwt.go) | 刷新 JWT |
+| `/api/v1/auth/check` | GET | `handleAuthCheck` (auth_jwt.go) | 校验当前 JWT 状态 |
+| `/api/v1/server/shutdown` | POST | `handleServerShutdown` (server.go) | 关闭服务器 |
+| `/api/v1/sse/tasks` | GET | `handleSSETasks` (sse_tasks.go) | 任务实时推送(SSE) |
+| `/api/v1/errors` | GET | `handleErrors` (download_handlers.go) | 失败推文摘要 |
+| `/api/v1/errors/retry` | POST | `handleRetryAllFailed` (download_handlers.go) | 重试所有失败推文（创建 `TaskTypeRetryAllFailed` 任务） |
+| `/api/v1/errors` | DELETE | `handleClearErrors` (download_handlers.go) | 清除失败推文记录 |
+| `/api/v1/queue/status` | GET | `handleQueueStatus` (download_handlers.go) | 队列状态（待处理/活动/分离任务数） |
 
 ### 1.8 静态资源端点 (handlers.go)
 
 | 端点 | 方法 | 处理器 | 功能 |
 |------|------|--------|------|
-| `/` | GET | `handleWeb` | 主页 |
-| `/`, `/tasks`, `/data`, `/system`, `/logs` | GET | `handleWeb` | 页面路由 |
-| `/static/*` | GET | `handleStatic` | 静态文件服务 |
+| `/` | GET | `handleWeb` | 主页（路由模式 `GET /{$}`，仅匹配根路径） |
+| `/tasks`, `/data`, `/schedules`, `/system`, `/logs` | GET | `handleWeb` | SPA 页面路由 |
+| `/favicon.ico` | GET | `handleFavicon` | 站点图标 |
+| `/static/{$}`, `/static/{path...}` | GET | `handleStatic` | 静态文件服务 |
 
 ### 1.9 计划任务端点 (scheduler_handlers.go)
 
@@ -124,6 +133,16 @@
 | `/api/v1/schedules/{id}/enabled` | PATCH | `handleSetScheduleEnabled` | 启用/禁用指定计划任务 |
 | `/api/v1/schedules/{id}/trigger` | POST | `handleTriggerSchedule` | 手动触发指定计划任务 |
 
+### 1.10 Bot 回调端点（运行时动态注册）
+
+由 `internal/api/server.go#Server.RegisterBotCallback` 在 `Start()` 之前登记到 `s.botCallbacks` 映射，`buildHandler` 遍历该映射注册路由（装配点见 `main.go#initBot`）。当前只有飞书回调：
+
+| 端点 | 方法 | 处理器 | 功能 |
+|------|------|--------|------|
+| `/api/v1/bot/feishu/callback`（可由配置覆盖） | 由 `CallbackHandler` 决定 | `internal/bot/feishu/bot.go#Bot.CallbackHandler` | 飞书事件回调 |
+
+说明：注册的精确路径会同时加入 `s.botCallbackPaths` 并在 `authMiddleware` 中免认证（第三方平台不带 TMD Bearer，回调由 `verify_token`/`encrypt_key` 自行校验）；只放行实际注册的路径，不放行宽泛的 `/api/v1/bot/` 前缀。
+
 ---
 
 ## 2. 调用链详细分析
@@ -141,6 +160,8 @@ HTTP Request
     ↓
 [Middleware] CORS (跨域处理)
     ↓
+[Middleware] shutdownMutationMiddleware (关停写闸门: POST/PUT/PATCH/DELETE 在关停期直接 503)
+    ↓
 [Middleware] authMiddleware (api_key 空放行; 非空校验 Bearer JWT / 原始 Key)
     ↓
 Go `http.ServeMux` 路由匹配 (`POST /api/v1/users/{screen_name}/download`)
@@ -149,11 +170,11 @@ handleUserDownloadRoute
     ↓
 handleUserDownload
     ├── 请求解析: json.NewDecoder(r.Body).Decode(&req)
-    ├── 参数校验: utils.IsValidScreenName (经 screenNameFromPath 归一化校验, download_handlers.go:84-87)
+    ├── 参数校验: utils.IsValidScreenName（经 `internal/api/download_handlers.go#Server.screenNameFromPath` 归一化校验）
     ├── 创建任务: taskManager.CreateTask(TaskTypeUserDownload, &req)
     │   └── 生成UUID, 初始化context, 设置状态为queued
     ├── 入队任务: enqueueTask → DownloadQueue.Enqueue
-    │   └── workerLoop 消费队列 → executeJob (download_queue.go:146/199)
+    │   └── workerLoop 消费队列 → executeJob（`internal/api/download_queue.go#DownloadQueue.workerLoop` / `#DownloadQueue.executeJob`）
     │       ├── UpdateTaskStatus → running
     │       └── 调用: downloadService.UserDownload
     │           ├── path.NewStorePath (获取存储路径)
@@ -172,20 +193,22 @@ handleUserDownload
 
 ```
 handleBatchDownload
-    ├── 请求解析: BatchDownloadTaskData
+    ├── 请求解析: BatchDownloadTaskData（`limitJSONBody` 上限 rawContentBodyLimit=16MiB）
     ├── 参数校验:
-    │   ├── utils.IsValidScreenName (校验所有screenName)
-    │   └── listID > 0 (校验列表ID)
-    ├── 创建任务: CreateTask(TaskTypeBatchDownload)
-    └── 异步执行: downloadService.BatchDownload
+    │   ├── users/lists/following_names 至少一项非空
+    │   ├── normalizeBatchScreenNames (校验 users 与 following_names)
+    │   └── validateBatchListIDs (校验 lists 中 listID > 0)
+    ├── 创建任务: CreateTask(TaskTypeBatchDownload, &req)
+    ├── 入队任务: buildAndEnqueueTask → DownloadQueue（队列关闭时 503）
+    └── worker 执行: downloadService.BatchDownload
         ├── resolveUsers (解析用户)
         ├── resolveLists (解析列表)
         ├── resolveFollowings (解析关注列表)
         ├── path.NewStorePath
         ├── downloading.NewDumper + Load
-        ├── downloading.BatchDownloadAny
-        │   ├── syncListAndGetMembers (同步列表成员)
-        │   ├── BatchUserDownload (批量下载用户推文, batch_any.go:73)
+        ├── downloading.BatchDownloadAny (`internal/downloading/batch_any.go#BatchDownloadAny`)
+        │   ├── syncListAndGetMembers (同步列表成员, `internal/downloading/list_download.go#syncListAndGetMembers`)
+        │   ├── BatchUserDownload (批量下载用户推文, `internal/downloading/batch_download.go#BatchUserDownload`)
         │   └── 返回: failedTweets, listMembers
         ├── collectFailedTweets
         ├── downloading.RetryFailedTweets (如果NoRetry=false)
@@ -211,9 +234,11 @@ handleDBUsers
 
 ```
 handleDBUserDelete
-    ├── 解析ID: strconv.ParseUint
+    ├── 解析ID: resolvePathID (内部 strconv.ParseUint)
     ├── database.GetUserById (验证存在性)
-    └── database.DelUser (事务删除)
+    ├── countUserCascade (级联计数, 失败 fail-closed 拒绝删除)
+    ├── 实体生命周期清理: QueryUserEntities → entitypkg.UserEntity.Remove (staged removal + journal)
+    └── database.DelUser (事务删除, `internal/database/helpers.go#withTx`)
         ├── BEGIN TRANSACTION
         ├── DELETE FROM user_links WHERE user_id = ?
         ├── DELETE FROM user_entities WHERE user_id = ?
@@ -239,16 +264,18 @@ handleDBUserDelete
 
 | 操作类型 | 事务管理 | 错误回滚 | 连接池 | 边界检查 |
 |----------|----------|----------|--------|----------|
-| 用户删除 (DelUser) | ✅ Beginx+Commit | ✅ defer Rollback | ✅ sqlx.DB | ✅ RowsAffected检查 |
-| 列表删除 (DelLst) | ✅ Beginx+Commit | ✅ defer Rollback | ✅ sqlx.DB | ✅ 级联删除user_links |
+| 用户删除 (DelUser) | ✅ `withTx` (Beginx+Commit) | ✅ defer Rollback | ✅ sqlx.DB | ✅ RowsAffected检查 |
+| 列表删除 (DelLst) | ✅ `withTx` (Beginx+Commit) | ✅ defer Rollback | ✅ sqlx.DB | ✅ 级联删除user_links |
 | 用户更新 (UpdateUser) | ❌ 无事务 | ❌ 无回滚 | ✅ sqlx.DB | ✅ RowsAffected检查 |
 | 列表更新 (UpdateLst) | ❌ 无事务 | ❌ 无回滚 | ✅ sqlx.DB | ✅ RowsAffected检查 |
 | 实体更新 | ❌ 无事务 | ❌ 无回滚 | ✅ sqlx.DB | ✅ 存在性检查 |
 | 查询操作 | N/A | N/A | ✅ sqlx.DB | ✅ 空结果处理 |
 
+事务助手为 `internal/database/helpers.go#withTx`（无 ctx 的包内快速助手，供现有无 ctx 签名的数据库函数使用）；携带 context 的调用方走 `internal/database/tx/manager.go#Manager.RunInTransaction`。代码注释明确要求不要新增第三套事务助手。
+
 **问题发现**: 
 - `UpdateUser`, `UpdateLst` 等更新操作未使用事务，存在数据不一致风险
-- 建议统一使用 `tx.Manager.RunInTransaction` 包装所有写操作
+- 建议统一使用 `withTx`（无 ctx 的数据库函数）或 `tx.Manager.RunInTransaction`（ctx 感知的调用方）包装写操作
 
 ### 3.3 中间件应用检查
 
@@ -264,6 +291,8 @@ Client Request
     ↓
 [CORS Middleware] - 处理跨域，允许所有来源与 `GET/POST/PUT/PATCH/DELETE/OPTIONS`
     ↓
+[shutdownMutationMiddleware] - 关停写闸门：POST/PUT/PATCH/DELETE 在关停期直接 503，并计入 activeMutations
+    ↓
 [authMiddleware] - api_key 为空放行；非空校验 Bearer JWT / 原始 Key（SSE 回退 ?token=）
     ↓
 [Handler] - 业务处理
@@ -272,17 +301,20 @@ Client Request
 | 中间件 | 应用范围 | 功能 | 状态 |
 |--------|----------|------|------|
 | securityHeadersMiddleware | 所有路由 | 安全响应头 | ✅ 完整 |
-| loggingMiddleware | 所有路由 | 请求日志（内部构造 responseRecorder 记录状态码，middleware.go:53-58） | ✅ 完整 |
+| loggingMiddleware | 所有路由 | 请求日志（内部构造 responseRecorder 记录状态码，`internal/api/middleware.go#responseRecorder`） | ✅ 完整 |
 | API-Version 头 | 所有路由 | 响应头 `API-Version: v1` | ✅ 完整 |
 | CORS | 所有路由 | 跨域处理 | ✅ 完整 |
-| authMiddleware | 除公开路径外的所有路由 | 认证（JWT/API Key） | ✅ 完整 |
+| shutdownMutationMiddleware | 所有路由 | 关停期对写方法返回 503，并跟踪进行中的写请求（`internal/api/server.go#Server.shutdownMutationMiddleware`） | ✅ 完整 |
+| authMiddleware | 除公开路径与已注册 bot 回调外的所有路由 | 认证（JWT/API Key） | ✅ 完整 |
 
-中间件包裹顺序来自 `server.go:buildHandler()`（server.go:257-277）：从外到内为 securityHeadersMiddleware → loggingMiddleware → API-Version 头 → CORS → authMiddleware → mux。`responseRecorder` 不是独立中间件，而是 `loggingMiddleware` 内部构造的 ResponseWriter 包装（middleware.go:53）。
+中间件包裹顺序来自 `internal/api/server.go#Server.buildHandler`：从外到内为 securityHeadersMiddleware → loggingMiddleware → API-Version 头 → CORS → **shutdownMutationMiddleware** → authMiddleware → mux。`responseRecorder` 不是独立中间件，而是 `loggingMiddleware` 内部构造的 ResponseWriter 包装（`internal/api/middleware.go#responseRecorder`）。关停闸门刻意放在认证外层，使关停期间所有写请求一致返回 503，而不依赖配置了哪些 API Key。
 
 **注意**: 
-- 认证由 `authMiddleware`（server.go:259）提供：`api_key` 为空时放行所有请求（向后兼容）；非空时优先校验 `Authorization: Bearer <JWT>`，回退原始 API Key 字符串比较，SSE 端点无法设置自定义头时回退 `?token=` 查询参数（middleware.go:authMiddleware）；`/api/v1/health`、`/api/v1/auth/login`、SPA 页面、`/static/` 等公开路径免认证（middleware.go:isPublicPath）
-- 全局请求限流仍缺失（仅 auth 登录/refresh/check 路径有 `authRateLimiter` 限流，auth_jwt.go:115/174/237）
-- 请求大小限制尚未统一；JSON 上传接口已通过 `http.MaxBytesReader` 限制请求体大小
+- 认证由 `internal/api/middleware.go#Server.authMiddleware` 提供：`api_key` 为空时放行所有请求（向后兼容）；非空时优先校验 `Authorization: Bearer <JWT>`，回退原始 API Key 字符串比较，SSE 端点无法设置自定义头时回退 `?token=` 查询参数；`/api/v1/auth/refresh`、`/api/v1/auth/check` 允许“签名有效但已过期”的 JWT 通过（`internal/api/middleware.go#isAuthManagementPath`）
+- 公开路径由 `internal/api/middleware.go#isPublicPath` 判定：`/`、`/favicon.ico`、SPA 页面（`/tasks`、`/data`、`/schedules`、`/system`、`/logs`）以及前缀白名单 `/api/v1/health`、`/api/v1/auth/login`、`/api/v1/config/theme`、`/static/`；此外 `internal/api/server.go#Server.RegisterBotCallback` 登记的精确回调路径也免认证
+- 认证失败返回 401，并通过 `X-Token-Type: expired|invalid` 与 `WWW-Authenticate` 头区分处理策略（`internal/api/middleware.go#writeAuth401`）
+- 全局请求限流仍缺失：只有 auth 登录/refresh/check 三个端点在处理入口调用 `authRateLimiter.Allow/Fail`（`internal/api/auth_jwt.go#Server.handleAuthLogin` / `#Server.handleAuthRefresh` / `#Server.handleAuthCheck`，限流器实现在 `internal/api/auth_jwt.go#authRateLimiter`），其余端点没有请求频率保护
+- 请求大小限制已按用途分级（见 3.5），但尚未覆盖全部 JSON 端点
 
 ### 3.4 边界情况检查
 
@@ -295,9 +327,27 @@ Client Request
 | 数据库连接失败 | ✅ health检查返回503 | 已处理 |
 | 空请求体 | ✅ 使用默认值或返回400 | 已处理 |
 | 文件不存在 | ✅ 返回404或空结果 | 已处理 |
-| 路径遍历攻击 | ✅ `filepath.Clean` + 允许根目录前缀包含检查（`validateJsonPaths`，download_service.go:1144-1167，前缀含 RootPath 与 AppRootPath） | 已处理 |
+| 路径遍历攻击 | ✅ `filepath.Clean` + 允许根目录前缀包含检查（`internal/service/download_service.go#downloadServiceImpl.validateJsonPaths`，前缀含 RootPath 与 AppRootPath，二者均同时加入带/不带分隔符的两种形式） | 已处理 |
 | 超大分页参数 | ✅ 限制pageSize<=200 | 已处理 |
 | 并发任务创建 | ✅ TaskManager加锁保护 | 已处理 |
+| 关停期间发起写请求 | ✅ `shutdownMutationMiddleware` 直接返回503 | 已处理 |
+| 请求体超限 | ✅ 已加限制的端点返回413 | 部分覆盖（见 3.5） |
+
+### 3.5 请求体大小限制现状
+
+常量定义在 `internal/api/resource_handler.go`（JSON/raw）与 `internal/api/download_handlers.go`（上传），统一通过 `http.MaxBytesReader` 施加：
+
+| 用途 | 上限 | 常量 / 施加点 |
+|------|------|----------------|
+| 普通 JSON（配置字段、Cookie、调度条目、批量标记、JSON 下载参数、主题切换） | 1 MiB | `internal/api/resource_handler.go#defaultJSONBodyLimit`，经同文件 `Server.decodeBody` 或 `Server.limitJSONBody` 施加 |
+| 携带 raw YAML / 批量内容字段（conf.yaml、schedules.yaml、cookies YAML、批量任务列表） | 16 MiB | `internal/api/resource_handler.go#rawContentBodyLimit` |
+| multipart 上传请求体总量（`/api/v1/json/file/download`、`/api/v1/json/folder/download` 的 multipart 分支） | 1 GiB | `internal/api/download_handlers.go#maxUploadRequestSize`（`Server.handleJsonFileUpload` / `Server.handleJsonFolderUpload`） |
+| 单个上传文件 | 400 MiB | `internal/api/download_handlers.go#maxUploadFileSize` |
+| multipart 内存缓冲（超出部分落盘） | 32 MiB | `internal/api/download_handlers.go#maxUploadMemory`（`ParseMultipartForm`） |
+
+超限时 `internal/api/resource_handler.go#Server.writeBodyTooLarge` 返回 413，与上传接口语义一致。
+
+**仍存在的缺口**: 用户与列表的 download/mark 及关注 download/mark 共 6 条路由（`/api/v1/users/{screen_name}/download`、`/mark`、`/following/download`、`/following/mark`、`/api/v1/lists/{list_id}/download`、`/mark`）走 `internal/api/download_handlers.go#decodeOptionalJSON`，该函数只解码 JSON 且**未**套 `MaxBytesReader`，因此这些端点没有请求体上限（`profile` 两类端点不读请求体，无此问题）。
 
 ---
 
@@ -350,6 +400,8 @@ Client Request
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+上图仅示意主要文件，`internal/api/` 实际还包含：`task_manager.go`/`task_types.go`（任务状态机与类型）、`download_queue.go`（队列与 workerLoop）、`download_targets.go`（目标去重键）、`scheduler_handlers.go`/`scheduler_download.go`、`auth_jwt.go`（JWT 签发/校验）、`middleware.go`、`sse_tasks.go`/`sse_logs.go`、`resource_handler.go`（共享解析/响应助手）、`event_bus.go`、`bot_notify.go`、`pagination.go`、`progress.go`、`task_log.go`、`log_handlers.go`、`version.go`。
+
 ### 4.2 任务状态转换图
 
 ```
@@ -376,6 +428,8 @@ New in v3.4.19:
 - DeleteTask: 删除 completed/failed/cancelled 状态的任务
 - RetryTask: 基于 failed/cancelled 任务的 taskData 创建新任务
 ```
+
+补充：`internal/api/task_manager.go#canTransitionStatus` 允许 `queued` 直接进入三个终态（例如入队失败时 `SetTaskError` 会把仍处于 queued 的任务置为 failed；`CancelTask` 对 queued 任务同样直接落 cancelled），上图只画了最常见的 queued → running 路径。状态机由 `internal/api/task_manager.go#isTerminalStatus` / `#canTransitionStatus` 定义，终态为 completed、failed、cancelled。
 
 ### 4.3 下载服务调用图
 
@@ -418,14 +472,20 @@ DownloadService Interface
     ├── MarkDownloaded(...)
     │       ├── resolveUsers
     │       ├── resolveLists
-    │       └── MarkUsersAsDownloaded
+    │       ├── resolveFollowings
+    │       └── MarkUsersAsDownloaded (`internal/downloading/mark_downloaded.go#MarkUsersAsDownloaded`)
     │
     ├── JsonFileDownload(paths)
-    │       └── DownloadThirdPartyTweets
+    │       ├── validateJsonPaths
+    │       ├── downloading.NewJsonDumper + Load
+    │       ├── DownloadThirdPartyTweets
+    │       └── RetryFailedJsonTweets (如果NoRetry=false)
     │
-    └── JsonFolderDownload(paths)
-            └── DownloadFromLoongTweetFolder
-
+    ├── JsonFolderDownload(paths)
+    │       ├── validateJsonPaths
+    │       ├── downloading.NewJsonDumper + Load
+    │       ├── DownloadFromLoongTweetFolder
+    │       └── RetryFailedJsonTweets (如果NoRetry=false)
     │
     ├── RetryAllFailed()
     │       ├── downloading.NewDumper
@@ -437,6 +497,8 @@ DownloadService Interface
             └── os.Remove(errors.json + json_errors.json)
 ```
 
+说明：`UserDownload`、`ListDownload`、`FollowingDownload`、`BatchDownload` 都只是构造 `downloadTemplateConfig` 并调用共享模板 `internal/service/download_service.go#downloadServiceImpl.executeDownloadTemplate`，图中列出的 BatchDownloadAny / RetryFailedTweets / downloadProfile / completeTask 由该模板统一驱动；`ProfileDownload`、`ListProfileDownload`、`MarkDownloaded`、`JsonFileDownload`、`JsonFolderDownload` 各自独立实现。
+
 ---
 
 ## 5. 潜在问题与建议
@@ -446,22 +508,22 @@ DownloadService Interface
 **问题**: 部分数据库操作使用显式事务，部分不使用
 
 ```go
-// 使用事务的示例 (user.go:DelUser)
-func DelUser(db *sqlx.DB, uid uint64) (err error) {
-    tx, err := db.Beginx()
-    defer func() { if err != nil { tx.Rollback() } }()
-    // ... 多个操作
-    return tx.Commit()
+// 使用事务的示例 (internal/database/user.go#DelUser)
+func DelUser(db *sqlx.DB, uid uint64) error {
+    return withTx(db, func(tx *sqlx.Tx) error {
+        // ... 多个 DELETE
+        return nil
+    })
 }
 
-// 未使用事务的示例 (user.go:UpdateUser)
+// 未使用事务的示例 (internal/database/user.go#UpdateUser)
 func UpdateUser(db *sqlx.DB, usr *User) error {
     _, err := db.NamedExec(stmt, usr)  // 直接执行，无事务
     return err
 }
 ```
 
-**建议**: 统一使用 `tx.Manager.RunInTransaction`
+**建议**: 无 ctx 的数据库函数统一用 `internal/database/helpers.go#withTx`；ctx 感知的调用方用 `internal/database/tx/manager.go#Manager.RunInTransaction`（不要新增第三套事务助手）
 
 ### 5.2 错误处理模式不一致
 
@@ -477,13 +539,13 @@ return err
 
 **建议**: 统一使用 `fmt.Errorf("context: %w", err)` 包装错误
 
-### 5.3 请求大小限制仍不统一
+### 5.3 请求大小限制覆盖不全（已分级，未全覆盖）
 
-**问题**: multipart 上传接口已有限制，但这套限制尚未推广到所有需要保护的端点
+**问题**: 请求体限制已按用途分级（1 MiB JSON / 16 MiB raw / 1 GiB 上传总量），但**未覆盖全部 JSON 端点**：用户与列表的 download/mark、关注的 download/mark 共 6 条路由经 `internal/api/download_handlers.go#decodeOptionalJSON` 解码，没有 `MaxBytesReader` 包裹（详见 3.5）
 
 **建议**: 
-- 保持现有上传接口的 `http.MaxBytesReader` 限制
-- 评估是否需要为其他大请求端点补充局部或全局限制
+- 保持现有分级上限（`internal/api/resource_handler.go` 的 `defaultJSONBodyLimit`/`rawContentBodyLimit` 与 `internal/api/download_handlers.go` 的 `maxUploadRequestSize`/`maxUploadFileSize`/`maxUploadMemory`）
+- 给 `decodeOptionalJSON` 的 6 个调用点补上 `defaultJSONBodyLimit`（这些请求体都很小，1 MiB 足够）
 
 ### 5.4 任务取消机制
 
@@ -491,11 +553,11 @@ return err
 
 **建议**: 确保所有长时间运行的操作都检查 `ctx.Done()`
 
-### 5.5 数据库连接未在API层关闭
+### 5.5 数据库连接关闭依赖关停流程
 
-**问题**: `server.go` 的 `GracefulShutdown` 会关闭数据库连接，但如果Server未正常关闭，连接可能泄漏
+**问题**: `internal/api/server.go#Server.GracefulShutdown` 会在最后阶段执行 `s.db.Close()`；但整个关停受单一总截止时间约束（`internal/api/server.go#defaultShutdownDrainTimeout` = 45s），任一阶段超时只记录警告并继续，因此极端情况下 DB 关闭可能发生在进程退出路径上
 
-**建议**: 添加连接池健康检查和最大连接数限制
+**建议**: 连接池边界已存在——`internal/database/sqlite.go#configureSQLiteConnection` 设置 `SetMaxOpenConns(1)`/`SetMaxIdleConns(1)`（SQLite 文件库，避免并发写），`/api/v1/health` 通过 `s.db.Ping()` 做健康检查。可选改进：把关停各阶段的超时情况纳入可观测指标，便于判断是否需要调整总截止时间
 
 ---
 
@@ -519,14 +581,17 @@ return err
 | `internal/api/download_handlers.go` | 下载相关HTTP处理器 | 良好 |
 | `internal/api/db_handlers.go` | 数据库CRUD处理器 | 良好 |
 | `internal/api/task_manager.go` | 任务管理、状态机 | 良好 |
-| `internal/api/middleware.go` | 日志中间件 | 良好 |
+| `internal/api/middleware.go` | 请求日志、安全响应头、认证中间件（`authMiddleware`/`isPublicPath`） | 良好 |
+| `internal/api/auth_jwt.go` | JWT 签发/校验、refresh 年龄限制、auth 限流器 | 良好 |
+| `internal/api/download_queue.go` | 下载队列、workerLoop、冲突/目标键与任务分离 | 良好 |
 | `internal/cli/executor.go` | CLI命令执行 | 良好 |
 | `internal/service/download_service.go` | 下载业务逻辑 | 良好 |
-| `internal/database/tx/manager.go` | 事务管理器 | 良好但未充分利用 |
+| `internal/database/tx/manager.go` | 事务管理器（ctx 感知） | 良好但未充分利用 |
+| `internal/database/helpers.go` | `withTx` 包内事务助手 | 良好 |
 
 ### 6.3 推荐的改进优先级
 
 1. **高优先级**: 统一数据库事务管理
-2. **中优先级**: 统一请求体大小限制策略
+2. **中优先级**: 为 6 个未经 `MaxBytesReader` 包裹的 download/mark 端点补上 `defaultJSONBodyLimit`（见 3.5/5.3）
 3. **中优先级**: 统一错误处理模式
 4. **低优先级**: 添加更多边界测试用例

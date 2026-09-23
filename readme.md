@@ -34,6 +34,8 @@ Twitter Media Downloader Pro（简称 `tmdp`）的代码基于 [unkmonster/tmd](
 
 - [日志系统详解](#日志系统详解)
 
+- [文档导航](#文档导航)
+
 - [项目架构](#项目架构)
 
 - [常见问题](#常见问题)
@@ -122,9 +124,10 @@ tmdp-windows-amd64.exe
 2. `auth_token`
 3. `ct0`
 4. max download routine（最大并发下载数）
-5. max file name len（最大文件名长度）
-6. proxy_url（可留空）
-7. api_key（可留空，设置后开启 HTTP 认证）
+5. max user media fetch concurrent（UserMedia 抓取并发数）
+6. max file name len（最大文件名长度）
+7. proxy_url（可留空）
+8. api_key（可留空，设置后开启 HTTP 认证）
 
 配置完成后即可正常使用。
 
@@ -137,12 +140,16 @@ tmdp-windows-amd64.exe
 | storage dir          | 文件存储目录                          | 无（必填）               | `D:\twitter_downloads`  |
 | auth_token          | Twitter Cookie 中的 auth_token   | 无（必填）               | `a1b2c3d4e5f6...`       |
 | ct0                  | Twitter Cookie 中的 ct0           | 无（必填）               | `x1y2z3...`             |
-| max download routine | 最大并发下载数（范围 1-100）               | `min(100, CPU×10)`¹ | `35`                    |
+| max download routine | 最大并发下载数（范围 1-100）               | `min(50, CPU×10)`¹ | `35`                    |
+| max user media fetch concurrent | UserMedia 抓取并发数（范围 1-35）      | `3`                 | `3`                     |
 | max file name len    | 最大文件名长度（50-245）                 | `158`               | `158`                   |
 | proxy_url           | 代理服务器 URL（支持 http/https/socks5/socks5h） | 空（使用 HTTP_PROXY/HTTPS_PROXY 环境变量代理；均未设置则直连） | `http://127.0.0.1:7890` |
 | api_key             | 可选：API Key 认证（设置后开启 HTTP 认证，至少 8 字符） | 空（不启用）                | `your-api-key`         |
+| bind_address        | 可选：API Server 监听地址（仅 Server 模式） | 空（监听所有网卡）            | `127.0.0.1`             |
 
-> ¹ `max download routine` 默认值为 `min(100, runtime.GOMAXPROCS(0)*10)`，即 CPU 核数的 10 倍且不超过 100。
+> ¹ `max download routine` 默认值为 `min(50, runtime.GOMAXPROCS(0)*10)`，即 CPU 核数的 10 倍且不超过 50（对应 `internal/config/config.go` 的 `DefaultMaxDownloadRoutine`）。
+>
+> `bind_address` 是唯一不在 `-conf` 向导内的配置项（无对应 `TMD_*` 环境变量），只能编辑 `conf.yaml`。其余 8 项都会在向导中依次询问，也都可用 `TMD_*` 环境变量覆盖。
 
 **快速上手示例**
 
@@ -452,7 +459,7 @@ tmdp -server
 
 开启内置认证后，建议配合以下措施使用：
 
-1. **默认监听所有网卡**：绑定 0.0.0.0，局域网内可直接访问；如需仅本地访问，请用防火墙/反向代理限制来源
+1. **默认监听所有网卡**：`bind_address` 留空时绑定所有网卡（`:25556`），局域网内可直接访问；仅需本地访问时把 `bind_address` 设为 `127.0.0.1`（或 `::1`），此时不再产生"非 loopback 且未设 API Key"的启动警告
 2. **HTTPS 加密**：使用 Nginx/Caddy 反向代理终止 TLS
 3. **速率限制**：外层 Nginx 配置 `limit_req`
 4. **IP 白名单**：防火墙限制访问来源
@@ -637,10 +644,10 @@ tmdp -user elonmusk -no-retry
 
 | 参数        | 类型   | 默认值   | 说明                                 |
 | --------- | ---- | ----- | ---------------------------------- |
-| `-conf`   | bool | false | 进入交互式向导，7 项全量重填；括号内显示各项默认值而非当前值；直接回车=使用默认值/清空字符串字段，storage dir 不可为空            |
+| `-conf`   | bool | false | 进入交互式向导，8 项全量重填；括号内显示各项默认值而非当前值；直接回车=使用默认值/清空字符串字段，storage dir 不可为空            |
 | `-dbg`    | bool | false | 显示调试信息，包括请求计数等                     |
 | `-server` | bool | false | 启动 API Server 模式                   |
-| `-port`   | int  | 25556 | API Server 监听端口（仅与 `-server` 一起使用） |
+| `-port`   | int  | 25556 | API Server 监听端口（仅与 `-server` 一起使用）。未指定 `-port` 时依次取 `TMD_PORT`，最后回落到 `25556` |
 
 ### 推文下载参数
 
@@ -680,13 +687,14 @@ tmdp -user elonmusk -no-retry
 | 参数                 | 类型     | 默认值   | 说明                                      |
 | ------------------ | ------ | ----- | --------------------------------------- |
 | `-mark-downloaded` | bool   | false | 仅标记用户为已下载，不下载内容（常见使用场景：指定下载某用户某时间之后的推文） |
-| `-mark-time`       | string | 空（=当前时间）  | 指定标记时间戳，格式：`2006-01-02T15:04:05`，或 `null`/`nil` 表示全量标记 |
+| `-mark-time`       | string | 空（=当前时间）  | 指定标记时间戳，格式：`2006-01-02T15:04:05`（无时区，按服务器本地时区解释）或 RFC3339（如 `2024-01-01T00:00:00Z`，绝对时刻），或 `null`/`nil` 表示全量标记 |
 
 > **关于** **`-mark-time`** **格式**：示例中的 `2006-01-02T15:04:05` 是 Go 语言的参考时间格式，表示"年-月-日T时:分:秒"。实际使用时填入具体时间，例如 `2024-01-01T00:00:00` 表示 2024 年 1 月 1 日零时。
 >
 > - 省略 `-mark-time`：以**当前时间**为标记点（默认）
 > - 传 `null` 或 `nil`（不区分大小写）：**全量标记**，清除已记录的最新推文时间，下次下载将重新拉取全部历史推文
 > - 传具体时间：标记为指定时间，仅拉取该时间之后的推文
+> - 两种具体时间写法都接受：无时区的 `2006-01-02T15:04:05` 按**服务器本地时区**解释（CLI 兼容语义），带偏移的 RFC3339（Web UI / API 走的就是这条链路）按**绝对时刻**处理，写入数据库前统一归一化为 UTC
 
 ### Profile 下载参数
 
@@ -1209,8 +1217,8 @@ tmdp Server 模式支持接入 6 种 Bot 平台，用于远程命令控制、任
 | ------- | ------------------------------------------- | ---- | ----------------- | ----------------------- |
 | Telegram | 长轮询（`getUpdates`，60s timeout）               | `/dl` `/status` `/cancel` `/tasks` `/help` | 任务发起者的聊天；日志告警推送给 allowed_users | `token`（必填）             |
 | Discord  | WebSocket Gateway + 全局 Slash 命令             | 同上（原生布尔选项）      | 任务发起者的频道；日志告警 DM 给 allowed_users | `token`（必填）             |
-| WeChat   | wechat-robot-go iLink 协议（首次登录需扫码）          | 同上               | 任务发起者；日志告警给本次运行中出现过的用户     | `credential_path`（必填）   |
-| Feishu   | HTTP 回调（默认 `/api/v1/bot/feishu/callback`）  | 同上               | 任务发起者；日志告警给本次运行中出现过的用户     | `app_id` + `app_secret`（必填） |
+| WeChat   | wechat-robot-go iLink 协议（首次登录扫码，二维码写到 app root 下 `wechat-qr.png`，权限 0600、日志只给路径）          | 同上               | 任务发起者；日志告警给本次运行中出现过的用户     | `credential_path`（必填）   |
+| Feishu   | HTTP 回调（默认 `/api/v1/bot/feishu/callback`）  | 同上               | 任务发起者；日志告警给本次运行中出现过的用户     | `app_id` + `app_secret` + `verify_token` + `encrypt_key`（后两者必填，缺则拒绝启用） |
 | Gotify   | Gotify HTTP 推送 API                          | 无（仅推送）          | 每个终止任务推送一次；错误日志告警         | `server_url` + `token`（必填） |
 | Pushover | Pushover HTTP 推送 API                       | 无（仅推送）          | 每个终止任务推送一次；错误日志告警         | `user` + `token`（必填）     |
 
@@ -1269,17 +1277,20 @@ discord:
   allowed_users: ["123456789012345678"]
 
 # WeChat iLink：个人微信接入，首次登录扫码。credential_path 相对工作目录，登录后自动生成
+# 首次登录时二维码会写到 app root 下的 wechat-qr.png（0600，日志只打印路径），扫码后该文件自动删除
 wechat:
   credential_path: ".weixin-token.json"
   allowed_users: ["friend@im.wechat"]
 
 # Feishu/Lark：https://open.feishu.cn/app 创建应用，开启机器人能力并订阅"接收消息 v2.0"事件
 # 回调地址填 https://your-domain/api/v1/bot/feishu/callback
+# 重要：verify_token 与 encrypt_key 必须填写 —— 回调路径免 TMD 认证，
+# 缺少它们时服务端会拒绝启用该 Bot（防伪事件触发命令）
 feishu:
   app_id: "cli_xxxxxxxxxxxx"
   app_secret: "xxxxxxxxxxxxxxxxxxxxxxxxxx"
   verify_token: "xxxxxxxxxxxx"
-  encrypt_key: ""
+  encrypt_key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
   allowed_users: ["ou_xxxxxxxxxxxxx"]
 
 # Gotify（仅推送）：自建推送服务 https://github.com/gotify/server
@@ -1342,7 +1353,7 @@ Profile 下载功能可以保存用户的完整个人资料：
 └── profile_20240115_103045_123.json
 ```
 
-版本命名格式：`{类型}_{日期}_{时间}_{毫秒}.{扩展名}`（毫秒 0-999）
+版本命名格式：`{类型}_{日期}_{时间}_{尾号}.{扩展名}`，其中日期时间为 `YYYYMMDD_HHMMSS`，尾号是**当前时间的纳秒取模 1000**（0-999，用于同秒内区分，非毫秒）。
 
 ***
 
@@ -1393,8 +1404,8 @@ media:2
 
 ```
 {存储目录}/
-├── users/                          # 用户目录
-│   ├── Elon Musk(elonmusk)/        # 用户文件夹
+├── users/                          # 用户实体的父目录
+│   ├── Elon Musk(elonmusk)/        # 用户文件夹（显示名 + (screen_name)）
 │   │   ├── 推文媒体文件...         # -user/-jsonfile/-jsonfolder 媒体文件均在此
 │   │   └── .loongtweet/           # 仅 -user 和 -jsonfile 创建
 │   │       ├── {推文文本}_{tweetID}.json    # 推文 JSON（均已清理：-user cleanTweetJson / -jsonfile 格式转换+清理）
@@ -1407,6 +1418,9 @@ media:2
 │   │           └── .versions/      # 历史版本
 │   └── NASA(NASA)/
 │       └── ...
+├── 科技圈(1234567890123)/           # 列表实体的父目录就是存储根；目录名 = 标题 + (listID)
+│   ├── Elon Musk(elonmusk)         # 成员符号链接 → ../../users/Elon Musk(elonmusk)
+│   └── NASA(NASA)                  # 成员符号链接 → ../../users/NASA(NASA)
 ├── .data/                          # 数据目录
     ├── foo.db                      # SQLite 数据库
     │                                 # 包含以下数据表：
@@ -1420,6 +1434,32 @@ media:2
     ├── errors.json                 # 失败推文记录
     └── json_errors.json            # JSON 导入失败的推文记录（-jsonfile/-jsonfolder）
 ```
+
+### 目录与文件命名规则
+
+命名全部按 **UTF-8 字节**计算长度预算（`max file name len`，默认 158），并做 Windows 兼容清洗。规则来自 `internal/naming/`，媒体文件名只有一条统一规则、不做旧名兼容查找。
+
+| 对象 | 规则 | 示例 |
+| ---- | ---- | ---- |
+| 用户目录 | `显示名(screen_name)`，screen_name 作为稳定后缀优先占用预算；显示名为空则回落到 `user` | `Elon Musk(elonmusk)/` |
+| 列表目录 | `标题(listID)`；标题为空时回落为 `list(listID)`（列表 ID 为 0 时仅 `list`） | `科技圈(1234567890123)/` |
+| 推文媒体 | `{推文文本}_{tweetID}.{扩展名}`；推文文本为空则回落为 `tweet` | `hello world_1712345678901234567.jpg` |
+| 推文元数据 | 同上，扩展名 `.json` / `.txt`，位于 `.loongtweet/` | `.loongtweet/hello world_1712345678901234567.txt` |
+
+媒体扩展名由 URL 统一推导（`internal/utils/fs.go` 的 `MediaExtFromUrl`）：
+
+| URL 形态 | 得到的扩展名 |
+| ---- | ---- |
+| `.../xyz.jpg:large`（旧导出常见的尺寸尾巴） | `.jpg`（截断首个冒号之后的部分） |
+| `.../xyz.png?name=4096x4096` | `.png` |
+| `.../xyz?format=jpg&name=medium`（无路径扩展名） | `.jpg`（读 `format` 查询参数，仅对 twimg 域名生效） |
+| `.../xyz?name=large`（既无路径扩展名也无 format） | 回落 `.jpg` |
+
+扩展名随后进入 **8 字节保留预算**并只保留 `[字母数字 . - _]`，因此不会出现 `.jpg:large` → `.jpglarg` 这类畸形后缀；整个文件名的最后一关是 Windows 保留设备名复检（`CON`、`COM1` 等会前置 `_`）。
+
+同名冲突时由路径去重器生成递增后缀：`名称(1).jpg`、`名称(2).jpg`。
+
+> **升级提示**：媒体文件名不做"旧命名规则"兼容查找，也**不会就地改名或覆盖**。若某次升级改变了命名规则，新规则算出的名字通常并不存在，于是该媒体会被**重新下载一次并写成新名字**；按旧规则写下的文件不会被触碰，成为需要手工清理的孤儿文件（若新名字恰好已被占用，则再追加序号写成 `名称(1).ext`）。
 
 ***
 
@@ -1488,6 +1528,8 @@ tmdp -user elonmusk
 
 Twitter API 限制一段时间内过快的请求（例如某端点每15分钟仅允许请求500次，超出这个次数会以429响应）。当某一端点将要达到速率限制程序会打印一条通知并阻塞尝试请求这个端点的协程直到余量刷新（这最多是15分钟），但并不会阻塞所有协程，所以其余协程打印的消息可能将这条休眠通知覆盖让人认为程序无响应了，等待余量刷新程序会继续工作。
 
+此外，收到 429 时会把**该账号**置入临时冷却（按响应头 `Retry-After`，缺省 60 秒），冷却期间多账号选择会跳过它、改用其他账号；只有当所有备用账号都在冷却时才会触发**全局冷却**，此时所有请求一起等待冷却结束再继续。响应体含 Cloudflare `error code: 1015` 的 429 不会立即重试（避免加剧封锁），单次 1015 只冷却受影响的账号。
+
 ### 启动脚本
 
 项目提供 Server 模式的启动脚本：
@@ -1502,7 +1544,7 @@ start-server.bat
 start-server.bat -port 8080
 ```
 
-> 脚本行为：自动查找同目录下的可执行文件并以 `-server` 模式启动，额外参数会透传给 tmdp。查找顺序：`tmdp-Windows-amd64.exe` → `tmdp.exe` → `tmdp` → `tmd-Windows-amd64.exe` → `tmd.exe` → `tmd`；若均不存在但本机装有 Go，会自动编译 `tmdp-test.exe` 后启动。设置 `TMD_DEV=1` 时直接 `go run . -server`，前端走本地文件（`internal/api/web/web1/`、`web2/`）支持热刷新。
+> 脚本行为：自动查找同目录下的可执行文件并以 `-server` 模式启动，额外参数会透传给 tmdp。查找顺序：`tmdp-Windows-amd64.exe` → `tmdp.exe` → `tmdp` → `tmd-Windows-amd64.exe` → `tmd.exe` → `tmd`；若均不存在但本机装有 Go，会自动编译 `tmdp-test.exe`（注入 `Version=test`）后启动。设置 `TMD_DEV=1` 时直接 `go run . -server`，前端走本地文件（`internal/api/web/web1/`、`web2/`、`web3/`）支持热刷新。
 
 ***
 
@@ -1522,7 +1564,7 @@ start-server.bat -port 8080
 
 ### 日志轮转配置
 
-两个日志文件均使用同一套 [lumberjack](https://github.com/natefinch/lumberjack) 配置（`main.go` 中两个 `lumberjack.Logger` 参数一致），各自独立轮转（任一文件达到上限时仅滚动自身）：
+两个日志文件均使用同一套 [lumberjack](https://github.com/natefinch/lumberjack) 配置，由共享工厂 `logging.NewRotatingWriter`（`internal/logging/rotation.go`）构造，`main.go` 为 `tmd2.log` 与 `client.log` 各建一个实例，参数一致、各自独立轮转（任一文件达到上限时仅滚动自身）：
 
 | 配置项   | 当前值      | 说明             |
 | ----- | -------- | -------------- |
@@ -1697,6 +1739,28 @@ API 模式下，标记结果可以通过任务详情查看（`GET /api/v1/tasks/
 
 ***
 
+## 文档导航
+
+`doc/` 目录是面向开发者与运维的文档集，索引见 [`doc/README.md`](doc/README.md)。最常用的几份：
+
+| 文档 | 内容 | 读者 |
+| ---- | ---- | ---- |
+| [doc/README.md](doc/README.md) | 全部文档的索引与现状标注（现役 / 历史快照） | 所有人 |
+| [doc/architecture.md](doc/architecture.md) | 分层、Service 接口、目录、测试、CI | 开发者 |
+| [doc/API_DOCUMENTATION.md](doc/API_DOCUMENTATION.md) | REST API 全量参考（端点、字段、错误码） | 集成方 |
+| [doc/tmd-api-auth-layer.md](doc/tmd-api-auth-layer.md) | API Key / JWT 认证层设计 | 开发者 |
+| [doc/entity-storage-lifecycle.md](doc/entity-storage-lifecycle.md) | 实体目录与数据库一致性、崩溃恢复 | 改数据层的开发者 |
+| [doc/config-system.md](doc/config-system.md) | 配置加载优先级、校验、运行期生效范围 | 开发者 / 运维 |
+| [doc/naming-and-paths.md](doc/naming-and-paths.md) | 目录与文件命名、扩展名、去重、原子写 | 开发者 |
+| [doc/testing.md](doc/testing.md) | 测试约定、内存数据库、E2E 工具链 | 贡献者 |
+| [doc/troubleshooting.md](doc/troubleshooting.md) | 故障定位与恢复（数据库、目录、限流、日志） | 运维 |
+| [doc/tools.md](doc/tools.md) | `tools/` 下迁移/转换/探针/E2E 脚本用法 | 开发者 |
+| [doc/web1-code-conventions.md](doc/web1-code-conventions.md)、[web2](doc/web2-code-conventions.md)、[web3](doc/web3-code-conventions.md) | 三套前端主题的代码规范 | 改前端的开发者 |
+
+> 仓库根目录的 `AGENTS.md` 与 `lat.md/` 是**给 AI 代理用的知识图谱**（`lat.md/` 由 `lat check` 校验、与源码交叉锚定），不是人类阅读入口；两者内容应保持一致。
+
+***
+
 ## 项目架构
 
 > 完整的架构分层图、Service 层接口设计、开发指南（项目结构/测试/CI/CD/设计模式）已移至 [doc/architecture.md](doc/architecture.md)，面向开发者，普通用户无需阅读。
@@ -1767,7 +1831,7 @@ tmdp 内置多项性能优化机制：
 
 #### 3. MD5 去重
 
-相同内容的文件自动跳过。写入时开启 `SkipUnchanged` 选项：先比对目标文件的大小 + MD5（大小不同直接写入，大小相同再比 MD5），内容未变更则静默跳过，不产生日志：
+**Profile 文件写入**默认开启 `SkipUnchanged`（`internal/downloading/profile` 的 `DefaultConfig`）：先比对目标文件的大小 + MD5（大小不同直接写入，大小相同再比 MD5），内容未变更则静默跳过，不产生日志：
 
 ```go
 // fileWriter 写入时比对大小 + MD5，内容一致则跳过
@@ -1776,22 +1840,23 @@ if req.Options.SkipUnchanged && sameSize && sameMD5 {
 }
 ```
 
-**适用场景：**
+**边界（重要）**：**推文媒体下载不启用该选项**（`internal/downloading/tweet_download.go` 构造的下载请求只设置修改时间，不设 `SkipUnchanged`/`CreateVersion`）。因此：
 
-- 重试失败任务时跳过已成功的文件
+- **Profile 文件**：内容未变则跳过，变更时按需生成 `.versions/` 备份
+- **推文媒体**：不做 MD5 比对也不做版本备份。同一推文的媒体名由「推文文本 + `_tweetID` + 规范化扩展名」唯一确定，但**路径解析从不覆盖**：`UniquePathResolver` 会同时检查磁盘与本次运行内的占位，发现目标已存在就追加序号，因此重复处理同一推文会得到 `名称(1).jpg` 这类新文件，而不是替换原文件。只有 FileWriter 拿到一个尚未被占用的目标路径时才会写入该路径
 
-- 多列表包含同一用户时避免重复保存
-
-- Profile 未变更时自动跳过
+**流式模式差异**：流式写入无法预先计算哈希，`SkipUnchanged` 在该模式下退化为只比文件大小。
 
 #### 4. 符号链接去重
 
-多列表包含同一用户时使用符号链接：
+多列表包含同一用户时使用符号链接（链接名 = 用户目录名，目标为该用户目录的绝对路径）：
 
 ```
-lists/科技圈/users/ -> ../../users/Elon Musk(elonmusk)/
-lists/新闻/users/   -> ../../users/Elon Musk(elonmusk)/
+{存储目录}/科技圈(1234567890123)/Elon Musk(elonmusk)  ->  {存储目录}/users/Elon Musk(elonmusk)
+{存储目录}/新闻(9876543210987)/Elon Musk(elonmusk)    ->  {存储目录}/users/Elon Musk(elonmusk)
 ```
+
+链接由 `internal/downloading/entity.go#ensureUserSymlink` 创建；目标已存在但指向旧路径时，`replaceStaleUserSymlink` 会先改名为 `.stale` 再建新链接并删除备份，避免留下悬空链接。用户改名时链接名会随之更新（`updateUserLink`）。
 
 **节省空间：**
 
