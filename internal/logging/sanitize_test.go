@@ -220,6 +220,28 @@ func TestRedactSensitiveTextKeepsSchemeAndFieldForMaskedURLUserinfo(t *testing.T
 	assert.Contains(t, rootless, "example.invalid")
 }
 
+// 回归：引号内的值如果跨行，必须整体掩码。此前只保留"未闭合引号（不许跨行）"
+// 分支，导致 `token="abc\ndef"` 只掩到行尾，换行后的明文残留在日志里。
+func TestRedactSensitiveTextMasksCrossLineQuotedValues(t *testing.T) {
+	crossLine := RedactSensitiveText("token=\"abc\ndef\"")
+	assert.NotContains(t, crossLine, "abc")
+	assert.NotContains(t, crossLine, "def")
+
+	// 未闭合引号仍必须被掩码（不能因为新增闭合分支而回退）。
+	unclosed := RedactSensitiveText(`token="abc`)
+	assert.NotContains(t, unclosed, "abc")
+
+	// JSON 形态仍只掩到闭合引号，不吞掉后续字段。
+	jsonOut := RedactSensitiveText(`{"password":"x","other":"keep-me"}`)
+	assert.NotContains(t, jsonOut, `"x"`)
+	assert.Contains(t, jsonOut, "keep-me")
+
+	// 多字段名一行内出现时，每个值各自掩码（不因跨行分支而合并）。
+	multi := RedactSensitiveText(`token=aaa password=bbb`)
+	assert.NotContains(t, multi, "aaa")
+	assert.NotContains(t, multi, "bbb")
+}
+
 func TestSanitizeLogText(t *testing.T) {
 	got := SanitizeLogText("\x1b]8;;https://example.invalid\asecret\x1b]8;;\a token=plain-secret\r\x00\x07")
 

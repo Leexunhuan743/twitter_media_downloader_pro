@@ -332,7 +332,10 @@ const api = {
         throw authErr;
       }
 
-      if (!res.ok || !json.success) throw new Error(json.error || '服务器错误 (HTTP ' + res.status + ')');
+      // 后端 APIResponse.detail 是面向用户的补充说明（如 409 时说明哪些统计字段已保存），
+      // 优先于通用 error 展示；两者都缺失时回退到 HTTP 状态。与 web2/web3 口径一致。
+      // 消息进入 DOM 前一律经 escapeHtml（toast.show 内部转义）。
+      if (!res.ok || !json.success) throw new Error(json.detail || json.error || '服务器错误 (HTTP ' + res.status + ')');
       return json.data;
     } finally {
       if (timer) clearTimeout(timer);

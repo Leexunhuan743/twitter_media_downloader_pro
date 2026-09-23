@@ -1,8 +1,6 @@
 package entity
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -15,10 +13,7 @@ import (
 )
 
 const (
-	stagedDirectoryPrefix        = ".tmd-remove-"
-	stagedDirectoryVersionPrefix = stagedDirectoryPrefix + "v1-"
-	stagedDirectoryHashBytes     = 16
-	stagedDirectoryHashLength    = stagedDirectoryHashBytes * 2
+	stagedDirectoryPrefix = ".tmd-remove-"
 )
 
 func entityPath(parentDir, name string) (string, error) {
@@ -223,41 +218,17 @@ func CleanupStagedDirectories(db *sqlx.DB, parentDirs ...string) (StagedDirector
 	}
 
 	activePaths := make(map[string]struct{}, len(activeEntities))
-	activeByParentAndHash := make(map[string]map[string][]string)
 	for _, active := range activeEntities {
 		scanDirs = append(scanDirs, active.ParentDir)
-		parentKey := comparablePath(active.ParentDir)
 		activePath, err := storedEntityPath(active.ParentDir, active.Name)
 		if err != nil {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("resolve active entity path in %q: %w", active.ParentDir, err))
 			continue
 		}
 		activePaths[comparablePath(activePath)] = struct{}{}
-		byHash := activeByParentAndHash[parentKey]
-		if byHash == nil {
-			byHash = make(map[string][]string)
-			activeByParentAndHash[parentKey] = byHash
-		}
-		hash := stagedDirectoryNameHash(filepath.Base(activePath))
-		// 归一化可能让不同记录（如遗留 "foo." 与 "foo"）映射到同一目录；
-		// 去重后按真实候选数判断歧义，避免假歧义永久阻塞恢复。
-		existing := byHash[hash]
-		dup := false
-		for _, candidate := range existing {
-			if comparablePath(candidate) == comparablePath(activePath) {
-				dup = true
-				break
-			}
-		}
-		if !dup {
-			byHash[hash] = append(byHash[hash], activePath)
-		}
-		// 目录是否存在不再参与归属判定（目录缺失的活跃记录同样参与），
-		// 这里仅保留探测失败时的诊断信息。
 		if _, err := os.Lstat(activePath); err != nil && !os.IsNotExist(err) {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("inspect active entity path %q: %w", activePath, err))
 		}
-
 	}
 
 	handledJournals := make(map[string]struct{}, len(journalByStagedPath))
@@ -385,54 +356,11 @@ func CleanupStagedDirectories(db *sqlx.DB, parentDirs ...string) (StagedDirector
 				continue
 			}
 
-			if hash, versioned := parseStagedDirectoryHash(entry.Name()); versioned {
-				candidates := activeByParentAndHash[parentKey][hash]
-				if len(candidates) > 1 {
-					cleanupErr = errors.Join(cleanupErr, fmt.Errorf("retain staged entity directory %q: recovery target is ambiguous", stagedPath))
-					continue
-				}
-				if len(candidates) == 1 {
-					targetPath := candidates[0]
-					if _, err := os.Lstat(targetPath); os.IsNotExist(err) {
-						// 跨平台归一化：active 记录可能保留尾点/尾空格（如 Linux 上的
-						// "foo."），但磁盘目录已被 Windows 风格归一化为 "foo"。此时
-						// 不能把 staged 改名到不存在的记录路径，而应保留 staged 媒体。
-						trimmedBase := strings.TrimRight(filepath.Base(targetPath), " .")
-						if trimmedBase != filepath.Base(targetPath) {
-							altPath := filepath.Join(filepath.Dir(targetPath), trimmedBase)
-							if _, altErr := os.Lstat(altPath); altErr == nil {
-								cleanupErr = errors.Join(cleanupErr, fmt.Errorf("retain staged entity directory %q: active recovery target %q already exists (normalized)", stagedPath, altPath))
-								continue
-							}
-						}
-						if err := os.Rename(stagedPath, targetPath); err != nil {
-							cleanupErr = errors.Join(cleanupErr, fmt.Errorf("restore staged entity directory %q to %q: %w", stagedPath, targetPath, err))
-							continue
-						}
-						activePaths[comparablePath(targetPath)] = struct{}{}
-						result.Restored++
-						continue
-					} else if err != nil {
-						cleanupErr = errors.Join(cleanupErr, fmt.Errorf("inspect staged entity recovery target %q: %w", targetPath, err))
-						continue
-					} else {
-						cleanupErr = errors.Join(cleanupErr, fmt.Errorf("retain staged entity directory %q: active recovery target %q already exists", stagedPath, targetPath))
-						continue
-					}
-				}
-				// A stage without a journal is not evidence that an entity row was
-				// committed as deleted. It can be a user-created directory with the
-				// reserved-looking prefix, or an interrupted pre-journal removal.
-				// With no unique active target, retain it for inspection rather than
-				// risking a recursive deletion of media we cannot prove is orphaned.
-				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("retain unjournaled staged entity directory %q: no matching active entity record", stagedPath))
-				continue
-			}
-
-			// Legacy unversioned stages have no hash or journal to establish
-			// ownership, so they are always retained. A warning is preferable to
-			// treating a prefix collision as authorization to RemoveAll.
-			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("retain unjournaled legacy staged entity directory %q: no removal journal", stagedPath))
+			// 无 journal 的暂存目录不构成"记录已被提交删除"的证据：可能是用户自建
+			// 的同前缀目录，也可能是升级前遗留的中断删除（旧版本先改名后写 journal，
+			// 更早版本甚至没有 journal）。一律保留待人工检查，绝不递归删除无法证明
+			// 为孤儿的媒体。
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("retain unjournaled staged entity directory %q: no removal journal", stagedPath))
 		}
 	}
 	for stagedKey, journal := range journalByStagedPath {
@@ -450,6 +378,9 @@ func CleanupStagedDirectories(db *sqlx.DB, parentDirs ...string) (StagedDirector
 	return result, cleanupErr
 }
 
+// normalizeRemovalJournal 校验持久化的删除日志行：必须是绝对路径、暂存名带
+// 内部前缀、且两者同父（改名只在同一父目录内发生）。不再比对名内哈希——
+// journal 本身就是唯一归属证明（见 stageEntityDirectoryRemoval 的写序）。
 func normalizeRemovalJournal(journal database.EntityRemovalJournal) (database.EntityRemovalJournal, error) {
 	journal.StagedPath = filepath.Clean(journal.StagedPath)
 	journal.OriginalPath = filepath.Clean(journal.OriginalPath)
@@ -459,46 +390,14 @@ func normalizeRemovalJournal(journal database.EntityRemovalJournal) (database.En
 	if comparablePath(filepath.Dir(journal.StagedPath)) != comparablePath(filepath.Dir(journal.OriginalPath)) {
 		return journal, fmt.Errorf("invalid entity removal journal: paths are not siblings staged=%q original=%q", journal.StagedPath, journal.OriginalPath)
 	}
-	hash, ok := parseStagedDirectoryHash(filepath.Base(journal.StagedPath))
-	if !ok {
+	if !isStagedDirectoryPrefix(filepath.Base(journal.StagedPath)) {
 		return journal, fmt.Errorf("invalid entity removal journal: staged path has an unsupported name %q", journal.StagedPath)
-	}
-	expectedHash := stagedDirectoryNameHash(filepath.Base(journal.OriginalPath))
-	if hash != expectedHash {
-		return journal, fmt.Errorf("invalid entity removal journal: staged path does not match original path staged=%q original=%q", journal.StagedPath, journal.OriginalPath)
 	}
 	return journal, nil
 }
 
-// stagedDirectoryNameHash hashes the normalized base name. Trailing dots and
-// spaces are stripped first because Windows resolves them to the same path as
-// the trimmed name (storedEntityPath normalizes them); a stage created on one
-// platform must match the same record scanned on another, otherwise recovery
-// silently degrades to zero candidates and RemoveAll can delete live media.
-// Interior dots (extensions) are preserved.
-func stagedDirectoryNameHash(name string) string {
-	name = strings.TrimRight(name, " .")
-	sum := sha256.Sum256([]byte(name))
-	return hex.EncodeToString(sum[:stagedDirectoryHashBytes])
-}
-
-func stagedDirectoryPattern(path string) string {
-	return stagedDirectoryVersionPrefix + stagedDirectoryNameHash(filepath.Base(path)) + "-*"
-}
-
-func parseStagedDirectoryHash(name string) (string, bool) {
-	if !strings.HasPrefix(name, stagedDirectoryVersionPrefix) {
-		return "", false
-	}
-	remainder := strings.TrimPrefix(name, stagedDirectoryVersionPrefix)
-	if len(remainder) <= stagedDirectoryHashLength || remainder[stagedDirectoryHashLength] != '-' {
-		return "", false
-	}
-	hash := remainder[:stagedDirectoryHashLength]
-	if _, err := hex.DecodeString(hash); err != nil {
-		return "", false
-	}
-	return hash, true
+func stagedDirectoryPattern() string {
+	return stagedDirectoryPrefix + "*"
 }
 
 func comparablePath(value string) string {
@@ -633,7 +532,11 @@ func stageEntityDirectoryRemoval(db *sqlx.DB, path string) (stagedDirectoryRemov
 		return staged, fmt.Errorf("entity path %q is not a directory", path)
 	}
 
-	temp, err := os.CreateTemp(filepath.Dir(path), stagedDirectoryPattern(path))
+	// 顺序很关键：占名 → 写 journal → 改名。这样本程序创建的暂存目录必然已有
+	// journal 行，无需再往目录名里编码规范名哈希作为第二套归属证明。崩在
+	// INSERT 与 Rename 之间只会留下"journal 行在、暂存路径不在"的陈旧行，
+	// 由启动对账末尾统一清理，原目录未被触碰。
+	temp, err := os.CreateTemp(filepath.Dir(path), stagedDirectoryPattern())
 	if err != nil {
 		return staged, fmt.Errorf("reserve temporary entity path: %w", err)
 	}
@@ -645,14 +548,19 @@ func stageEntityDirectoryRemoval(db *sqlx.DB, path string) (stagedDirectoryRemov
 	if err := os.Remove(tempPath); err != nil {
 		return staged, fmt.Errorf("release temporary entity path %q: %w", tempPath, err)
 	}
+
+	journal := database.EntityRemovalJournal{StagedPath: tempPath, OriginalPath: path}
+	if err := database.CreateEntityRemovalJournal(db, journal); err != nil {
+		return staged, fmt.Errorf("record entity removal journal for %q: %w", tempPath, err)
+	}
 	if err := os.Rename(path, tempPath); err != nil {
+		// 改名失败：撤掉刚写的 journal 行，维持"journal 行 ⇔ 暂存目录"的对应关系。
+		if delErr := database.DeleteEntityRemovalJournal(db, tempPath); delErr != nil {
+			return staged, errors.Join(fmt.Errorf("stage entity directory %q for removal: %w", path, err), delErr)
+		}
 		return staged, fmt.Errorf("stage entity directory %q for removal: %w", path, err)
 	}
 	staged.stagedPath = tempPath
-	journal := database.EntityRemovalJournal{StagedPath: staged.stagedPath, OriginalPath: staged.originalPath}
-	if err := database.CreateEntityRemovalJournal(db, journal); err != nil {
-		return staged, staged.rollback(db, err)
-	}
 	return staged, nil
 }
 

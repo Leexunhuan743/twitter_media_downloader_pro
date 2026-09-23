@@ -510,6 +510,30 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 	defer producerPool.Release()
 
 	go func() {
+		// 这个 goroutine 独占 close(tweetChan) → conswg.Wait() → close(errChan)，
+		// 而调用方是 `for pt := range errChan`。若它在收尾前 panic，两个 close 都
+		// 不会执行 → BatchUserDownload 永不返回 → 队列 worker 的 job 永不结束 →
+		// 整个下载队列停止出队。因此：收尾只执行一次（panic 与正常路径共用），
+		// 并且 panic 必须被 recover + cancel（与 producer 的 panicHandler 同策略）。
+		var teardownOnce sync.Once
+		teardown := func() {
+			teardownOnce.Do(func() {
+				close(tweetChan)
+				conswg.Wait()
+				close(errChan)
+			})
+		}
+		defer func() {
+			if r := recover(); r != nil {
+				cancel(fmt.Errorf("batch scheduler panic: %v", r))
+				buf := make([]byte, 1<<16)
+				n := runtime.Stack(buf, false)
+				log.Errorf("[batch] Scheduler panic recovered error=%q", fmt.Sprint(r))
+				log.Debugf("[batch] Scheduler panic stack=%q", string(buf[:n]))
+			}
+		}()
+		defer teardown()
+
 		for ctx.Err() == nil {
 			retryMu.Lock()
 			retryStartCount := len(retryEntities)
@@ -570,11 +594,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 				break
 			}
 		}
-		close(tweetChan)
 		log.Debugf("[batch] Tweet fetch complete dur=%s", time.Since(start))
-
-		conswg.Wait()
-		close(errChan)
 	}()
 
 	fails := []*TweetInEntity{}

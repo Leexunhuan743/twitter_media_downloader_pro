@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/unkmonster/tmd/internal/database"
 	"github.com/unkmonster/tmd/internal/twitter"
 )
 
@@ -661,5 +662,48 @@ func TestJsonDumper_DumpLoadRoundTrip_WithDirs(t *testing.T) {
 		if pt.Dir == "" {
 			t.Errorf("tweet %d has empty Dir after Load", pt.GetTweet().Id)
 		}
+	}
+}
+
+// 回归：实体行被删除后，GetTotal 必须把该实体的失败条目当陈旧项摘除，而不是
+// 返回致命错误。否则「重试全部失败」会在任何下载动作之前永久失败，且失败列表
+// 永远清不干净 —— 用户在数据台删掉一个实体就把整个重试入口废掉了。
+func TestGetTotalDropsEntriesOfDeletedEntities(t *testing.T) {
+	db := setupTestDB(t)
+	defer func() { _ = db.Close() }()
+
+	stale := &database.UserEntity{UserId: 910001, ParentDir: t.TempDir(), Name: "StaleUser"}
+	if err := database.CreateUserEntity(db, stale); err != nil {
+		t.Fatalf("create stale user entity: %v", err)
+	}
+	staleID := int(stale.Id.Int32)
+
+	live := &database.UserEntity{UserId: 910002, ParentDir: t.TempDir(), Name: "LiveUser"}
+	if err := database.CreateUserEntity(db, live); err != nil {
+		t.Fatalf("create live user entity: %v", err)
+	}
+	liveID := int(live.Id.Int32)
+
+	dumper := NewDumper()
+	dumper.Push(staleID, &twitter.Tweet{Id: 1000000000000000001}, &twitter.Tweet{Id: 1000000000000000002})
+	dumper.Push(liveID, &twitter.Tweet{Id: 1000000000000000003})
+
+	// 模拟数据台删除实体：只删行，不碰 dumper。
+	if err := database.DelUserEntity(db, uint32(staleID)); err != nil {
+		t.Fatalf("delete stale user entity: %v", err)
+	}
+
+	total, err := dumper.GetTotal(db)
+	if err != nil {
+		t.Fatalf("GetTotal must not fail on a deleted entity: %v", err)
+	}
+	if len(total) != 1 || total[0].Tweet.Id != 1000000000000000003 {
+		t.Fatalf("expected only the live entity's tweet, got %d entries", len(total))
+	}
+	if dumper.Count() != 1 || dumper.EntityCount() != 1 {
+		t.Fatalf("stale entries not dropped: count=%d entities=%d", dumper.Count(), dumper.EntityCount())
+	}
+	if dumper.HasTweet(staleID, 1000000000000000001) {
+		t.Fatal("stale tweet must be removed from the dumper")
 	}
 }

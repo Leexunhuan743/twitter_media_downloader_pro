@@ -93,41 +93,44 @@ const API = {
       return true;
     } catch(e) { return false; }
   },
+  // 所有方法共用同一错误口径：detail（后端面向用户的补充说明，如 409 说明哪些统计字段已保存）
+  // 优先于通用 error，两者都缺失时回退到带 HTTP 状态的通用文案（web1/web3 同口径）。
+  // 消息最终经 toast() 的 esc() 转义后进 DOM。
   get: async (url) => {
     const r = await API._fetch(apiBase() + url);
     const j = await API._parse(r);
-    if (!j.success) throw new Error(j.error || 'Request failed');
+    if (!j.success) throw new Error(j.detail || j.error || ('Request failed (HTTP ' + r.status + ')'));
     return j.data;
   },
   post: async (url, body) => {
     const r = await API._fetch(apiBase() + url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined });
     const j = await API._parse(r);
-    if (!j.success) throw new Error(j.error || 'Request failed');
+    if (!j.success) throw new Error(j.detail || j.error || ('Request failed (HTTP ' + r.status + ')'));
     return j.data;
   },
   put: async (url, body) => {
     const r = await API._fetch(apiBase() + url, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined });
     const j = await API._parse(r);
-    if (!j.success) throw new Error(j.error || 'Request failed');
+    if (!j.success) throw new Error(j.detail || j.error || ('Request failed (HTTP ' + r.status + ')'));
     return j.data;
   },
   patch: async (url, body) => {
     const r = await API._fetch(apiBase() + url, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined });
     const j = await API._parse(r);
-    if (!j.success) throw new Error(j.error || 'Request failed');
+    if (!j.success) throw new Error(j.detail || j.error || ('Request failed (HTTP ' + r.status + ')'));
     return j.data;
   },
   del: async (url) => {
     const r = await API._fetch(apiBase() + url, { method: 'DELETE' });
     const j = await API._parse(r);
-    if (!j.success) throw new Error(j.error || 'Request failed');
+    if (!j.success) throw new Error(j.detail || j.error || ('Request failed (HTTP ' + r.status + ')'));
     return j.data;
   },
   // multipart 上传：不手动设 Content-Type（浏览器自动带 boundary）
   upload: async (url, formData) => {
     const r = await API._fetch(apiBase() + url, { method: 'POST', body: formData });
     const j = await API._parse(r);
-    if (!j.success) throw new Error(j.error || 'Request failed');
+    if (!j.success) throw new Error(j.detail || j.error || ('Request failed (HTTP ' + r.status + ')'));
     return j.data;
   }
 };

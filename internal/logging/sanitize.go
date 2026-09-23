@@ -46,7 +46,10 @@ var (
 		"xsrf_token":          {},
 	}
 	bearerTokenRegex      = regexp.MustCompile(`(?i)\bBearer[ \t\r\n]+[^\s,;&"']+`)
-	namedSecretRegex      = regexp.MustCompile(`(?i)(["']?)\b(` + sensitiveFieldPattern() + `)(["']?)([ \t]*[:=][ \t]*)(Bearer[ \t\r\n]+[^\s,;&"']+|Basic[ \t\r\n]+[^\s,;&"']+|"(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?|[^,;&"'\n]+)`)
+	// 值分支顺序有讲究：**先**匹配「成对闭合引号（允许跨行）」，再匹配「未闭合引号
+	// （不允许跨行，用于兜住漏写右引号的情形）」。此前只保留后者，导致
+	// `token="abc\ndef"` 这类跨行引号值只掩到行尾，换行后的明文残留在日志里。
+	namedSecretRegex      = regexp.MustCompile(`(?i)(["']?)\b(` + sensitiveFieldPattern() + `)(["']?)([ \t]*[:=][ \t]*)(Bearer[ \t\r\n]+[^\s,;&"']+|Basic[ \t\r\n]+[^\s,;&"']+|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\\n])*|'(?:\\.|[^'\\\n])*|[^,;&"'\n]+)`)
 	absoluteURLRegex      = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s<>"']+`)
 	rootlessUserinfoRegex = regexp.MustCompile(`\b[A-Za-z0-9._~%!$&'()*+,;=:/-]+:[^@\s,;&"'\]]*@[^\s,;&"']+`)
 	maskedSecretRegex     = regexp.MustCompile(`^\[redacted:[0-9a-f]{8,64}\]$`)

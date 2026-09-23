@@ -283,9 +283,14 @@ func (pd *ProfileDownloader) syncUserDirectory(profile *ProfileInfo, userTitle, 
 		if err != nil {
 			return "", err
 		}
-		oldUserDir, err = pathEntity.Path()
-		if err != nil {
-			return "", err
+		// 空名遗留记录没有可寻址的旧目录：对 "" 调 Path() 必然报错，而这里提前
+		// 返回会让下方的 entity.Sync 自愈迁移永远跑不到（批量下载与 API 改名路径
+		// 都能自愈，只有 profile 路径被卡住并反复告警）。oldUserDir 仅用于改名日志。
+		if oldName != "" {
+			oldUserDir, err = pathEntity.Path()
+			if err != nil {
+				return "", err
+			}
 		}
 	}
 

@@ -136,8 +136,8 @@ type ListProfileTaskData struct {
 type APIResponse struct {
 	Success bool        `json:"success"`
 	Data    interface{} `json:"data,omitempty"`
-	Error   string      `json:"error,omitempty"`
-	Detail  string      `json:"detail,omitempty"`
+	Error   string      `json:"error,omitempty"`  // 面向用户的通用消息
+	Detail  string      `json:"detail,omitempty"` // 面向用户的补充说明；前端按 detail || error 取用，禁止放原始 err.Error()
 }
 
 // NewSuccessResponse 创建成功响应
@@ -156,8 +156,10 @@ func NewErrorResponse(err string) APIResponse {
 	}
 }
 
-// NewErrorResponseWithDetail 创建带调试细节的错误响应
-// Error 为面向用户的通用消息，Detail 携带调试信息（不暴露给最终用户 UI）
+// NewErrorResponseWithDetail 创建带用户补充说明的错误响应。
+// Error 为面向用户的通用消息；Detail 为面向用户的补充说明（例如 409 时说明"统计字段已保存"），
+// 前端按 detail || error 的顺序取用，detail 缺失时回退到 Error。
+// 严禁把原始 err.Error() 放进 Detail：它不是用户可见文案。
 func NewErrorResponseWithDetail(err string, detail string) APIResponse {
 	return APIResponse{
 		Success: false,

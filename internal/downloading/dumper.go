@@ -2,7 +2,6 @@ package downloading
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -135,6 +134,7 @@ func (td *TweetDumper) Merge(other *TweetDumper) {
 
 func (td *TweetDumper) GetTotal(db *sqlx.DB) ([]*TweetInEntity, error) {
 	results := make([]*TweetInEntity, 0, td.count)
+	var staleEntities []int
 
 	for k, v := range td.data {
 		e, err := database.GetUserEntity(db, k)
@@ -143,13 +143,28 @@ func (td *TweetDumper) GetTotal(db *sqlx.DB) ([]*TweetInEntity, error) {
 			return nil, err
 		}
 		if e == nil {
-			return nil, fmt.Errorf("entity %d does not exist", k)
+			// 实体行已被删除（用户在数据台删除用户/实体）——这是可自愈的陈旧项。
+			// 若在这里返回致命错误，重试入口会在任何下载动作之前就失败，
+			// 其余仍可重试的推文一条也处理不到，且失败列表永远清不干净。
+			log.Warnf("[download] Dumper entry dropped reason=entity_deleted entity_id=%d tweets=%d", k, len(v))
+			staleEntities = append(staleEntities, k)
+			continue
 		}
 
 		ue := entity.NewUserEntityFromRecord(db, e)
 		for _, tw := range v {
 			results = append(results, &TweetInEntity{Tweet: tw, Entity: ue})
 		}
+	}
+
+	// 摘除陈旧实体（在遍历之后删除，避免边遍历边改 map）。
+	for _, k := range staleEntities {
+		td.count -= len(td.set[k])
+		delete(td.data, k)
+		delete(td.set, k)
+	}
+	if td.count < 0 {
+		td.count = 0
 	}
 	return results, nil
 }
