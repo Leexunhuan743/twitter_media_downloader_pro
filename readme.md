@@ -191,7 +191,16 @@ GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o tmdp-macos .
 | **Docker Hub**（推荐） | `docker.io/leeexx00/tmdp:<tag>` |
 | **GHCR** | `ghcr.io/leexunhuan743/twitter_media_downloader_pro:<tag>` |
 
-推送 `v*` tag 即触发构建：同时推送与 tag 同名的镜像标签（如 `:3.8.0`）并把 `:latest` 指向该版本。生产环境仍建议固定版本标签，避免 `:latest` 变化带来意外升级：
+推送 `v*` tag 会跑完整发布流水线（校验 → 各平台二进制 → 镜像 → GitHub Release）。同一个版本会推送多个镜像标签：
+
+| 标签 | 例子 | 含义 |
+| --- | --- | --- |
+| 版本号 | `3.8.0` | 精确版本，生产环境推荐固定用它 |
+| 小版本 | `3.8` | 跟随 `3.8.x` 的最新补丁 |
+| tag 同名 | `v3.8.0` | 与 git tag 一致的历史兼容别名 |
+| `latest` | `latest` | 最近一个正式版本；预发布 tag（如 `v3.7.3-pre.1`）不会移动它 |
+
+预发布 tag（名称含 `-`）只发布 GitHub pre-release 和对应版本号镜像，不更新 `latest` 与小版本别名：
 
 ```bash
 # Docker Hub
