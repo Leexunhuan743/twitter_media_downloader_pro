@@ -4,9 +4,6 @@ on:
   push:
     tags:
       - "v*"
-    paths-ignore:
-      - "**/*.md"
-      - "doc/**"
   workflow_dispatch:
 
 permissions:
@@ -59,7 +56,7 @@ jobs:
             ${{ steps.prep.outputs.image_dockerhub }}
           tags: |
             type=ref,event=tag
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
