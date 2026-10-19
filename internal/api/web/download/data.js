@@ -15,8 +15,7 @@
         statsLabel: '数据概览',
         statsError: '统计数据加载失败',
         switchTo: '切换到{name}',
-        tabsLabel: '数据表',
-        tabUsers: '用户',
+            tabUsers: '用户',
         tabLists: '列表',
         tabUserEntities: '用户媒体',
         tabListEntities: '列表媒体',
@@ -112,8 +111,7 @@
         statsLabel: 'Data overview',
         statsError: 'Could not load database stats',
         switchTo: 'Switch to {name}',
-        tabsLabel: 'Data tables',
-        tabUsers: 'Users',
+            tabUsers: 'Users',
         tabLists: 'Lists',
         tabUserEntities: 'User media',
         tabListEntities: 'List media',
@@ -217,9 +215,6 @@
 .data-stat[aria-pressed="true"] .data-stat__label,.data-stat[aria-pressed="true"] .data-stat__value{color:var(--accent)}
 .data-stats-error{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}
 .data-card{padding:16px 16px 12px}
-.data-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
-.data-tab{display:inline-flex;align-items:center;gap:7px;min-height:34px}
-.data-tab .count{min-width:18px;height:18px;padding:0 6px;font-size:11px}
 .data-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px}
 .data-search{position:relative;display:flex;align-items:center;flex:1 1 220px;min-width:180px}
 .data-search svg{position:absolute;left:10px;width:15px;height:15px;color:var(--muted);pointer-events:none}
@@ -291,8 +286,6 @@
   .data-num{width:100%}
   .data-refresh{flex:1 1 auto;min-height:40px}
   .data-reset{min-height:40px}
-  .data-tabs{flex-wrap:wrap;gap:6px}
-  .data-tab{flex:0 1 auto;min-height:40px;padding:0 12px}
   .data-tablewrap{overflow:visible;border:0;background:transparent}
   .data-table,.data-table tbody{display:block;width:100%}
   .data-table thead{display:none}
@@ -457,8 +450,6 @@
       fields: []
     }
   };
-
-  var TAB_ORDER = ['users', 'lists', 'userEntities', 'listEntities', 'userLinks', 'previousNames'];
 
   var STATS = [
     { tab: 'users', key: 'users' },
@@ -668,7 +659,6 @@
       '</div>' +
       '<p class="notice notice--danger data-stats-error" data-role="stats-error" hidden></p>' +
       '<section class="card mt-16 data-card">' +
-        '<div class="data-tabs" data-role="tabs" role="group" aria-label="' + esc(t('tabsLabel')) + '"></div>' +
         '<div class="data-toolbar" data-role="toolbar"></div>' +
         '<div class="data-result" data-role="table"></div>' +
         '<div class="pager" data-role="pager"></div>' +
@@ -751,8 +741,6 @@
     STATS.forEach(function (item) {
       var valueEl = host.querySelector('[data-stat="' + item.tab + '"]');
       if (valueEl) valueEl.textContent = stats ? fmtNum(stats[item.key]) : '—';
-      var countEl = host.querySelector('[data-tab-count="' + item.tab + '"]');
-      if (countEl) countEl.textContent = stats ? fmtNum(stats[item.key]) : '—';
     });
     var statBtns = host.querySelectorAll('[data-stat-tab]');
     for (var i = 0; i < statBtns.length; i++) {
@@ -781,30 +769,6 @@
       st.statsError = (err && err.message) || T.t('common.fetchFailed');
       renderStats();
     });
-  }
-
-  /* ---------------- 子标签 ---------------- */
-
-  function renderTabs() {
-    if (!host) return;
-    var box = host.querySelector('[data-role="tabs"]');
-    if (!box) return;
-    box.innerHTML = TAB_ORDER.map(function (id) {
-      var active = st.tab === id;
-      return '<button type="button" class="chip data-tab" aria-pressed="' + (active ? 'true' : 'false') +
-        '" data-tab="' + id + '">' +
-        '<span>' + esc(t(TABS[id].label)) + '</span>' +
-        '<span class="count" data-tab-count="' + id + '">' + (st.stats ? esc(fmtNum(st.stats[statKeyOf(id)])) : '—') + '</span>' +
-        '</button>';
-    }).join('');
-    renderStats();
-  }
-
-  function statKeyOf(tab) {
-    for (var i = 0; i < STATS.length; i++) {
-      if (STATS[i].tab === tab) return STATS[i].key;
-    }
-    return tab;
   }
 
   /* ---------------- 工具栏 ---------------- */
@@ -1069,10 +1033,10 @@
       tabState(id).filters = filters;
       tabState(id).page = 1;
     }
-    renderTabs();
     renderToolbar();
     renderTable();
     renderPager();
+    renderStats();
     loadTab(id);
   }
 
@@ -1781,7 +1745,6 @@
       detailSeq = 0;
       host.innerHTML = markup();
       bind();
-      renderTabs();
       renderToolbar();
       renderTable();
       renderPager();
