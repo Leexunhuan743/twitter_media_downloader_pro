@@ -53,11 +53,6 @@ func SetClientAuth(client *resty.Client, authToken string, ct0 string) {
 type LoginOptions struct {
 }
 
-// Login 登录Twitter
-func Login(ctx context.Context, authToken string, ct0 string) (*resty.Client, string, error) {
-	return LoginWithOptions(ctx, authToken, ct0, LoginOptions{})
-}
-
 // LoginWithOptions 使用选项登录Twitter
 func LoginWithOptions(ctx context.Context, authToken string, ct0 string, opts LoginOptions) (*resty.Client, string, error) {
 	client := resty.New()
@@ -566,19 +561,6 @@ func allAdditionalInCooldown(additional []*resty.Client) bool {
 	return true
 }
 
-func setGlobalCooldown(d time.Duration) {
-	if d <= 0 {
-		return
-	}
-	until := time.Now().Add(d)
-	globalCooldownMu.Lock()
-	if until.After(globalCooldownUntil) {
-		globalCooldownUntil = until
-	}
-	globalCooldownMu.Unlock()
-	log.Warnf("[twitter] Global cooldown until=%s dur=%s", until.Format(time.RFC3339), d.Round(time.Second))
-}
-
 func armGlobalCooldownIfIdle(d time.Duration) {
 	if d <= 0 {
 		return
@@ -620,57 +602,6 @@ func waitGlobalCooldown(ctx context.Context) error {
 func GetClientRateLimiter(cli *resty.Client) *rateLimiter {
 	if v, ok := clientRateLimiters.Load(cli); ok {
 		return v.(*rateLimiter)
-	}
-	return nil
-}
-
-var showStateToken = make(chan struct{}, 1)
-
-// 选择一个请求指定端点不会阻塞的客户端
-func SelectClient(ctx context.Context, clients []*resty.Client, path string) *resty.Client {
-	if err := waitGlobalCooldown(ctx); err != nil {
-		return nil
-	}
-	for ctx.Err() == nil {
-		errs := 0
-		for _, client := range clients {
-			if GetClientError(client) != nil {
-				errs++
-				continue
-			}
-			if clientInCooldown(client) {
-				log.Debugf("[rate-limit] Skipping cooling client endpoint=%s account=%s", endpointForLog(path), clientNameForLog(client))
-				continue
-			}
-
-			rl := GetClientRateLimiter(client)
-			if rl == nil || !rl.wouldBlock(path) {
-				return client
-			}
-		}
-
-		if errs == len(clients) {
-			return nil // no client available
-		}
-
-		select {
-		default:
-		case showStateToken <- struct{}{}:
-			defer func() { <-showStateToken }()
-			log.Warnf("[rate-limit] Waiting for available client endpoint=%s total=%d errors=%d", endpointForLog(path), len(clients), errs)
-			origin, err := utils.GetConsoleTitle()
-			if err == nil {
-				defer utils.SetConsoleTitle(origin)
-				utils.SetConsoleTitle("waiting for any client to wake up")
-			} else {
-				log.Debugf("[rate-limit] Console title read failed error=%q", errorForLog(err))
-			}
-		}
-
-		select {
-		case <-ctx.Done():
-		case <-time.After(3 * time.Second):
-		}
 	}
 	return nil
 }

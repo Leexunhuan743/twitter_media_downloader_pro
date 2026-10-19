@@ -967,58 +967,37 @@ func (s *Server) handleDeleteTask(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRetryTask(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("task_id")
 
-	// 先获取原任务快照用于重建 run 函数
-	original, ok := s.taskManager.GetTask(taskID)
-	if !ok {
+	newTaskID, code := s.retryTask(taskID)
+	if code != "" {
+		s.writeRetryTaskError(w, code)
+		return
+	}
+
+	status := TaskStatusQueued
+	if task, ok := s.taskManager.GetTask(newTaskID); ok {
+		status = task.Status
+	}
+	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
+		"message":     "Task retried",
+		"task_id":     newTaskID,
+		"status":      status,
+		"original_id": taskID,
+	}))
+}
+
+// writeRetryTaskError 把 retryTask 的失败码映射为 HTTP 状态与错误文案。
+func (s *Server) writeRetryTaskError(w http.ResponseWriter, code string) {
+	switch code {
+	case "not_found":
 		s.writeError(w, http.StatusNotFound, "Task not found")
-		return
-	}
-
-	if original.Status != TaskStatusFailed && original.Status != TaskStatusCancelled {
+	case "not_retryable":
 		s.writeError(w, http.StatusConflict, "Task cannot be retried (not in failed or cancelled status)")
-		return
-	}
-
-	// 上传类任务（JsonFile/JsonFolder）的临时文件在任务结束后会被清理，不可重试
-	if d, ok := original.Data.(*JsonFileDownloadTaskData); ok && d.FromUpload {
-		s.writeError(w, http.StatusConflict, "Uploaded JSON task cannot be retried (uploaded files are no longer available)")
-		return
-	}
-	if d, ok := original.Data.(*JsonFolderDownloadTaskData); ok && d.FromUpload {
-		s.writeError(w, http.StatusConflict, "Uploaded LoongTweet task cannot be retried (uploaded files are no longer available)")
-		return
-	}
-
-	runFunc, err := s.buildTaskRunFunc(original)
-	if err != nil {
-		log.Errorf("[tasks] Run function build failed task_id=%s type=%s error=%q", original.ID, original.Type, err.Error())
+	case "not_retryable_upload":
+		s.writeError(w, http.StatusConflict, "Uploaded task cannot be retried (uploaded files are no longer available)")
+	case "invalid_task":
 		s.writeError(w, http.StatusBadRequest, "Invalid task type")
-		return
-	}
-
-	newTask, result := s.taskManager.RetryTask(taskID)
-	switch result {
-	case RetryTaskResultSuccess:
-		newTaskID := newTask.ID
-		status := newTask.Status
-		if err := s.enqueueTask(newTask, runFunc); err != nil {
-			httpStatus := http.StatusServiceUnavailable
-			if !errors.Is(err, ErrQueueClosed) {
-				httpStatus = http.StatusInternalServerError
-			}
-			s.writeError(w, httpStatus, "Task rejected during shutdown")
-			return
-		}
-		s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
-			"message":     "Task retried",
-			"task_id":     newTaskID,
-			"status":      status,
-			"original_id": taskID,
-		}))
-	case RetryTaskResultNotFound:
-		s.writeError(w, http.StatusNotFound, "Task not found")
-	case RetryTaskResultNotRetryable:
-		s.writeError(w, http.StatusConflict, "Task cannot be retried (not in failed or cancelled status)")
+	case "queue_closed":
+		s.writeError(w, http.StatusServiceUnavailable, "Task rejected during shutdown")
 	default:
 		s.writeError(w, http.StatusInternalServerError, "Failed to retry task")
 	}

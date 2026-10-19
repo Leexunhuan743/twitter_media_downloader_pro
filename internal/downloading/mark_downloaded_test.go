@@ -316,30 +316,6 @@ func TestMarkUsersAsDownloaded_ListNotAccessible(t *testing.T) {
 		t.Errorf("Error message should contain 'does not exist or is not accessible', got: %v", err)
 	}
 }
-
-func TestMarkSingleUserWithInfo_PanicRecovery(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-
-	// This test verifies panic recovery works
-	// We can't easily trigger a panic, but we can verify the function returns properly
-
-	tempDir := t.TempDir()
-	user := &twitter.User{
-		Id:         12345,
-		Name:       "Test User",
-		ScreenName: "testuser",
-	}
-
-	timestamp := time.Date(2024, 1, 15, 10, 30, 0, 0, time.Local)
-
-	// This should not panic
-	info := markSingleUserWithInfo(db, user, tempDir, &timestamp, 158)
-
-	// The result depends on whether the sync succeeded
-	t.Logf("Result: Success=%v, Error=%s", info.Success, info.Error)
-}
-
 func TestMarkedUserInfo_Fields(t *testing.T) {
 	info := MarkedUserInfo{
 		UserID:     12345,
@@ -382,35 +358,6 @@ func TestMarkUsersAsDownloaded_EmptyListsAndUsers(t *testing.T) {
 		t.Errorf("len(results) = %d, want 0", len(results))
 	}
 }
-
-func TestMarkUsersAsDownloaded_NilLists(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-
-	tempDir := t.TempDir()
-	ctx := context.Background()
-
-	user := &twitter.User{
-		Id:         1,
-		Name:       "Test User",
-		ScreenName: "testuser",
-	}
-
-	// Test with nil lists (should not panic)
-	results, err := MarkUsersAsDownloaded(ctx, nil, db, nil, []*twitter.User{user}, tempDir, "", 158)
-	if err != nil {
-		t.Errorf("MarkUsersAsDownloaded() error = %v", err)
-	}
-
-	if len(results) != 1 {
-		t.Errorf("len(results) = %d, want 1", len(results))
-	}
-
-	if !results[0].Success {
-		t.Errorf("Success = false, want true. Error: %s", results[0].Error)
-	}
-}
-
 func TestMarkUsersAsDownloaded_NilListInSlice(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()

@@ -13,7 +13,7 @@ import (
 func setupLstTestDB(t *testing.T) *sqlx.DB {
 	db, err := sqlx.Connect(database.DriverName, database.MemoryDSN(true))
 	require.NoError(t, err)
-		require.NoError(t, database.CreateTables(db))
+	require.NoError(t, database.CreateTables(db))
 	return db
 }
 
@@ -148,16 +148,4 @@ func TestLst_CRUD(t *testing.T) {
 		assert.Equal(t, uint64(999), retrieved.OwnerUserId)
 		assert.Equal(t, "Updated Lifecycle List", retrieved.Name)
 	})
-}
-
-func TestLst_Struct(t *testing.T) {
-	lst := database.Lst{
-		Id:          1,
-		Name:        "Test List",
-		OwnerUserId: 100,
-	}
-
-	assert.Equal(t, uint64(1), lst.Id)
-	assert.Equal(t, "Test List", lst.Name)
-	assert.Equal(t, uint64(100), lst.OwnerUserId)
 }

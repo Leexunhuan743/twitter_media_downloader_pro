@@ -91,7 +91,8 @@ const authBearerPrefix = "Bearer "
 var publicPathPrefixes = []string{
 	"/api/v1/health",
 	"/api/v1/auth/login",   // login 端点需要在没有 JWT 时也能被调用
-	"/api/v1/config/theme", // theme 切换器由内联 JS 调用，不经过 api 对象
+	"/api/v1/config/theme",       // theme 切换器由内联 JS 调用，不经过 api 对象
+	"/api/v1/download/context",   // 下载页首屏就绪状态：未登录时也需要拿认证开关
 	"/static/",
 }
 

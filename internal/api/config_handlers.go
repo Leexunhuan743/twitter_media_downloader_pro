@@ -314,7 +314,7 @@ func (s *Server) handleSaveConfigFields(w http.ResponseWriter, r *http.Request) 
 	log.Infof("[config] Saved operation=save_fields path=%q backup=%q", logging.Path(confPath), logging.Path(backupName))
 
 	// 检测 api_key 是否被修改，以确定生效消息
-	// 使用生效值比较而非原始表单值，避免 web2 空字符串误判为变更
+	// 使用生效值比较而非原始表单值，避免空字符串误判为变更
 	apiKeyChanged := newConf.APIKey != s.config.APIKey
 
 	*s.config = *newConf

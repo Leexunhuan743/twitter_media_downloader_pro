@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>TMD · 下载台</title>
+<link rel="stylesheet" href="/static/styles.css">
+<script>
+  // 首帧前应用主题，避免闪白
+  (function () {
+    try {
+      var t = localStorage.getItem("tmd.theme") || "auto";
+      var dark = t === "dark" || (t === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.dataset.theme = t;
+      document.documentElement.dataset.resolved = dark ? "dark" : "light";
+      document.documentElement.style.colorScheme = dark ? "dark" : "light";
+    } catch (e) {}
+  })();
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main" data-i18n="a11y.skip">跳到主内容</a>
+
+<header class="appbar">
+  <div class="appbar__brand">
+    <span class="logo" aria-hidden="true">
+      <svg viewBox="0 0 20 20" fill="none"><path d="M6 5.5h8M10 5.5V15" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M4 15h12" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" opacity=".45"/></svg>
+    </span>
+    <span class="brand">
+      <b>TMD</b>
+      <span class="brand__sub"><span data-i18n="brand.name">下载台</span><span class="brand__dot">·</span><em data-i18n="brand.latin">download desk</em></span>
+    </span>
+  </div>
+
+  <div class="appbar__status" id="status-line">
+    <span class="status" id="status-health" data-state="loading"><span data-i18n="status.checking">健康检查中…</span></span>
+    <span class="status" id="status-queue" data-i18n="status.queueEmpty">队列 —</span>
+    <span class="status" id="status-auth" data-i18n="status.authUnknown">认证 —</span>
+  </div>
+
+  <div class="appbar__controls">
+    <button type="button" class="btn btn--ghost btn--sm" id="btn-auth" hidden data-i18n="status.changeKey">切换密钥</button>
+
+    <div class="seg" id="theme-seg" role="group" data-i18n-aria="theme.group" aria-label="外观">
+      <button type="button" class="seg__btn" data-theme-set="light" data-i18n-aria="theme.light" aria-label="浅色" title="浅色">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3.1"/><g stroke-linecap="round"><path d="M8 1.6v1.8M8 12.6v1.8M1.6 8h1.8M12.6 8h1.8M3.5 3.5l1.3 1.3M11.2 11.2l1.3 1.3M12.5 3.5l-1.3 1.3M4.8 11.2l-1.3 1.3"/></g></svg>
+      </button>
+      <button type="button" class="seg__btn" data-theme-set="auto" data-i18n-aria="theme.auto" aria-label="跟随系统" title="跟随系统">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.4" y="3.4" width="11.2" height="7.6" rx="1.6"/><path d="M5.8 13.2h4.4" stroke-linecap="round"/></svg>
+      </button>
+      <button type="button" class="seg__btn" data-theme-set="dark" data-i18n-aria="theme.dark" aria-label="深色" title="深色">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 9.4A5.4 5.4 0 0 1 6.6 3a5.4 5.4 0 1 0 6.4 6.4z"/></svg>
+      </button>
+    </div>
+
+    <div class="seg seg--lang" id="lang-seg" role="group" data-i18n-aria="lang.group" aria-label="语言">
+      <button type="button" class="seg__btn" data-lang-set="zh-CN">中</button>
+      <button type="button" class="seg__btn" data-lang-set="en">EN</button>
+    </div>
+  </div>
+</header>
+
+<nav class="subnav" aria-label="主导航" data-i18n-aria="nav.group">
+  <div class="subnav__inner" id="nav">
+    <a class="tab" href="/" data-nav="overview" data-i18n="nav.overview">总览</a>
+    <a class="tab" href="/tasks" data-nav="tasks" data-i18n="nav.tasks">下载</a>
+    <a class="tab" href="/data" data-nav="data" data-i18n="nav.data">数据</a>
+    <a class="tab" href="/schedules" data-nav="schedules" data-i18n="nav.schedules">计划</a>
+    <a class="tab" href="/logs" data-nav="logs" data-i18n="nav.logs">日志</a>
+    <a class="tab" href="/system" data-nav="system" data-i18n="nav.system">系统</a>
+  </div>
+</nav>
+
+<div class="banner" id="shutdown-banner" role="alert" hidden data-i18n="banner.shutdown">
+  服务器正在关闭，任务已停止接收。恢复后请刷新页面。
+</div>
+
+<main class="page" id="main">
+
+  <section class="view" id="view-overview" data-view="overview" hidden></section>
+
+  <section class="view" id="view-tasks" data-view="tasks">
+    <div class="view-head">
+      <div>
+        <h1 class="view-title" data-i18n="tasksView.title">下载</h1>
+        <p class="view-sub" data-i18n="tasksView.sub">提交下载、标记已下载与 JSON 上传；进行中与历史任务都在这一页。</p>
+      </div>
+    </div>
+
+    <div class="layout">
+      <section class="card card--composer" aria-labelledby="composer-title">
+        <header class="card__head">
+          <h2 class="card__title" id="composer-title" data-i18n="composer.title">新建下载</h2>
+        </header>
+
+        <form id="dispatch-form" novalidate autocomplete="off">
+          <div class="field">
+            <div class="field__head">
+              <label class="visually-hidden" for="target-input" data-i18n="step.target">目标</label>
+              <span class="tag" id="target-tag" hidden></span>
+            </div>
+            <div class="target">
+              <textarea id="target-input" rows="2" spellcheck="false" autocapitalize="off" aria-describedby="parse-hint"
+                data-i18n-placeholder="target.placeholder" placeholder="@handle、x.com 链接、list id、JSON 路径，可多行"></textarea>
+            </div>
+            <p class="field__help" id="parse-hint" aria-live="polite" data-i18n="target.hint">支持 @screen_name、x.com/twitter.com 链接、数字 list id、JSON 文件路径</p>
+          </div>
+
+          <div class="field">
+            <span class="field__label" data-i18n="step.mode">方式</span>
+            <div class="segmented" id="mode-group" role="radiogroup" data-i18n-aria="mode.group" aria-label="下载方式"></div>
+          </div>
+
+          <div class="field" id="options-field">
+            <span class="field__label" data-i18n="step.options">选项</span>
+            <div class="options" id="options-group"></div>
+          </div>
+
+          <div class="field" id="upload-field" hidden>
+            <span class="field__label" data-i18n="upload.label">或上传 .json 文件</span>
+            <input type="file" id="json-files" accept=".json,application/json" multiple>
+            <p class="field-box__help" data-i18n="upload.help">单文件 ≤400MB，仅 .json；上传生成的任务不可重试。</p>
+          </div>
+
+          <div class="field" id="mark-field">
+            <span class="field__label" data-i18n="mark.label">动作</span>
+            <label class="option" title="mark">
+              <input type="checkbox" id="mark-toggle">
+              <span class="option__box" aria-hidden="true"></span>
+              <span data-i18n="mark.toggle">仅标记为已下载（不下载媒体）</span>
+            </label>
+            <div class="mark-time" id="mark-time-wrap" hidden>
+              <label class="field-box__label" for="mark-time" data-i18n="mark.timeLabel">标记时间（可选）</label>
+              <input class="input" type="datetime-local" id="mark-time">
+              <p class="field-box__help" data-i18n="mark.timeHelp">留空表示标记到此刻；接口不支持「全量标记」。</p>
+            </div>
+          </div>
+
+          <div class="composer__foot">
+            <p class="form-error" id="form-error" role="alert" hidden></p>
+            <span class="kbd-hint" data-i18n="submit.note">⌘/Ctrl + Enter</span>
+            <button type="submit" class="btn btn--primary btn--lg" id="submit-btn">
+              <span class="btn__text" data-i18n="submit.go">开始下载</span>
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card card--ledger" aria-labelledby="ledger-title">
+        <header class="card__head">
+          <h2 class="card__title" id="ledger-title" data-i18n="ledger.title">台账</h2>
+          <label class="search">
+            <svg class="search__icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7.2" cy="7.2" r="4.2"/><path d="M10.4 10.4L14 14" stroke-linecap="round"/></svg>
+            <span class="visually-hidden" data-i18n="ledger.searchLabel">搜索台账</span>
+            <input type="search" id="ledger-search" data-i18n-placeholder="ledger.search" placeholder="搜索目标 / 任务 ID" autocomplete="off">
+          </label>
+        </header>
+        <div class="filters" id="ledger-filters" role="group" data-i18n-aria="ledger.filterGroup" aria-label="按状态过滤"></div>
+        <div class="ledger-actions">
+          <button type="button" class="btn btn--ghost btn--sm" id="btn-batch-retry" disabled data-i18n="ledger.batchRetry">重试失败</button>
+          <button type="button" class="btn btn--ghost btn--sm btn--danger" id="btn-batch-delete" disabled data-i18n="ledger.batchDelete">清理终态</button>
+        </div>
+        <div class="ledger" id="ledger"></div>
+        <p class="empty" id="ledger-empty" hidden data-i18n="ledger.empty">没有符合条件的任务记录。</p>
+        <button type="button" class="btn btn--ghost btn--wide" id="ledger-more" hidden data-i18n="ledger.more">显示更多记录</button>
+      </section>
+
+      <aside class="rail">
+        <section class="card card--queue" aria-labelledby="queue-title">
+          <header class="card__head">
+            <h2 class="card__title" id="queue-title">
+              <span data-i18n="queue.title">进行中</span>
+              <span class="count" id="queue-count">0</span>
+            </h2>
+            <div class="card__actions">
+              <button type="button" class="btn btn--ghost btn--sm" id="btn-cancel-queued" disabled data-i18n="queue.cancelQueued">取消排队</button>
+              <button type="button" class="btn btn--ghost btn--sm" id="btn-refresh" data-i18n="queue.refresh">刷新</button>
+            </div>
+          </header>
+          <div class="queue" id="queue" aria-live="polite" aria-relevant="additions text"></div>
+          <p class="empty" id="queue-empty" data-i18n="queue.empty">还没有任务。在上面贴一个目标，按 Enter 开始。</p>
+        </section>
+
+        <section class="card card--errors" id="errors-strip" aria-labelledby="errors-title" hidden>
+          <header class="card__head">
+            <h2 class="card__title" id="errors-title" data-i18n="errors.title">失败记录</h2>
+            <span class="card__meta" id="errors-summary"></span>
+          </header>
+          <div class="card__actions">
+            <button type="button" class="btn btn--ghost btn--sm" id="btn-retry-all" data-i18n="errors.retryAll">全部重试</button>
+            <button type="button" class="btn btn--ghost btn--sm btn--danger" id="btn-clear-errors" data-i18n="errors.clear">清除记录</button>
+          </div>
+        </section>
+      </aside>
+    </div>
+  </section>
+
+  <section class="view" id="view-data" data-view="data" hidden></section>
+  <section class="view" id="view-schedules" data-view="schedules" hidden></section>
+  <section class="view" id="view-logs" data-view="logs" hidden></section>
+  <section class="view" id="view-system" data-view="system" hidden></section>
+
+  <footer class="footer">
+    <span id="footer-root" data-i18n="footer.root">根目录 —</span>
+    <span id="footer-db" data-i18n="footer.db">数据库 —</span>
+    <span id="footer-version" data-i18n="footer.version">版本 —</span>
+    <span id="footer-note" data-i18n="footer.note">TMD 下载台 · 单页零构建</span>
+  </footer>
+</main>
+
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+<dialog class="modal modal--wide" id="task-dialog" aria-labelledby="task-title">
+  <div class="modal__form">
+    <div class="modal__head">
+      <h2 class="modal__title" id="task-title" data-i18n="detail.title">任务详情</h2>
+      <button type="button" class="modal__close" id="task-close" aria-label="关闭">×</button>
+    </div>
+    <div id="task-body"></div>
+    <div class="modal__actions">
+      <button type="button" class="btn btn--ghost" id="task-dialog-close" data-i18n="detail.close">关闭</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog class="auth" id="auth-dialog" aria-labelledby="auth-title">
+  <form method="dialog" class="auth__form" id="auth-form">
+    <h2 class="auth__title" id="auth-title" data-i18n="auth.title">需要 API Key</h2>
+    <p class="auth__desc" data-i18n="auth.desc">当前服务已开启访问认证。输入配置里的 api_key 换取会话令牌，令牌只保存在本机浏览器。</p>
+    <label class="auth__label" for="auth-key" data-i18n="auth.label">API Key</label>
+    <input class="auth__input" id="auth-key" type="password" autocomplete="current-password" spellcheck="false" data-i18n-placeholder="auth.placeholder" placeholder="粘贴 api_key">
+    <p class="auth__error" id="auth-error" role="alert" hidden></p>
+    <div class="auth__actions">
+      <button type="button" class="btn btn--ghost" id="auth-cancel" data-i18n="auth.cancel">取消</button>
+      <button type="submit" class="btn btn--primary" id="auth-submit" data-i18n="auth.submit">登录</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/static/app.js"></script>
+<script src="/static/overview.js"></script>
+<script src="/static/data.js"></script>
+<script src="/static/schedules.js"></script>
+<script src="/static/logs.js"></script>
+<script src="/static/config.js"></script>
+</body>
+</html>

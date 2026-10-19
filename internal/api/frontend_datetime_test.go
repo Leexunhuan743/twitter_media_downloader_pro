@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// @lat: [[lat.md/api-server#API Server#Web UI#Shared Date-Time Contract]]
 func TestFrontendDateTimeRoundTrip(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {

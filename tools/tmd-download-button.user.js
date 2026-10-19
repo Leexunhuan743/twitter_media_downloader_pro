@@ -18,7 +18,6 @@
 (function () {
     'use strict';
 
-    // @lat: [[lat.md/api-server#API Server#Userscript Remote API Access]]
     const DEFAULT_API_URL = 'http://localhost:25556';
     const TMD_BTN_ID = 'tmd-download-btn';
     const INJECT_RETRY_INTERVAL = 1000;

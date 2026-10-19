@@ -170,52 +170,6 @@ func TestSyncListAndGetMembers_GetMembersError(t *testing.T) {
 		t.Error("syncListAndGetMembers() should return error when GetMembers fails")
 	}
 }
-
-func TestSyncListAndGetMembers_WithTwitterList(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-
-	tempDir := t.TempDir()
-	ctx := context.Background()
-
-	// This test uses a real twitter.List which requires mocking the API
-	// For now, we just verify the function signature is correct
-	list := &twitter.List{
-		Id:   12345,
-		Name: "Test List",
-		Creator: &twitter.User{
-			Id: 999,
-		},
-	}
-
-	// Since we can't mock the API call easily, this will likely fail
-	// but it verifies the code path
-	defer func() {
-		if r := recover(); r != nil {
-			t.Logf("Expected panic without real client: %v", r)
-		}
-	}()
-
-	_, _, err := syncListAndGetMembers(ctx, nil, db, list, tempDir, 158, nil)
-	// We expect an error since we don't have a real client
-	// but the important thing is it doesn't panic
-	t.Logf("Expected error without real client: %v", err)
-}
-
-func TestSyncList_NilList(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-
-	// Test with nil list - should handle gracefully
-	defer func() {
-		if r := recover(); r != nil {
-			t.Logf("syncList with nil list panicked (expected): %v", r)
-		}
-	}()
-
-	_ = syncList(db, nil)
-}
-
 func TestSyncListAndGetMembers_DirectoryCreation(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
@@ -252,44 +206,4 @@ func TestSyncListAndGetMembers_DirectoryCreation(t *testing.T) {
 			t.Errorf("Directory %s should exist", path)
 		}
 	}
-}
-
-func TestSyncList_InvalidDB(t *testing.T) {
-	list := &twitter.List{
-		Id:   12345,
-		Name: "Test",
-	}
-
-	// Test with nil DB - should panic
-	defer func() {
-		if r := recover(); r != nil {
-			t.Logf("syncList(nil, list) panicked as expected: %v", r)
-		}
-	}()
-
-	_ = syncList(nil, list)
-}
-
-func TestSyncListAndGetMembers_CancelledContext(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-
-	tempDir := t.TempDir()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
-	members := []*twitter.User{
-		{Id: 1, Name: "User 1", ScreenName: "user1"},
-	}
-
-	mockList := &MockList{
-		id:      12345,
-		name:    "Test List",
-		members: members,
-	}
-
-	_, _, err := syncListAndGetMembers(ctx, nil, db, mockList, tempDir, 158, nil)
-	// The function may or may not check context cancellation
-	// depending on implementation
-	t.Logf("Result with cancelled context: %v", err)
 }

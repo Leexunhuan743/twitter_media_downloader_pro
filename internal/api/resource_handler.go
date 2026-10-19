@@ -235,16 +235,6 @@ type userCascadeCount struct {
 	linkCount, entityCount, nameCount int
 }
 
-// countLstEntities 统计列表拥有的实体数（列表删除时逐个走实体生命周期）。
-// 计数失败返回 error：删除流程必须 fail-closed，不能返回 0 继续破坏性级联。
-func (s *Server) countLstEntities(id uint64) (int, error) {
-	var count int
-	if err := s.db.Get(&count, "SELECT COUNT(*) FROM lst_entities WHERE lst_id = ?", id); err != nil {
-		return 0, fmt.Errorf("count list entities for lst %d: %w", id, err)
-	}
-	return count, nil
-}
-
 // countUserCascade 统计删除用户时需要级联删除的记录数。
 // 任一计数失败返回 error：删除流程必须 fail-closed，不能 Warn+0 继续——
 // 否则只删一条实体、DelUser 事务删剩余行，留下无 journal 孤儿媒体目录。

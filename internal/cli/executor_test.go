@@ -479,29 +479,6 @@ func TestExecute_DefaultServiceDoesNotMutateDependencies(t *testing.T) {
 }
 
 // ==================== Dependencies 测试 ====================
-
-func TestDependencies_Struct(t *testing.T) {
-	client := resty.New()
-	db := &sqlx.DB{}
-	cfg := &config.Config{}
-
-	deps := &Dependencies{
-		Dependencies: service.Dependencies{
-			Client:            client,
-			AdditionalClients: []*resty.Client{client},
-			DB:                db,
-			Config:            cfg,
-		},
-		DownloadService: nil,
-	}
-
-	assert.Equal(t, client, deps.Client)
-	assert.Len(t, deps.AdditionalClients, 1)
-	assert.Equal(t, db, deps.DB)
-	assert.Equal(t, cfg, deps.Config)
-	assert.Nil(t, deps.DownloadService)
-}
-
 // ==================== SetClientLogger 测试 ====================
 
 func TestSetClientLogger(t *testing.T) {

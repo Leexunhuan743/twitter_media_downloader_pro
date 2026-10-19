@@ -115,13 +115,13 @@ func TestPathExists(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		setup    func() string
+		setup    func(t *testing.T) string
 		expected bool
 		wantErr  bool
 	}{
 		{
 			name: "存在的文件",
-			setup: func() string {
+			setup: func(t *testing.T) string {
 				f, _ := os.CreateTemp(tempDir, "exist_*.txt")
 				f.Close()
 				return f.Name()
@@ -131,7 +131,7 @@ func TestPathExists(t *testing.T) {
 		},
 		{
 			name: "存在的目录",
-			setup: func() string {
+			setup: func(t *testing.T) string {
 				d, _ := os.MkdirTemp(tempDir, "exist_dir")
 				return d
 			},
@@ -140,7 +140,7 @@ func TestPathExists(t *testing.T) {
 		},
 		{
 			name: "不存在的路径",
-			setup: func() string {
+			setup: func(t *testing.T) string {
 				return filepath.Join(tempDir, "non_existent_file.txt")
 			},
 			expected: false,
@@ -148,11 +148,14 @@ func TestPathExists(t *testing.T) {
 		},
 		{
 			name: "符号链接",
-			setup: func() string {
-				target, _ := os.CreateTemp(tempDir, "target_*.txt")
-				target.Close()
+			setup: func(t *testing.T) string {
+				target, err := os.CreateTemp(tempDir, "target_*.txt")
+				require.NoError(t, err)
+				require.NoError(t, target.Close())
 				link := filepath.Join(tempDir, "symlink.txt")
-				os.Symlink(target.Name(), link)
+				if err := os.Symlink(target.Name(), link); err != nil {
+					t.Skipf("symlink unsupported on this platform/user: %v", err)
+				}
 				return link
 			},
 			expected: true,
@@ -162,7 +165,7 @@ func TestPathExists(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path := tt.setup()
+			path := tt.setup(t)
 			exists, err := PathExists(path)
 			if tt.wantErr {
 				assert.Error(t, err)

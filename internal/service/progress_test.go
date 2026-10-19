@@ -8,96 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestProgress_Struct(t *testing.T) {
-	p := Progress{
-		Stage:     "downloading",
-		Total:     100,
-		Completed: 50,
-		Failed:    5,
-		Current:   "test_user",
-	}
-
-	assert.Equal(t, "downloading", p.Stage)
-	assert.Equal(t, 100, p.Total)
-	assert.Equal(t, 50, p.Completed)
-	assert.Equal(t, 5, p.Failed)
-	assert.Equal(t, "test_user", p.Current)
-}
-
-func TestProgress_AllStages(t *testing.T) {
-	stages := []string{
-		"syncing",
-		"downloading",
-		"retrying",
-		"profile",
-		"profile_warning",
-		"marking",
-		"completed",
-	}
-
-	for _, stage := range stages {
-		p := Progress{Stage: stage}
-		assert.Equal(t, stage, p.Stage)
-	}
-}
-
-func TestProgress_ZeroValues(t *testing.T) {
-	p := Progress{}
-
-	assert.Empty(t, p.Stage)
-	assert.Equal(t, 0, p.Total)
-	assert.Equal(t, 0, p.Completed)
-	assert.Equal(t, 0, p.Failed)
-	assert.Empty(t, p.Current)
-}
-
-func TestProgress_NegativeValues(t *testing.T) {
-	p := Progress{
-		Total:     -1,
-		Completed: -10,
-		Failed:    -5,
-	}
-
-	assert.Equal(t, -1, p.Total)
-	assert.Equal(t, -10, p.Completed)
-	assert.Equal(t, -5, p.Failed)
-}
-
-func TestResult_Struct(t *testing.T) {
-	r := Result{
-		Main: &MainResult{
-			Downloaded: 100,
-			Failed:     5,
-		},
-		Profile: &ProfileResult{
-			Downloaded: 8,
-			Failed:     1,
-			Versioned:  10,
-		},
-		Message: "Download completed successfully",
-	}
-
-	require := assert.New(t)
-	if require.NotNil(r.Main) {
-		require.Equal(100, r.Main.Downloaded)
-		require.Equal(5, r.Main.Failed)
-	}
-	if require.NotNil(r.Profile) {
-		require.Equal(8, r.Profile.Downloaded)
-		require.Equal(1, r.Profile.Failed)
-		require.Equal(10, r.Profile.Versioned)
-	}
-	assert.Equal(t, "Download completed successfully", r.Message)
-}
-
-func TestResult_ZeroValues(t *testing.T) {
-	r := Result{}
-
-	assert.Nil(t, r.Main)
-	assert.Nil(t, r.Profile)
-	assert.Empty(t, r.Message)
-}
-
 func TestResult_OnlyMessage(t *testing.T) {
 	r := Result{
 		Message: "Test message",
@@ -351,9 +261,7 @@ func TestLogReporter_OnError_NilError(t *testing.T) {
 }
 
 func TestProgressReporter_Interface(t *testing.T) {
-	var reporter ProgressReporter
-
-	reporter = &NopReporter{}
+	var reporter ProgressReporter = &NopReporter{}
 	assert.NotNil(t, reporter)
 
 	reporter.OnProgress("task-1", Progress{})

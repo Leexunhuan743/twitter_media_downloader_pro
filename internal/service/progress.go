@@ -24,16 +24,18 @@ type MainResult struct {
 
 // ProfileResult 资料下载结果
 type ProfileResult struct {
-	Downloaded int
-	Failed     int
-	Versioned  int // 版本化（旧文件已备份到 .versions）
+	Downloaded    int
+	Failed        int
+	Versioned     int      // 版本化（旧文件已备份到 .versions）
+	FailedDetails []string // 失败用户与原因，供任务结果展示
 }
 
 // Result 执行结果
 type Result struct {
-	Main    *MainResult
-	Profile *ProfileResult
-	Message string
+	Main          *MainResult
+	Profile       *ProfileResult
+	Message       string
+	FailedDetails []string // 失败明细（最多 50 条由 API 层截断）
 }
 
 // ProgressReporter 进度报告接口

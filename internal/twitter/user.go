@@ -41,17 +41,6 @@ type User struct {
 	CreatedAt    string // 账号创建时间
 }
 
-func GetUserById(ctx context.Context, client *resty.Client, id uint64) (*User, uint64, error) {
-	api := userByRestId{id}
-	getUrl := makeUrl(&api)
-	r, uid, err := getUser(ctx, client, getUrl)
-	if err != nil {
-		// 返回 uid（可能是从 UserUnavailable 中提取的ID）用于标记不可访问状态
-		return nil, uid, fmt.Errorf("failed to get user [%d]: %v", id, err)
-	}
-	return r, uid, err
-}
-
 func GetUserByScreenName(ctx context.Context, master *resty.Client, additional []*resty.Client, screenName string) (*User, uint64, error) {
 	cli := SelectClientMFQ(ctx, master, additional, nil, (&userByScreenName{}).Path())
 	if cli == nil {

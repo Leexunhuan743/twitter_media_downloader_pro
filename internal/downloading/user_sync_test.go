@@ -278,33 +278,3 @@ func TestShouldIgnoreUser(t *testing.T) {
 		})
 	}
 }
-
-func TestShouldIgnoreUser_Nil(t *testing.T) {
-	// Test with nil user - this will panic because the function doesn't check for nil
-	// This test documents the current behavior
-	defer func() {
-		if r := recover(); r != nil {
-			t.Logf("shouldIgnoreUser(nil) panicked as expected: %v", r)
-		}
-	}()
-
-	// This will panic because we access user.Blocking without nil check
-	_ = shouldIgnoreUser(nil)
-}
-
-func TestSyncUser_NilDB(t *testing.T) {
-	user := &twitter.User{
-		Id:         12345,
-		Name:       "Test",
-		ScreenName: "test",
-	}
-
-	// Test with nil DB - this will panic because the function doesn't check for nil
-	defer func() {
-		if r := recover(); r != nil {
-			t.Logf("database.SyncUser(nil, ...) panicked as expected: %v", r)
-		}
-	}()
-
-	_ = database.SyncUser(nil, user.Id, user.Name, user.ScreenName, user.IsProtected, user.FriendsCount, true)
-}

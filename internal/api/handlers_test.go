@@ -42,11 +42,6 @@ func TestHandleWeb_Success(t *testing.T) {
 	assert.Equal(t, contentETag(rr.Body.Bytes()), rr.Header().Get("ETag"))
 	assert.Greater(t, rr.Body.Len(), 0)
 }
-
-func TestHandleWeb_Error(t *testing.T) {
-	t.Skip("handleWeb 使用 //go:embed 固定读取 index.html，无法在测试中模拟文件读取错误")
-}
-
 func TestHandleWeb_DifferentRoutes(t *testing.T) {
 	server := &Server{}
 
@@ -277,18 +272,6 @@ func TestHandleStatic_EmptyPath(t *testing.T) {
 	// 空路径应该返回 404
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
-
-func TestHandleStatic_RootPath(t *testing.T) {
-	server := &Server{}
-
-	req := httptest.NewRequest(http.MethodGet, "/static", nil)
-	rr := serveStatic(server, req)
-
-	// 不带尾部斜杠的 /static 路由不会匹配到 handleStatic（路径参数为空）
-	// path.Clean 对空字符串的处理可能导致不同结果，至少不应 panic
-	t.Logf("handleStatic with /static returned status %d", rr.Code)
-}
-
 func TestHandleStatic_PathCleaning(t *testing.T) {
 	server := &Server{}
 

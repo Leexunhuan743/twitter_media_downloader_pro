@@ -25,8 +25,6 @@ tmd -server -port 8080
 
 ## 认证
 
-> ⚠️ **自 v3.5 起支持 API Key 认证。** 详细设计文档见 [`tmd-api-auth-layer.md`](tmd-api-auth-layer.md)。
-
 ### 概述
 
 TMD 内置 Bearer Token 认证层。在 `conf.yaml` 中设置 `api_key` 即可开启，所有 HTTP API 请求需要携带 `Authorization: Bearer <key>` 头。`api_key` 为空时认证层完全跳过，行为零变化（向后兼容）。
@@ -127,9 +125,13 @@ Web UI 在首次遇到 401 时会弹出认证对话框，输入 Key 后自动获
 | `GET /favicon.ico` | 浏览器图标 |
 | `GET /static/*` | 静态文件（JS/CSS） |
 | `GET /api/v1/health` | 健康检查 |
+| `GET /api/v1/download/context` | 下载页首屏聚合状态（未认证时只返回基础字段） |
 | `GET /api/v1/config/theme` | 获取当前主题 |
 | `POST /api/v1/config/theme` | 切换主题 |
-| `GET /api/v1/config/themes` | 列出可用主题 |
+
+> `GET /api/v1/config/themes` 同样免认证，但不是独立白名单项：白名单按前缀 `/api/v1/config/theme` 匹配，它被一并放行（`internal/api/middleware.go:91-96`）。
+>
+> 已注册的 Bot 回调路径（默认 `/api/v1/bot/feishu/callback`）同样免认证，见下文「22. Bot 回调（Feishu）」。
 
 > **为什么 Web UI 页面需要公开？** SPA 的认证流程是：页面加载 → JS 执行 → 发现 API 返回 401 → 弹出认证对话框 → 用户输入 Key → localStorage 存储 → 后续请求携带 token。如果页面本身需要认证才能加载，用户将永远看不到登录界面。
 
@@ -137,17 +139,14 @@ Web UI 在首次遇到 401 时会弹出认证对话框，输入 Key 后自动获
 
 `EventSource` API 无法设置自定义 HTTP 头，SSE 端点通过 `?token=` 查询参数认证：
 
-// 从 localStorage 读取 JWT token（前端不存储原始 API Key）
-const key = localStorage.getItem('tmd_jwt_token');
+```javascript
+const token = localStorage.getItem('tmd_jwt_token');
 
-// 任务状态 SSE
-new EventSource('/api/v1/sse/tasks?token=' + encodeURIComponent(key))
-
-// 日志流 SSE
-new EventSource('/api/v1/logs/stream?token=' + encodeURIComponent(key) + '&level=info')
+new EventSource('/api/v1/sse/tasks?token=' + encodeURIComponent(token));
+new EventSource('/api/v1/logs/stream?token=' + encodeURIComponent(token) + '&level=info');
 ```
 
-SSE 端点**不在**公开路径白名单中——开启认证后必须携带有效 token。
+SSE 端点**不在**公开路径白名单中——开启认证后必须携带有效 token。事件名、心跳、断线重连与断线重放规则见 [SSE 实时任务推送](#sse-实时任务推送)。
 
 ### 请求示例
 
@@ -181,7 +180,7 @@ curl -X OPTIONS -H "Origin: http://example.com" \
 
 ### 安全建议
 
-- **Key 强度**：至少 16 字符，建议使用随机字符串：`openssl rand -base64 32`
+- **Key 强度**：后端强制至少 8 字符（`internal/config/config.go:242`），建议 ≥16 字符并使用随机字符串：`openssl rand -base64 32`
 - **传输安全**：⚠️ 当前 API Key 和 JWT 通过 HTTP Header 明文传输，公网部署**必须使用 HTTPS**，否则可被中间人截获
 - **推荐使用 JWT**：通过 `POST /api/v1/auth/login` 获取 1 小时有效的 JWT 会话令牌，减少 API Key 传输频率。JWT 过期后通过 `POST /api/v1/auth/refresh` 续期
 - **Key 轮换**：定期更换 API Key。变更后旧 JWT 自动失效（签名密钥已变）
@@ -229,11 +228,13 @@ GET /api/v1/health
   "success": true,
   "data": {
     "status": "ok",
-    "version": "v3.4.25",
+    "version": "dev",
     "timestamp": "2024-01-15T10:30:00Z"
   }
 }
 ```
+
+> `version` 在 release 构建中由 ldflags 注入实际版本，开发和测试构建为 `dev`。
 
 **示例：**
 
@@ -280,6 +281,11 @@ curl -X POST http://localhost:25556/api/v1/auth/login \
 }
 ```
 
+登录限制与错误：
+
+- 未配置 `api_key` 时认证层未启用，`POST /api/v1/auth/login` 返回 `401 Unauthorized`（`{"success":false,"error":"unauthorized"}`）
+- 同一 IP 每分钟最多 5 次失败尝试，超限返回 `429 Too Many Requests`（`too many requests`）
+
 获取 JWT 后，后续请求使用 JWT 替代原始 API Key：
 
 ```bash
@@ -306,10 +312,19 @@ curl -X POST http://localhost:25556/api/v1/auth/refresh \
 
 **响应格式：** 与 login 端点相同，返回新的 JWT。
 
+**限制与错误：**
+
+- 只接受签发时间在 24 小时内的 JWT；更早的 token 即使签名有效也返回 `401 Unauthorized`，并带 `X-Token-Type: too-old`
+- 同一 IP 每分钟最多 5 次失败尝试，超限返回 `429 Too Many Requests`
+- 认证失败响应带 `X-Token-Type` 头：`missing`（未提供 token）、`expired`（签名有效但已过期，普通端点）、`invalid`（签名/格式无效或 API Key 不匹配）
+
 #### 检查 JWT 状态
 
 查询当前 JWT 的有效性和过期时间。
+
 > 🔒 **需要认证**：需要携带 JWT。与 refresh 相同——authMiddleware 放行签名正确（允许过期）的 JWT，handler 返回过期状态而非 401。
+
+```http
 GET /api/v1/auth/check
 Authorization: Bearer <jwt-token>
 ```
@@ -336,6 +351,8 @@ curl http://localhost:25556/api/v1/auth/check \
   }
 }
 ```
+
+`needs_refresh` 为 `true` 表示剩余有效期不足 5 分钟，客户端应调用 refresh。未携带 token 时返回 `200`，`data` 只有 `authenticated:false` 与 `auth_enabled`。
 
 ***
 
@@ -823,6 +840,8 @@ false
 | `files` | file | 是 | JSON 文件（支持多选，仅限 `.json` 扩展名） |
 | `no_retry` | string | 否 | `"true"` 或 `"false"`，默认 `false` |
 
+上传限制：单文件 ≤ 400 MiB（超过返回 `413` `Upload too large`）；只接受 `.json` 文件名；文件名不能为空且不能含 `/ \ < > : " | ? *`，否则返回 `400`；同名文件自动追加 `-2`、`-3` 等后缀。
+
 **响应：**
 
 ```json
@@ -940,6 +959,8 @@ false
 |------|------|------|------|
 | `files` | file | 是 | JSON 文件（支持多选，仅限 `.json` 扩展名） |
 | `no_retry` | string | 否 | `"true"` 或 `"false"`，默认 `false` |
+
+上传限制：单文件 ≤ 400 MiB（超过返回 `413` `Upload too large`）；只接受 `.json` 文件名；文件名不能为空且不能含 `/ \ < > : " | ? *`，否则返回 `400`；同名文件自动追加 `-2`、`-3` 等后缀。
 
 **响应：**
 
@@ -1121,6 +1142,7 @@ GET /api/v1/tasks
         "entry_id": "sch_abc123",
         "type": "user_download",
         "status": "running",
+        "data": { "screen_name": "elonmusk" },
         "progress": {
           "stage": "downloading",
           "total": 100,
@@ -1169,6 +1191,8 @@ GET /api/v1/tasks
 | `batch_download` | 批量下载 |
 | `retry_all_failed` | 重试所有失败任务 |
 
+任务对象还包含 `data` 字段，为创建任务时的入参快照（结构随任务类型变化；无入参时为 `null`），以及可选的 `result`、`error`、`ended_at`。
+
 **示例：**
 
 ```bash
@@ -1177,6 +1201,72 @@ curl http://localhost:25556/api/v1/tasks
 
 # 开启认证后
 curl -H "Authorization: Bearer <your-token>" http://localhost:25556/api/v1/tasks
+```
+
+***
+
+### 10.1 查询任务（服务端过滤、搜索、排序与分页）
+
+在服务端按状态、类型和关键词过滤任务，并排序分页。响应中的任务对象与 `GET /api/v1/tasks` 一致。
+
+**请求：**
+
+```http
+GET /api/v1/tasks/query?status=failed,queued&type=user_download&q=alice&page=1&pageSize=20&sortBy=created_at&sortOrder=desc
+```
+
+**查询参数：**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `status` | string | 空（全部） | 逗号分隔的状态：`queued`、`running`、`completed`、`failed`、`cancelled` |
+| `type` | string | 空（全部） | 逗号分隔的任务类型，取值见上文「任务类型 (`type`)」 |
+| `q` | string | 空 | 关键词，忽略大小写匹配 `task_id`、`error`、`result.message` 与 `data` 的 JSON 文本 |
+| `page` | int | `1` | 页码；非法值或小于 1 时回退为 `1` |
+| `pageSize` | int | `20` | 每页条数；非法值或小于 1 时回退为 `20`，超过上限时取 `200` |
+| `sortBy` | string | `created_at` | `created_at`、`ended_at`、`started_at`、`status`、`type`；未知值回退为 `created_at` |
+| `sortOrder` | string | `desc` | `asc` 或 `desc` |
+
+**响应：**
+
+```json
+{
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "task_id": "task_abc123",
+        "type": "user_download",
+        "status": "failed",
+        "data": { "screen_name": "alice" },
+        "error": "rate limited",
+        "created_at": "2024-01-15T10:30:00Z",
+        "started_at": "2024-01-15T10:30:05Z",
+        "ended_at": "2024-01-15T10:30:20Z"
+      }
+    ],
+    "total": 42,
+    "page": 1,
+    "pageSize": 20,
+    "totalPages": 3
+  }
+}
+```
+
+**错误响应：**
+
+- 非法 `status`：`400`，`{"success": false, "error": "Invalid status filter"}`
+- 非法 `type`：`400`，`{"success": false, "error": "Invalid type filter"}`
+- 非法 `page`、`pageSize`、`sortBy`、`sortOrder` 不报错，按上表回退默认值
+
+**示例：**
+
+```bash
+# 查询失败或排队中的用户下载任务，按创建时间倒序
+curl "http://localhost:25556/api/v1/tasks/query?status=failed,queued&type=user_download&sortBy=created_at&sortOrder=desc"
+
+# 关键词搜索，第二页，每页 50 条
+curl "http://localhost:25556/api/v1/tasks/query?q=alice&page=2&pageSize=50"
 ```
 
 ***
@@ -1223,7 +1313,11 @@ GET /api/v1/tasks/{task_id}
         "failed": 0,
         "versioned": 1
       },
-      "message": ""
+      "message": "",
+      "failed_details": [
+        "@alice: rate limited",
+        "/data/imports/a.json: 3 failed"
+      ]
     },
     "created_at": "2024-01-15T10:30:00Z",
     "started_at": "2024-01-15T10:30:05Z",
@@ -1231,6 +1325,13 @@ GET /api/v1/tasks/{task_id}
   }
 }
 ```
+
+**响应字段说明：**
+
+- `result.failed_details` 为可选字段，最多 50 条。
+  - Profile 下载失败记录用户与原因，形如 `@alice: rate limited`。
+  - JSON 文件/文件夹下载按来源汇总，形如 `/path/a.json: 3 failed`。
+  - 主下载（推文级）失败不写入该字段，请通过 `GET /api/v1/errors` 与日志（`GET /api/v1/logs`）查看。
 
 **示例：**
 
@@ -1431,6 +1532,103 @@ DELETE /api/v1/tasks/{task_id}
 
 ```bash
 curl -X DELETE http://localhost:25556/api/v1/tasks/task_completed_123
+```
+
+***
+
+### 16.1 批量取消 / 重试 / 删除任务
+
+对最多 100 个任务执行同一操作，逐条返回结果。单个任务失败不会中断整批处理，HTTP 状态恒为 `200`。
+
+**请求：**
+
+```http
+POST /api/v1/tasks/batch/cancel
+POST /api/v1/tasks/batch/retry
+POST /api/v1/tasks/batch/delete
+Content-Type: application/json
+
+{"task_ids": ["task_abc123", "task_def456"]}
+```
+
+**请求体参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `task_ids` | []string | 是 | 任务 ID 列表，最多 100 个 |
+
+**响应：**
+
+```json
+{
+  "success": true,
+  "data": {
+    "succeeded": 1,
+    "failed": 1,
+    "results": [
+      {
+        "task_id": "task_abc123",
+        "ok": true,
+        "new_task_id": "task_new_xyz"
+      },
+      {
+        "task_id": "task_def456",
+        "ok": false,
+        "code": "not_found"
+      }
+    ]
+  }
+}
+```
+
+**响应字段：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `succeeded` | int | 成功的任务数 |
+| `failed` | int | 失败的任务数 |
+| `results` | array | 与请求 `task_ids` 顺序一致的逐条结果 |
+| `results[].task_id` | string | 任务 ID |
+| `results[].ok` | bool | 该任务是否操作成功 |
+| `results[].code` | string | 失败码，仅在 `ok:false` 时返回 |
+| `results[].new_task_id` | string | 新任务 ID，仅在 `retry` 成功时返回 |
+
+**失败码：**
+
+| 操作 | `code` | 含义 |
+|------|---------|------|
+| cancel | `not_found` | 任务不存在 |
+| cancel | `not_cancellable` | 任务不在 `queued` 或 `running` 状态 |
+| delete | `not_found` | 任务不存在 |
+| delete | `not_deletable` | 任务不在终端状态（`completed` / `failed` / `cancelled`） |
+| retry | `not_found` | 任务不存在 |
+| retry | `not_retryable` | 任务不在 `failed` 或 `cancelled` 状态 |
+| retry | `not_retryable_upload` | 上传型 JSON 文件/文件夹任务，无法重建 |
+| retry | `invalid_task` | 无法根据任务数据重建执行函数 |
+| retry | `queue_closed` | 下载队列已关闭 |
+| retry | `enqueue_failed` | 新任务入队失败 |
+| retry | `retry_failed` | 重试操作失败 |
+
+**错误响应：**
+
+- 缺少 `task_ids` 或为空数组：`400`，`{"success": false, "error": "task_ids is required"}`
+- 超过 100 个：`400`，`{"success": false, "error": "Too many task_ids (max 100)"}`
+- 请求体不是合法 JSON：`400`，`{"success": false, "error": "Invalid request body"}`
+
+**示例：**
+
+```bash
+curl -X POST http://localhost:25556/api/v1/tasks/batch/cancel \
+  -H "Content-Type: application/json" \
+  -d '{"task_ids":["task_abc123","task_def456"]}'
+
+curl -X POST http://localhost:25556/api/v1/tasks/batch/retry \
+  -H "Content-Type: application/json" \
+  -d '{"task_ids":["task_failed_123"]}'
+
+curl -X POST http://localhost:25556/api/v1/tasks/batch/delete \
+  -H "Content-Type: application/json" \
+  -d '{"task_ids":["task_completed_123"]}'
 ```
 
 ***
@@ -1653,7 +1851,7 @@ curl -o tmd.log http://localhost:25556/api/v1/logs/export
 
 ### 21. 用户历史名称查询（全局）
 
-查询所有用户的历史名称记录，支持按当前名称筛选。
+查询改过名的用户的历史名称记录，支持按名称筛选。只返回同一用户存在多条历史记录的情况（底层条件 `pn.user_id IN (SELECT user_id FROM user_previous_names GROUP BY user_id HAVING COUNT(*) > 1)`）。
 
 **请求：**
 
@@ -1669,7 +1867,8 @@ GET /api/v1/db/user-previous-names?q=elonmusk
 | `pageSize` | int | 20 | 每页数量 |
 | `sortBy` | string | `id` | 排序字段 |
 | `sortOrder` | string | `desc` | 排序方向 |
-| `q` | string | - | 搜索关键词（匹配当前 screen_name 或 name） |
+| `userId` | string | - | 按用户 ID 筛选 |
+| `q` | string | - | 搜索关键词（匹配历史 `screen_name`、历史 `name`、当前 `screen_name`） |
 
 **响应：**
 
@@ -1706,6 +1905,22 @@ curl "http://localhost:25556/api/v1/db/user-previous-names?q=elonmusk"
 
 ***
 
+### 22. Bot 回调（Feishu）
+
+飞书（Feishu/Lark）Bot 的事件回调端点。其他 Bot（Telegram、Discord、Gotify、Pushover、WeChat）通过出站连接工作，不暴露 HTTP 端点。
+
+| 项 | 值 |
+|------|------|
+| 方法/路径 | `POST /api/v1/bot/feishu/callback` |
+| 路径覆盖 | `conf.yaml` → `feishu.callback_path` |
+| 认证 | 不使用 TMD 的 Bearer Token；路径注册后按精确匹配免认证（`internal/api/middleware.go:148-151`） |
+| 未启用 | 未配置 `feishu.app_id` 与 `feishu.app_secret` 时不注册该路径，请求按常规路由处理 |
+| `503` | Bot 已注册但尚未启动完成，返回纯文本 `feishu bot not started` |
+
+启用条件：`feishu.app_id` 与 `feishu.app_secret` 均非空（`main.go:439-443`）。
+
+***
+
 ## 错误处理
 
 ### 错误响应格式
@@ -1722,13 +1937,17 @@ curl "http://localhost:25556/api/v1/db/user-previous-names?q=elonmusk"
 | 状态码 | 说明          |
 | --- | ----------- |
 | 200 | 请求成功        |
+| 201 | 资源已创建（如 `POST /api/v1/schedules`） |
 | 202 | 任务已创建（异步操作） |
 | 400 | 请求参数错误      |
 | 401 | 未认证（需要有效的 Bearer Token，详见[认证章节](#认证)）|
 | 404 | 资源不存在       |
 | 405 | 方法不允许       |
+| 409 | 状态冲突（任务状态不允许该操作、调度已禁用或正在触发） |
+| 413 | 请求体或上传文件过大 |
+| 429 | 请求过多（认证端点的登录/刷新/检查限流） |
 | 500 | 服务器内部错误     |
-| 503 | 服务不可用（数据库连接失败）|
+| 503 | 服务不可用（数据库不可用、服务正在关闭、任务被拒绝、Bot 未启动）|
 
 ### 日志记录
 
@@ -1754,7 +1973,7 @@ API 默认启用 CORS 支持，允许 Web 前端直接调用：
 - **允许方法：** GET, POST, PUT, PATCH, DELETE, OPTIONS
 - **允许头：** Content-Type, Authorization
 
-> **与认证的交互**：OPTIONS 预检请求由 CORS 中间件在进入 `authMiddleware` 之前直接处理（返回 204），因此预检请求**不需要携带 Bearer Token**。详见[架构与中间件链](tmd-api-auth-layer.md#架构与中间件链)。
+> **与认证的交互**：OPTIONS 预检请求由 CORS 中间件在进入 `authMiddleware` 之前直接处理（返回 204），因此预检请求**不需要携带 Bearer Token**。
 
 SSE 端点 (`/api/v1/sse/tasks`) 同样支持 CORS，确保 Web 界面可以跨域接收实时推送。SSE 连接如需认证，通过 `?token=` 查询参数传递。
 
@@ -1764,14 +1983,14 @@ SSE 端点 (`/api/v1/sse/tasks`) 同样支持 CORS，确保 Web 界面可以跨�
 
 ### Bearer Token 认证
 
-TMD 内置 API Key 认证层（自 v3.5 起），支持双模式：
+TMD 内置 API Key 认证层，支持双模式：
 
 - **开启方式**：在 `conf.yaml` 中设置 `api_key`，或通过环境变量 `TMD_API_KEY`
 - **认证方式**：`Authorization: Bearer <token>` 请求头（首选），SSE 端点回退 `?token=` 查询参数
 - **双模式**：支持 JWT 会话令牌（推荐，1 小时有效）和原始 API Key（向后兼容），authMiddleware 自动识别
 - **向后兼容**：`api_key` 为空时认证层完全跳过
 
-详见[认证章节](#认证)和详细设计文档 [`tmd-api-auth-layer.md`](tmd-api-auth-layer.md)。
+详见[认证章节](#认证)。
 
 ### 路径穿越防护
 
@@ -1816,13 +2035,7 @@ Web 界面响应包含适当的缓存头：
 
 ### SSE 实时更新
 
-Web 界面使用 Server-Sent Events (SSE) 技术实现任务状态实时推送：
-
-- **推送机制**：任务状态变更时通过事件总线实时推送（全量推送，非增量）
-- **心跳间隔**：25 秒
-- **重连策略**：指数退避（2s → 4s → 8s ... 最大 30s）
-- **连接断开**：客户端断开时通过 `context.Done()` 自动感知，无资源泄漏
-- **认证方式**：开启 API Key 后，SSE 连接通过 `?token=` 查询参数传递 Key（`EventSource` 无法设置自定义 HTTP 头）。详见[认证章节](#sse-端点)
+Web 界面使用 SSE 实现任务状态实时推送：任务状态变更时事件总线全量推送，心跳 25 秒，断线后固定 4 秒重连（已开启认证且无 token 时不重连）。服务端通过 `context.Done()` 感知客户端断开。事件名、帧格式、断线重放与认证方式见 [SSE 实时任务推送](#sse-实时任务推送)。
 
 ***
 
@@ -1845,7 +2058,7 @@ http://localhost:25556/
 | **仪表盘** | 显示系统健康状态、任务统计、快速操作入口 |
 | **新建任务** | 创建用户下载、列表下载、批量下载、JSON 下载任务 |
 | **任务列表** | 实时显示所有任务状态（支持 SSE 实时更新）、进度条、取消操作 |
-| **数据浏览** | 查看数据库中的 Users、Lists、User Entities、List Entities、User Links |
+| **数据浏览** | 查看数据库中的 Users、Lists、User Entities、List Entities、User Links、User Previous Names（历史名称） |
 | **配置编辑** | 双模式配置管理：结构化表单 + 原始 YAML 编辑器 |
 | **Cookie 管理** | 管理额外账户 Cookie，支持结构化表单和原始 YAML 编辑 |
 | **调度管理** | 创建、编辑、启用/禁用定时下载任务，支持手动触发 |
@@ -1875,142 +2088,60 @@ GET /api/v1/sse/tasks
 
 **说明：**
 
-- 建立 SSE 连接，任务状态变更时通过事件总线实时推送
+- 建立 SSE 连接，任务状态变更时通过事件总线实时推送（全量推送，非增量）
+- 心跳间隔 25 秒（服务端发送 SSE 注释帧维持连接）
 - 支持跨域访问（CORS）
-- 心跳间隔 25 秒
-- 连接断开后会自动重连（指数退避策略）
+- 客户端断开时通过 `context.Done()` 自动感知，无资源泄漏
 
 **响应格式：**
 
+SSE 帧由 `id`、`event`、`data` 三部分组成，任务事件名为 `tasks`：
+
 ```
+id: 1705312345123456789
+event: tasks
 data: [{"task_id":"task_xxx","status":"running",...}]
 ```
+
+**事件类型：**
+
+| 事件名 | 说明 |
+|--------|------|
+| `tasks` | 任务列表全量快照（创建、进度更新、状态变更时推送） |
+| `schedules` | 调度配置变更 |
+| `notification` | 通用通知 |
+| `server_shutdown` | 服务端关闭 |
+
+**断线重放：**
+
+客户端重连时若带 `Last-Event-ID` 头（浏览器 `EventSource` 自动携带），服务端会重放该 ID 之后的事件；重放只覆盖 `notification` 与 `server_shutdown`，任务与调度事件以重连后的最新快照为准。
 
 **示例：**
 
 ```javascript
-// 未开启认证时
-const sse = new EventSource('http://localhost:25556/api/v1/sse/tasks');
-
-// 开启认证后需要携带 ?token=（使用 JWT，前端不存储原始 API Key）
 const token = localStorage.getItem('tmd_jwt_token');
-const sse = new EventSource('/api/v1/sse/tasks?token=' + encodeURIComponent(token));
+const url = token
+    ? '/api/v1/sse/tasks?token=' + encodeURIComponent(token)
+    : '/api/v1/sse/tasks';
+const sse = new EventSource(url);
 sse.addEventListener('tasks', (event) => {
     const tasks = JSON.parse(event.data);
     console.log('Tasks updated:', tasks);
 });
 ```
 
-***
-
-### 查询数据库用户
-
-**请求：**
-
-```http
-GET /api/v1/db/users
-```
-
-**响应：**
-
-```json
-{
-  "success": true,
-  "data": {
-    "data": [
-      {
-        "id": "44196397",
-        "screen_name": "elonmusk",
-        "name": "Elon Musk",
-        "protected": false,
-        "friends_count": 100,
-        "is_accessible": true
-      }
-    ],
-    "total": 1,
-    "page": 1,
-    "pageSize": 20,
-    "totalPages": 1
-  }
-}
-```
-
-**说明：**
-
-- 返回数据库中用户记录（支持分页，默认每页 20 条）
-- 支持通用查询参数：`page`、`pageSize`、`sortBy`、`sortOrder`、`q`
-- 支持筛选参数：`accessible`（可访问状态）、`protected`（保护状态）
-- `is_accessible` 字段表示用户是否可通过 API 正常访问（非封禁/注销状态）
-- 用于 Web 界面数据浏览
+断线后前端固定 4 秒重连（已开启认证且无 token 时不重连）。
 
 ***
 
-### 查询数据库列表
+### 数据库查询端点
 
-**请求：**
-
-```http
-GET /api/v1/db/lists
-```
-
-**响应：**
-
-```json
-{
-  "success": true,
-  "data": {
-    "data": [
-      {
-        "id": "123456789",
-        "name": "Tech News",
-        "owner_user_id": "44196397"
-      }
-    ],
-    "total": 1,
-    "page": 1,
-    "pageSize": 20,
-    "totalPages": 1
-  }
-}
-```
-
-***
-
-### 查询用户实体
-
-**请求：**
-
-```http
-GET /api/v1/db/user-entities
-```
-
-**响应：**
-
-```json
-{
-  "success": true,
-  "data": {
-    "data": [
-      {
-        "id": "1",
-        "user_id": "44196397",
-        "name": "Elon Musk(elonmusk)",
-        "latest_release_time": "2024-01-15T10:30:00Z",
-        "parent_dir": "users",
-        "media_count": 150
-      }
-    ],
-    "total": 1,
-    "page": 1,
-    "pageSize": 20,
-    "totalPages": 1
-  }
-}
-```
+用户、列表、用户实体、列表实体、用户链接、历史名称的分页查询与增删改，统一见 [数据库管理 API 详解](#数据库管理-api-详解)，此处不再重复示例。
 
 ***
 
 ### 获取系统配置
+
 **请求：**
 
 ```http
@@ -2024,9 +2155,9 @@ GET /api/v1/config
   "success": true,
   "data": {
     "root_path": "twitter_downloads",
-    "max_download_routine": 20,
+    "max_download_routine": 50,
     "max_user_fetch_concurrent": 3,
-    "max_file_name_len": 155
+    "max_file_name_len": 158
   }
 }
 ```
@@ -2035,7 +2166,7 @@ GET /api/v1/config
 
 - 返回脱敏后的配置信息（不包含敏感 Cookie 和代理地址）
 - `root_path` 返回配置中的完整路径
-- 未显式设置时，`max_download_routine` / `max_user_fetch_concurrent` / `max_file_name_len` 返回有效默认值（不是 `0`）
+- 未显式设置时返回有效默认值（不是 `0`）：`max_download_routine` 为 `min(50, CPU 核数 × 10)`、`max_user_fetch_concurrent` 为 `3`、`max_file_name_len` 为 `158`（`internal/config/config.go:30-39`、`internal/utils/fs.go:39`），示例值随机器核数变化
 - 完整配置请使用 `/api/v1/config/fields` 或 `/api/v1/config/raw`
 
 ***
@@ -2056,7 +2187,7 @@ GET /api/v1/config/theme
 {
   "success": true,
   "data": {
-    "theme": "web1"
+    "theme": "download"
   }
 }
 ```
@@ -2080,7 +2211,7 @@ POST /api/v1/config/theme
 Content-Type: application/json
 
 {
-  "theme": "web2"
+  "theme": "download"
 }
 ```
 
@@ -2088,7 +2219,7 @@ Content-Type: application/json
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `theme` | string | 是 | 主题名称，来自可用主题列表（如 `web1`、`web2`、`web3`） |
+| `theme` | string | 是 | 主题名称，来自可用主题列表（当前为 `download`） |
 
 **响应（成功）：**
 
@@ -2096,7 +2227,7 @@ Content-Type: application/json
 {
   "success": true,
   "data": {
-    "theme": "web2"
+    "theme": "download"
   }
 }
 ```
@@ -2121,7 +2252,7 @@ Content-Type: application/json
 ```bash
 curl -X POST http://localhost:25556/api/v1/config/theme \
   -H "Content-Type: application/json" \
-  -d '{"theme": "web2"}'
+  -d '{"theme": "download"}'
 ```
 
 ***
@@ -2142,8 +2273,8 @@ GET /api/v1/config/themes
 {
   "success": true,
   "data": {
-    "themes": ["web1", "web2", "web3"],
-    "current": "web1"
+    "themes": ["download"],
+    "current": "download"
   }
 }
 ```
@@ -2380,7 +2511,7 @@ GET /api/v1/config/fields
 - **basic**: 基础设置（存储路径）
 - **cookie**: Cookie 认证（auth_token, ct0）
 - **advanced**: 高级选项（并发数、文件名长度、代理）
-- **security**: 安全认证（API Key，自 v3.5 起）
+- **security**: 安全认证（API Key）
 
 **示例：**
 
@@ -2492,7 +2623,7 @@ GET /api/v1/logs?level=info&page=1&pageSize=100&q=download
   "data": {
     "logs": [
       "INFO[2024-01-15T10:30:00+08:00] [task] Created task_id=task_abc123 type=user_download target=elonmusk status=queued",
-      "INFO[2024-01-15T10:29:58+08:00] [theme] Switched theme=web2"
+      "INFO[2024-01-15T10:29:58+08:00] [theme] Switched theme=download"
     ],
     "total": 150,
     "page": 1,
@@ -2720,6 +2851,105 @@ Content-Type: application/json
 
 ### 服务器管理 API
 
+#### 获取下载页聚合状态
+
+聚合下载页首屏所需的版本、认证开关、Cookie 配置、队列、并发上限与任务统计，避免前端串联多个请求。
+
+> 🔓 **公开端点**：即使开启 API Key 认证也无需预先认证。未认证时只返回基础字段；`api_key` 为空时 `authenticated` 恒为 `true`。认证开启后，可通过 `Authorization: Bearer <token>` 或 `?token=<token>`（与 SSE 一致）携带 API Key/JWT。
+
+**请求：**
+
+```http
+GET /api/v1/download/context
+```
+
+**响应（未认证）：**
+
+```json
+{
+  "success": true,
+  "data": {
+    "version": "dev",
+    "auth_enabled": true,
+    "authenticated": false,
+    "api_key_configured": true,
+    "cookie_configured": true,
+    "additional_cookie_accounts": 0,
+    "server_shutting_down": false
+  }
+}
+```
+
+**响应（认证后）：**
+
+```json
+{
+  "success": true,
+  "data": {
+    "version": "dev",
+    "auth_enabled": true,
+    "authenticated": true,
+    "api_key_configured": true,
+    "cookie_configured": true,
+    "additional_cookie_accounts": 2,
+    "server_shutting_down": false,
+    "queue": {
+      "queue_depth": 5,
+      "active_jobs": 2,
+      "pending_jobs": 3,
+      "detached_jobs": 0
+    },
+    "max_download_routine": 50,
+    "max_user_fetch_concurrent": 3,
+    "max_file_name_len": 158,
+    "db_ready": true,
+    "task_stats": {
+      "queued": 2,
+      "running": 1,
+      "completed": 15,
+      "failed": 1,
+      "cancelled": 0,
+      "total": 19
+    }
+  }
+}
+```
+
+**响应字段：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `version` | string | 服务端版本，开发/测试构建为 `dev` |
+| `auth_enabled` | bool | 是否配置了 API Key（认证是否开启） |
+| `authenticated` | bool | 当前请求是否已通过认证；未配置 API Key 时为 `true` |
+| `api_key_configured` | bool | 是否配置了 API Key |
+| `cookie_configured` | bool | 主账号 Cookie（`auth_token`）是否已配置 |
+| `additional_cookie_accounts` | int | 额外 Cookie 账号数 |
+| `server_shutting_down` | bool | 服务端是否正在关闭 |
+| `queue` | object | 下载队列状态，字段同 `GET /api/v1/queue/status`；队列未初始化时省略 |
+| `max_download_routine` | int | 生效的下载并发数（配置为 0 时为默认值） |
+| `max_user_fetch_concurrent` | int | 生效的用户信息抓取并发数（配置为 0 时为默认值） |
+| `max_file_name_len` | int | 生效的文件名最大长度（配置为 0 时为默认值） |
+| `db_ready` | bool | 数据库是否可用 |
+| `task_stats` | object | 任务统计，字段同 `GET /api/v1/tasks/stats` |
+
+未认证时 `queue`、`max_download_routine`、`max_user_fetch_concurrent`、`max_file_name_len`、`db_ready`、`task_stats` 不返回。`queue`、`db_ready`、`task_stats` 使用 `omitempty`：队列未初始化、数据库不可用或任务管理器缺失时字段省略。
+
+**示例：**
+
+```bash
+# 未认证（获取认证开关等基础字段）
+curl http://localhost:25556/api/v1/download/context
+
+# 认证后（携带 JWT 或 API Key）
+curl -H "Authorization: Bearer <your-token>" http://localhost:25556/api/v1/download/context
+
+# 查询参数方式（与 SSE 一致）
+curl "http://localhost:25556/api/v1/download/context?token=<your-token>"
+```
+
+***
+
 #### 关闭服务器
 
 优雅关闭 API Server，取消所有运行中的任务。
@@ -2917,6 +3147,8 @@ Content-Type: application/json
 }
 ```
 
+成功返回 `201 Created`。若配置已写入磁盘但重载失败，返回 `200`，`message` 为 `Schedule saved, but reload failed: <原因>`。
+
 #### 更新调度
 
 **批量替换全部调度（表单模式推荐）：**
@@ -2947,7 +3179,7 @@ Content-Type: application/json
 }
 ```
 
-该接口会用 `entries` 一次性替换整个 `schedules.yaml` 中的调度列表，并返回规范化后的完整条目。未提供 `id` 的条目会自动生成 ID。请求验证失败时不会写入新配置。保存成功后会自动重载调度配置；如果存在启用中的规则且调度器未运行，会自动启动调度器。
+该接口会用 `entries` 一次性替换整个 `schedules.yaml` 中的调度列表，并返回规范化后的完整条目。未提供 `id` 的条目会自动生成 ID。请求验证失败时不会写入新配置。保存成功后会自动重载调度配置；如果存在启用中的规则且调度器未运行，会自动启动调度器。若配置已写入磁盘但重载失败，返回 `200`，`message` 为 `Schedules saved, but reload failed: <原因>`。
 
 **响应：**
 
@@ -3070,7 +3302,15 @@ POST /api/v1/schedules/{id}/trigger
 }
 ```
 
-如果该调度正在触发中，请求会返回 `400 Bad Request`，错误信息为 `schedule "..." is already triggering, please wait for the current trigger to complete`。
+失败时返回：
+
+| 状态码 | `error` | 场景 |
+|--------|---------|------|
+| `400` | `Scheduler not initialized` | 调度器未启动 |
+| `404` | `Schedule not found` | 条目不存在 |
+| `409` | `Schedule is disabled` | 条目已禁用 |
+| `409` | `Schedule is already triggering` | 正在触发中；`detail` 为底层错误（形如 `schedule is already triggering: schedule "<name>"`） |
+| `500` | `Failed to trigger schedule: <原因>` | 其他错误 |
 
 #### 获取原始调度文件内容
 
@@ -3493,10 +3733,15 @@ DELETE /api/v1/db/users/44196397
 {
   "success": true,
   "data": {
-    "message": "User deleted successfully"
+    "message": "User deleted successfully",
+    "cascade_links": 3,
+    "cascade_entities": 12,
+    "cascade_previous_names": 2
   }
 }
 ```
+
+级联字段为本次删除的关联记录数（链接、实体、历史名称）。
 
 #### 获取用户历史名称
 
@@ -3519,6 +3764,73 @@ GET /api/v1/db/users/44196397/previous-names
         "screen_name": "elonmusk_old",
         "name": "Elon Musk Old Name",
         "record_date": "2023-01-15"
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "pageSize": 20,
+    "totalPages": 1
+  }
+}
+```
+
+#### 获取用户的所有实体
+
+**请求：**
+
+```http
+GET /api/v1/db/users/44196397/entities?page=1&pageSize=20
+```
+
+分页参数同通用查询；`sortBy` 白名单为 `id`、`user_id`、`name`、`media_count`、`latest_release_time`。
+
+**响应：**
+
+```json
+{
+  "success": true,
+  "data": {
+    "data": [
+      {
+        "id": "1",
+        "user_id": "44196397",
+        "name": "Elon Musk(elonmusk)",
+        "parent_dir": "users",
+        "media_count": 150,
+        "latest_release_time": "2024-01-15T10:30:00Z"
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "pageSize": 20,
+    "totalPages": 1
+  }
+}
+```
+
+#### 获取用户的所有链接
+
+**请求：**
+
+```http
+GET /api/v1/db/users/44196397/links?page=1&pageSize=20
+```
+
+分页参数同通用查询；`sortBy` 白名单为 `id`、`user_id`、`name`、`parent_lst_entity_id`。
+
+**响应：**
+
+```json
+{
+  "success": true,
+  "data": {
+    "data": [
+      {
+        "id": "1",
+        "user_id": "44196397",
+        "name": "elonmusk_link",
+        "parent_lst_entity_id": "1",
+        "parent_lst_entity_name": "Tech News"
       }
     ],
     "total": 1,
@@ -3798,7 +4110,8 @@ GET /api/v1/db/list-entities?page=1&pageSize=20&q=listname
         "id": "1",
         "lst_id": "123456789",
         "name": "List Entity Name",
-        "parent_dir": "lists"
+        "parent_dir": "lists",
+        "list_name": "Tech News"
       }
     ],
     "total": 1,
@@ -3826,7 +4139,8 @@ GET /api/v1/db/list-entities/1
     "id": "1",
     "lst_id": "123456789",
     "name": "List Entity Name",
-    "parent_dir": "lists"
+    "parent_dir": "lists",
+    "list_name": "Tech News"
   }
 }
 ```
@@ -3917,7 +4231,8 @@ GET /api/v1/db/user-links?page=1&pageSize=20
         "id": "1",
         "user_id": "44196397",
         "name": "elonmusk_link",
-        "parent_lst_entity_id": "1"
+        "parent_lst_entity_id": "1",
+        "parent_lst_entity_name": "Tech News"
       }
     ],
     "total": 1,
@@ -3927,6 +4242,8 @@ GET /api/v1/db/user-links?page=1&pageSize=20
   }
 }
 ```
+
+`list_name` / `parent_lst_entity_name` 由关联表实时补齐；关联记录不存在时为空字符串。
 
 #### 获取用户链接详情
 
@@ -3945,7 +4262,8 @@ GET /api/v1/db/user-links/1
     "id": "1",
     "user_id": "44196397",
     "name": "elonmusk_link",
-    "parent_lst_entity_id": "1"
+    "parent_lst_entity_id": "1",
+    "parent_lst_entity_name": "Tech News"
   }
 }
 ```
@@ -4004,54 +4322,36 @@ DELETE /api/v1/db/user-links/1
 
 ***
 
-## 使用场景示例
+### 6. 数据库统计
 
-> 以下示例默认不携带认证头。开启认证后，在每个 curl 命令中添加 `-H "$AUTH"`（`AUTH` 变量的设置方式见 [API 端点章节开头的提示](#api-端点)）。
+返回各表记录数。键名是**物理表名**，不是资源名。
 
-### 场景 1：监控下载进度
+**请求：**
 
-```bash
-# 1. 提交下载任务
-TASK_ID=$(curl -s -X POST http://localhost:25556/api/v1/users/elonmusk/download | jq -r '.data.task_id')
-
-# 2. 轮询检查进度
-while true; do
-  STATUS=$(curl -s http://localhost:25556/api/v1/tasks/$TASK_ID | jq -r '.data.status')
-  echo "Task status: $STATUS"
-  if [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ]; then
-    break
-  fi
-  sleep 5
-done
+```http
+GET /api/v1/db/stats
 ```
 
-### 场景 2：批量下载多个用户
+**响应：**
 
-```bash
-curl -X POST http://localhost:25556/api/v1/batch/download \
-  -H "Content-Type: application/json" \
-  -d '{
-    "users": ["user1", "user2", "user3", "user4", "user5"]
-  }'
-
-# 跳过 Profile 下载
-curl -X POST http://localhost:25556/api/v1/batch/download \
-  -H "Content-Type: application/json" \
-  -d '{
-    "users": ["user1", "user2", "user3", "user4", "user5"],
-    "skip_profile": true
-  }'
+```json
+{
+  "success": true,
+  "data": {
+    "users": 12,
+    "lsts": 3,
+    "user_entities": 40,
+    "lst_entities": 5,
+    "user_links": 7,
+    "user_previous_names": 9
+  }
+}
 ```
 
-### 场景 3：下载列表并监控
+**说明：**
 
-```bash
-# 下载列表
-TASK_ID=$(curl -s -X POST http://localhost:25556/api/v1/lists/123456789/download | jq -r '.data.task_id')
-
-# 如需取消
-# curl -X POST http://localhost:25556/api/v1/tasks/$TASK_ID/cancel
-```
+- `lsts` 是列表表，对应 `/api/v1/db/lists` 的资源
+- 六个键始终存在，每次调用实时 `COUNT(*)`
 
 ***
 
@@ -4072,6 +4372,7 @@ TASK_ID=$(curl -s -X POST http://localhost:25556/api/v1/lists/123456789/download
 | 端点                                        | 方法   | 功能             |
 | ----------------------------------------- | ---- | -------------- |
 | `/api/v1/health`                          | GET  | 健康检查           |
+| `/api/v1/bot/feishu/callback`             | POST | Bot 回调（免认证，仅启用飞书 Bot 时注册） |
 | `/api/v1/auth/login`                     | POST | 用 API Key 换取 JWT 令牌 |
 | `/api/v1/auth/refresh`                   | POST | 刷新 JWT 令牌 |
 | `/api/v1/auth/check`                     | GET  | 检查 JWT 有效性 |
@@ -4094,6 +4395,10 @@ TASK_ID=$(curl -s -X POST http://localhost:25556/api/v1/lists/123456789/download
 | `/api/v1/tasks/cancel-queued`             | POST | 取消所有排队中的任务 |
 | `/api/v1/tasks/{id}/retry`                | POST | 重试失败/取消的任务 |
 | `/api/v1/tasks/{id}`                      | DELETE | 删除终端状态任务 |
+| `/api/v1/tasks/query`                     | GET  | 服务端过滤/搜索/排序/分页任务 |
+| `/api/v1/tasks/batch/cancel`              | POST | 批量取消任务（最多 100 个） |
+| `/api/v1/tasks/batch/retry`               | POST | 批量重试任务（最多 100 个） |
+| `/api/v1/tasks/batch/delete`              | POST | 批量删除任务（最多 100 个） |
 
 ### Web 界面与数据 API
 
@@ -4125,6 +4430,7 @@ TASK_ID=$(curl -s -X POST http://localhost:25556/api/v1/lists/123456789/download
 | `/api/v1/logs/stats`                      | GET  | 日志级别统计计数 |
 | `/api/v1/logs/export`                     | GET  | 导出完整日志文件 |
 | `/api/v1/server/shutdown`                 | POST | 优雅关闭服务器        |
+| `/api/v1/download/context`                | GET  | 下载页首屏聚合状态（公开） |
 | `/api/v1/errors`                          | GET  | 失败推文摘要 |
 | `/api/v1/errors/retry`                    | POST | 重试所有历史失败推文 |
 | `/api/v1/errors`                          | DELETE | 清除所有失败推文记录 |
@@ -4235,6 +4541,8 @@ TASK_ID=$(curl -s -X POST http://localhost:25556/api/v1/lists/123456789/download
 | `/api/v1/batch/download`        | `follow_members` | bool     | 否  | 下载时关注目标/成员          |
 | `/api/v1/batch/download`        | `skip_profile` | bool      | 否  | 跳过 Profile 下载（默认下载） |
 | `/api/v1/batch/download`        | `no_retry`     | bool      | 否  | 失败后不重试              |
+| `/api/v1/tasks/batch/{cancel,retry,delete}` | `task_ids` | []string | 是 | 任务 ID 列表，最多 100 个 |
+| `/api/v1/tasks/query` | `status`、`type`、`q`、`page`、`pageSize`、`sortBy`、`sortOrder` | string/int | 否 | 任务过滤、搜索、排序与分页，详见「10.1 查询任务」 |
 
 **说明：**
 - `是*` 表示 JSON Body 模式的 `paths` 和 multipart 模式的 `files` 二选一，根据 `Content-Type` 自动判断。

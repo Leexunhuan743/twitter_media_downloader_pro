@@ -25,23 +25,6 @@ func makeUrl(api api) string {
 	return u.String()
 }
 
-type userByRestId struct {
-	restId uint64
-}
-
-func (*userByRestId) Path() string {
-	return "/i/api/graphql/CO4_gU4G_MRREoqfiTh6Hg/UserByRestId"
-}
-
-func (a *userByRestId) QueryParam() url.Values {
-	v := url.Values{}
-	variables := `{"userId":"%d","withSafetyModeUserFields":true}`
-	v.Set("variables", fmt.Sprintf(variables, a.restId))
-	features := `{"hidden_profile_likes_enabled":true,"hidden_profile_subscriptions_enabled":true,"rweb_tipjar_consumption_enabled":true,"responsive_web_graphql_exclude_directive_enabled":true,"verified_phone_label_enabled":false,"highlights_tweets_tab_ui_enabled":true,"responsive_web_twitter_article_notes_tab_enabled":true,"subscriptions_feature_can_gift_premium":false,"creator_subscriptions_tweet_preview_api_enabled":true,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"responsive_web_graphql_timeline_navigation_enabled":true}`
-	v.Set("features", features)
-	return v
-}
-
 type userByScreenName struct {
 	screenName string
 }

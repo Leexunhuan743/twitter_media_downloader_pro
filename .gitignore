@@ -92,6 +92,7 @@ todo.md
 .gitnexus/
 
 # === Agent / Docs (not part of source) ===
+.scratch/
 CONTEXT.md
 docs/
 course/

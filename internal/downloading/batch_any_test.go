@@ -138,33 +138,6 @@ func TestBatchDownloadAny_WithBoth(t *testing.T) {
 		t.Error("BatchDownloadAny() should return an error when download dependencies are missing")
 	}
 }
-
-func TestBatchDownloadAny_CancelledContext(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
-	tempDir := t.TempDir()
-
-	mockList := &MockList{
-		id:      12345,
-		name:    "Test List",
-		members: []*twitter.User{},
-		err:     nil,
-	}
-
-	_, _, _, err := BatchDownloadAny(ctx, nil, db, []twitter.ListBase{mockList}, []*twitter.User{}, tempDir, tempDir, false, nil, nil, nil, RuntimeOptions{}, nil, nil)
-
-	// With a cancelled context, the list's GetMembers should check context
-	// and return an error. BatchDownloadAny should propagate it.
-	if err == nil {
-		t.Log("BatchDownloadAny should ideally return context.Canceled for cancelled context")
-		// The function may not check context in all paths; this is informational.
-	}
-}
-
 func TestBatchDownloadAny_ListError(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()

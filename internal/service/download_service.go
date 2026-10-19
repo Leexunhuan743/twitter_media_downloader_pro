@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -111,6 +112,7 @@ func (s *downloadServiceImpl) completeTask(taskID string, reporter ProgressRepor
 			profile := *stats.Profile
 			result.Profile = &profile
 		}
+		result.FailedDetails = append([]string(nil), stats.FailedDetails...)
 	}
 	reporter.OnComplete(taskID, result)
 }
@@ -122,14 +124,36 @@ func (s *downloadServiceImpl) completeProfileTask(taskID string, reporter Progre
 	}
 	profile := *profileResult
 	reporter.OnComplete(taskID, Result{
-		Profile: &profile,
-		Message: formatProfileCompletionMessage(profile),
+		Profile:       &profile,
+		Message:       formatProfileCompletionMessage(profile),
+		FailedDetails: append([]string(nil), profileResult.FailedDetails...),
 	})
 }
 
 func downloadOptionsSummary(opts DownloadOptions) string {
 	return fmt.Sprintf("auto_follow=%t follow_members=%t skip_profile=%t no_retry=%t",
 		opts.AutoFollow, opts.FollowMembers, opts.SkipProfile, opts.NoRetry)
+}
+
+// jsonFailureDetails 把按来源分组的失败推文转成可展示明细（按路径排序，最多 50 条）。
+func jsonFailureDetails(failedBySource map[string][]downloading.JsonPackagedTweet) []string {
+	if len(failedBySource) == 0 {
+		return nil
+	}
+	const maxDetails = 50
+	paths := make([]string, 0, len(failedBySource))
+	for sourcePath := range failedBySource {
+		paths = append(paths, sourcePath)
+	}
+	sort.Strings(paths)
+	details := make([]string, 0, min(len(paths), maxDetails))
+	for _, sourcePath := range paths {
+		if len(details) >= maxDetails {
+			break
+		}
+		details = append(details, fmt.Sprintf("%s: %d failed", sourcePath, len(failedBySource[sourcePath])))
+	}
+	return details
 }
 
 func safeDownloadError(err error) string {
@@ -493,10 +517,14 @@ func (s *downloadServiceImpl) executeDownloadTemplate(ctx context.Context, confi
 		log.Infof("[download] Profile skipped reason=skip_profile users=%d", len(profileTargetUsers))
 	}
 
-	s.completeTask(config.TaskID, reporter, config.CompletionMessage, &Result{
+	completion := &Result{
 		Main:    s.buildMainDownloadResult(summary, countRemainingFailedEntities(dumper, mainFailures)),
 		Profile: cloneProfileResult(profileResult),
-	}, profileWarning)
+	}
+	if profileResult != nil {
+		completion.FailedDetails = append([]string(nil), profileResult.FailedDetails...)
+	}
+	s.completeTask(config.TaskID, reporter, config.CompletionMessage, completion, profileWarning)
 	log.Infof("[download] Complete dur=%s", time.Since(start))
 
 	return nil
@@ -756,7 +784,8 @@ func (s *downloadServiceImpl) JsonFileDownload(ctx context.Context, taskID strin
 			Downloaded: successCount,
 			Failed:     failCount,
 		},
-		Message: fmt.Sprintf("JSON file download: %d success, %d failed, %d media", successCount, failCount, totalMedia),
+		Message:       fmt.Sprintf("JSON file download: %d success, %d failed, %d media", successCount, failCount, totalMedia),
+		FailedDetails: jsonFailureDetails(failedBySource),
 	})
 	return nil
 }
@@ -811,7 +840,8 @@ func (s *downloadServiceImpl) JsonFolderDownload(ctx context.Context, taskID str
 			Downloaded: successCount,
 			Failed:     failCount,
 		},
-		Message: fmt.Sprintf("JSON folder download: %d success, %d failed", successCount, failCount),
+		Message:       fmt.Sprintf("JSON folder download: %d success, %d failed", successCount, failCount),
+		FailedDetails: jsonFailureDetails(failedBySource),
 	})
 	return nil
 }
@@ -1110,9 +1140,10 @@ func (s *downloadServiceImpl) downloadProfile(ctx context.Context, taskID string
 	}
 
 	profileResult := &ProfileResult{
-		Downloaded: successCount,
-		Failed:     failCount,
-		Versioned:  versionedFileCount,
+		Downloaded:    successCount,
+		Failed:        failCount,
+		Versioned:     versionedFileCount,
+		FailedDetails: failedDetails,
 	}
 
 	// 输出完整失败明细日志（即使部分失败也仍返回 nil，但日志记录所有失败用户和原因）
@@ -1158,6 +1189,9 @@ func cloneProfileResult(result *ProfileResult) *ProfileResult {
 		return nil
 	}
 	clone := *result
+	if len(result.FailedDetails) > 0 {
+		clone.FailedDetails = append([]string(nil), result.FailedDetails...)
+	}
 	return &clone
 }
 

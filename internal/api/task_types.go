@@ -102,10 +102,14 @@ type TaskProfileResult struct {
 }
 
 type TaskResult struct {
-	Main    *TaskMainResult    `json:"main,omitempty"`
-	Profile *TaskProfileResult `json:"profile,omitempty"`
-	Message string             `json:"message,omitempty"`
+	Main          *TaskMainResult    `json:"main,omitempty"`
+	Profile       *TaskProfileResult `json:"profile,omitempty"`
+	Message       string             `json:"message,omitempty"`
+	FailedDetails []string           `json:"failed_details,omitempty"`
 }
+
+// maxTaskFailedDetails 限制任务结果里保留的失败明细条数，避免响应与 SSE 帧膨胀。
+const maxTaskFailedDetails = 50
 
 func taskTypeName(t TaskType) string {
 	switch t {

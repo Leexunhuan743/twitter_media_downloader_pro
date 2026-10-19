@@ -20,9 +20,9 @@ import (
 )
 
 const (
-	MinFileNameLen        = 50
-	MaxFileNameLen        = 245
-	MaxDownloadRoutine    = 100
+	MinFileNameLen         = 50
+	MaxFileNameLen         = 245
+	MaxDownloadRoutine     = 100
 	MinUserFetchConcurrent = 1
 	MaxUserFetchConcurrent = 35
 )
@@ -44,14 +44,14 @@ type Cookie struct {
 }
 
 type Config struct {
-	RootPath              string `yaml:"root_path"`
-	Cookie                Cookie `yaml:"cookie"`
-	MaxDownloadRoutine    int    `yaml:"max_download_routine"`
-	MaxUserFetchConcurrent int   `yaml:"max_user_fetch_concurrent"`
-	MaxFileNameLen        int    `yaml:"max_file_name_len"`
-	ProxyURL              string `yaml:"proxy_url"`
-	APIKey                string `yaml:"api_key"`
-	BindAddress           string `yaml:"bind_address"`
+	RootPath               string `yaml:"root_path"`
+	Cookie                 Cookie `yaml:"cookie"`
+	MaxDownloadRoutine     int    `yaml:"max_download_routine"`
+	MaxUserFetchConcurrent int    `yaml:"max_user_fetch_concurrent"`
+	MaxFileNameLen         int    `yaml:"max_file_name_len"`
+	ProxyURL               string `yaml:"proxy_url"`
+	APIKey                 string `yaml:"api_key"`
+	BindAddress            string `yaml:"bind_address"`
 }
 type BotConfig struct {
 	Telegram *TelegramBotConfig `yaml:"telegram,omitempty"`
@@ -558,11 +558,6 @@ func LoadBotConfig(path string) (*BotConfig, error) {
 		return nil, err
 	}
 	return conf, nil
-}
-
-// WriteBotConfig 将 Bot 配置写入 YAML 文件
-func WriteBotConfig(path string, conf *BotConfig) error {
-	return writeYAMLFile(path, conf)
 }
 
 func ReadAdditionalCookies(path string) ([]*Cookie, error) {

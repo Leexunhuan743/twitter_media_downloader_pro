@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jmoiron/sqlx"
 	"github.com/unkmonster/tmd/internal/twitter"
 )
 
@@ -247,31 +246,6 @@ func TestTweetDumper_Dump_FileContent(t *testing.T) {
 		t.Errorf("Expected tweet ID 12345, got %d", data["1"][0].Id)
 	}
 }
-
-func TestTweetDumper_GetTotal(t *testing.T) {
-	// This test requires a database connection
-	// We'll test the basic structure without DB
-	dumper := NewDumper()
-
-	tweets := []*twitter.Tweet{
-		{Id: 1, Text: "tweet 1", CreatedAt: time.Now()},
-		{Id: 2, Text: "tweet 2", CreatedAt: time.Now()},
-	}
-
-	dumper.Push(1, tweets...)
-
-	// GetTotal requires a database, so we just verify it doesn't panic
-	// with a nil DB (it will return an error or panic depending on implementation)
-	defer func() {
-		if r := recover(); r != nil {
-			// Expected panic with nil DB
-		}
-	}()
-
-	// This will fail because we don't have a real DB, but that's expected
-	_, _ = dumper.GetTotal((*sqlx.DB)(nil))
-}
-
 func TestTweetDumper_MultipleEntities(t *testing.T) {
 	dumper := NewDumper()
 

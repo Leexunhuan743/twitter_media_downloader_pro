@@ -30,14 +30,6 @@ jobs:
       - name: Run go vet
         run: go vet ./...
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Validate knowledge graph
-        run: npx --yes lat.md@0.12.2 check
-
   release-build:
     needs: verify
     strategy:

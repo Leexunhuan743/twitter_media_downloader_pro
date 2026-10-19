@@ -40,6 +40,13 @@ func (r *SSEProgressReporter) OnComplete(taskID string, result service.Result) {
 	r.log.OnComplete(taskID, result)
 	// 自动更新任务结果和状态，避免竞态条件
 	taskResult := &TaskResult{Message: result.Message}
+	if len(result.FailedDetails) > 0 {
+		details := result.FailedDetails
+		if len(details) > maxTaskFailedDetails {
+			details = details[:maxTaskFailedDetails]
+		}
+		taskResult.FailedDetails = append([]string(nil), details...)
+	}
 	if result.Main != nil {
 		taskResult.Main = &TaskMainResult{
 			Downloaded: result.Main.Downloaded,

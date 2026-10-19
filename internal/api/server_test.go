@@ -2519,21 +2519,6 @@ func TestWriteError(t *testing.T) {
 	assert.False(t, resp.Success)
 	assert.Equal(t, "test error", resp.Error)
 }
-
-func TestServer_Start(t *testing.T) {
-	// 这个测试主要验证 Start 方法不会 panic
-	// 实际启动服务器会阻塞，所以只验证配置
-	server, db := setupTestServer(t)
-	defer db.Close()
-
-	// 验证服务器配置正确
-	assert.NotNil(t, server)
-	assert.NotNil(t, server.client)
-	assert.NotNil(t, server.db)
-	assert.NotNil(t, server.config)
-	assert.NotNil(t, server.taskManager)
-}
-
 func TestServer_GracefulShutdownCompletes(t *testing.T) {
 	server, _ := setupTestServer(t)
 	server.GracefulShutdown("shutdown")
@@ -2572,9 +2557,10 @@ func TestServer_StartDoesNotHoldLifecycleLockWhileBotStarts(t *testing.T) {
 
 	lockAvailable := make(chan struct{})
 	go func() {
-		server.lifecycleMu.Lock()
-		server.lifecycleMu.Unlock()
-		close(lockAvailable)
+		if server.lifecycleMu.TryLock() {
+			server.lifecycleMu.Unlock()
+			close(lockAvailable)
+		}
 	}()
 	select {
 	case <-lockAvailable:
@@ -2939,41 +2925,6 @@ func TestServer_LargeResponse(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Greater(t, rr.Body.Len(), 0)
 }
-
-func TestServer_RequestPathVariations(t *testing.T) {
-	server, db := setupTestServer(t)
-	defer db.Close()
-
-	tests := []struct {
-		name   string
-		method string
-		path   string
-	}{
-		{"健康检查 GET", http.MethodGet, "/api/v1/health"},
-		{"配置 GET", http.MethodGet, "/api/v1/config"},
-		{"任务列表 GET", http.MethodGet, "/api/v1/tasks"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, tt.path, nil)
-			rr := httptest.NewRecorder()
-
-			// 根据路径调用相应的 handler
-			switch {
-			case strings.HasSuffix(tt.path, "/health"):
-				server.handleHealth(rr, req)
-			case strings.HasSuffix(tt.path, "/config"):
-				server.handleConfig(rr, req)
-			case strings.HasSuffix(tt.path, "/tasks") && !strings.Contains(tt.path, "task_id"):
-				server.handleTasks(rr, req)
-			}
-
-			// 验证不会 panic
-		})
-	}
-}
-
 func TestHandleTaskStats(t *testing.T) {
 	t.Run("空统计", func(t *testing.T) {
 		server, db := setupTestServer(t)
@@ -3326,15 +3277,15 @@ func TestHandleGetTheme_ReturnsDefault(t *testing.T) {
 
 	data, ok := resp.Data.(map[string]interface{})
 	assert.True(t, ok)
-	assert.Equal(t, "web1", data["theme"])
+	assert.Equal(t, "download", data["theme"])
 }
 
-func TestHandleSetTheme_SwitchesToWeb2(t *testing.T) {
+func TestHandleSetTheme_SwitchesToDownload(t *testing.T) {
 	orig := getFrontendTheme()
 	defer setFrontendTheme(orig)
 
 	server := &Server{}
-	body := `{"theme":"web2"}`
+	body := `{"theme":"download"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/config/theme", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -3349,8 +3300,8 @@ func TestHandleSetTheme_SwitchesToWeb2(t *testing.T) {
 
 	data, ok := resp.Data.(map[string]interface{})
 	assert.True(t, ok)
-	assert.Equal(t, "web2", data["theme"])
-	assert.Equal(t, "web2", getFrontendTheme())
+	assert.Equal(t, "download", data["theme"])
+	assert.Equal(t, "download", getFrontendTheme())
 }
 
 func TestHandleSetTheme_InvalidBody(t *testing.T) {
@@ -3405,8 +3356,7 @@ func TestHandleGetThemes_ReturnsList(t *testing.T) {
 
 	themes, ok := data["themes"].([]interface{})
 	assert.True(t, ok)
-	assert.Contains(t, themes, "web1")
-	assert.Contains(t, themes, "web2")
+	assert.Contains(t, themes, "download")
 
 	current, ok := data["current"].(string)
 	assert.True(t, ok)

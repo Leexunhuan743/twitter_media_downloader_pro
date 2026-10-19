@@ -141,7 +141,7 @@ func TestProfileDownloader_Download_InvalidRequest(t *testing.T) {
 		Name:   "",
 	}
 
-	result, err = pd.Download(context.Background(), req)
+	_, err = pd.Download(context.Background(), req)
 	if err == nil {
 		t.Error("Download() with empty Name should return error")
 	}

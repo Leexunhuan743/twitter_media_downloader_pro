@@ -189,6 +189,9 @@ func cloneTaskResult(result *TaskResult) *TaskResult {
 	}
 
 	clone := *result
+	if len(result.FailedDetails) > 0 {
+		clone.FailedDetails = append([]string(nil), result.FailedDetails...)
+	}
 	if result.Main != nil {
 		main := *result.Main
 		clone.Main = &main

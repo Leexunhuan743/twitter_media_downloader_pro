@@ -48,22 +48,6 @@ func TestSSEProgressReporter_OnProgress(t *testing.T) {
 	assert.Equal(t, 50, updatedTask.Progress.Completed)
 	assert.Equal(t, 5, updatedTask.Progress.Failed)
 }
-
-func TestSSEProgressReporter_OnProgress_NotFound(t *testing.T) {
-	server := &Server{
-		taskManager: NewTaskManager(nil),
-	}
-
-	reporter := NewSSEProgressReporter(server)
-
-	progress := service.Progress{
-		Total:     100,
-		Completed: 50,
-	}
-
-	reporter.OnProgress("non_existent_task", progress)
-}
-
 func TestSSEProgressReporter_OnComplete(t *testing.T) {
 	tm := NewTaskManager(nil)
 	server := &Server{

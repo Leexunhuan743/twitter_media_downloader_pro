@@ -297,16 +297,17 @@ func TestSanitizeURLMasksEncodedKeyCarryingSensitiveValue(t *testing.T) {
 }
 
 func TestSanitizeHeadersHandlesNonCanonicalSensitiveNames(t *testing.T) {
-	h := http.Header{
+	raw := map[string][]string{
 		"authorization": {"Bearer lower-secret"},
 		"x-api-key":     {"api-secret"},
 	}
+	h := http.Header(raw)
 
 	got := SanitizeHeaders(h)
 	gotText := fmt.Sprint(got)
 
 	assert.NotContains(t, gotText, "lower-secret")
 	assert.NotContains(t, gotText, "api-secret")
-	assert.Equal(t, "Bearer lower-secret", h["authorization"][0])
-	assert.Equal(t, "api-secret", h["x-api-key"][0])
+	assert.Equal(t, "Bearer lower-secret", raw["authorization"][0])
+	assert.Equal(t, "api-secret", raw["x-api-key"][0])
 }

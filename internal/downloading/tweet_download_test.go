@@ -39,15 +39,6 @@ func captureTweetDownloadLog(t *testing.T, fn func()) string {
 	return buf.String()
 }
 
-type mockTweetFileWriter struct {
-	result downloader.WriteResult
-	err    error
-}
-
-func (m *mockTweetFileWriter) Write(req downloader.WriteRequest) (downloader.WriteResult, error) {
-	return m.result, m.err
-}
-
 type mockTweetDownloader struct {
 	results  map[string]mockTweetDownloadResult
 	requests []downloader.DownloadRequest
@@ -544,33 +535,6 @@ func TestBatchDownloadTweet_Empty(t *testing.T) {
 		t.Errorf("BatchDownloadTweet() with empty input = %v, want nil", result)
 	}
 }
-
-func TestBatchDownloadTweet_WithTweets(t *testing.T) {
-	ctx := context.Background()
-
-	tweets := []PackagedTweet{
-		&TweetInEntity{
-			Tweet: &twitter.Tweet{
-				Id:        1,
-				Text:      "Test tweet",
-				Urls:      []string{"http://example.com/image.jpg"},
-				CreatedAt: time.Now(),
-			},
-			Entity: nil,
-		},
-	}
-
-	// This will fail because we don't have real downloader/fileWriter
-	// but it tests the function signature and basic flow
-	defer func() {
-		if r := recover(); r != nil {
-			t.Logf("BatchDownloadTweet panicked as expected: %v", r)
-		}
-	}()
-
-	_ = BatchDownloadTweet(ctx, nil, false, nil, nil, RuntimeOptions{}, nil, tweets...)
-}
-
 func TestBatchDownloadTweet_ReportsFailedTweet(t *testing.T) {
 	ctx := context.Background()
 	var called bool

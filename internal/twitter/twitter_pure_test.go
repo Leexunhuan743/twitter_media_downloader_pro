@@ -54,15 +54,6 @@ func TestCheckApiResp_ErrorCode214NoData(t *testing.T) {
 		t.Fatal("expected error for code 214 without data, got nil")
 	}
 }
-
-func TestCheckApiResp_InvalidJSON(t *testing.T) {
-	body := []byte(`not json`)
-	err := CheckApiResp(body)
-	if err != nil {
-		t.Logf("got expected error for invalid JSON: %v", err)
-	}
-}
-
 func TestCheckApiResp_NoCodeInExtensions(t *testing.T) {
 	// errors array exists but no extensions.code field
 	body := []byte(`{"errors": [{"message": "some error"}]}`)
@@ -168,27 +159,6 @@ func TestUser_IsVisiable_ProtectedUnfollowed(t *testing.T) {
 	if u.IsVisiable() {
 		t.Error("expected IsVisiable()=false for protected unfollowed user")
 	}
-}
-
-func TestUser_IsVisiable_ProtectedRequested(t *testing.T) {
-	u := User{
-		IsProtected: true,
-		Followstate: FS_REQUESTED,
-	}
-	// IsVisiable returns Followstate == FS_FOLLOWING || !IsProtected
-	// FS_REQUESTED is NOT FS_FOLLOWING, and IsProtected=true
-	if u.IsVisiable() {
-		t.Log("IsVisiable=true for FS_REQUESTED (as expected)")
-	} else {
-		t.Log("IsVisiable=false for FS_REQUESTED (also valid — only FS_FOLLOWING counts)")
-	}
-}
-
-func TestUser_Following(t *testing.T) {
-	u := User{
-		ScreenName: "testuser",
-	}
-	_ = u.Following()
 }
 
 // ==================== FollowState 常量测试 ====================

@@ -1,22 +1,23 @@
-# 获取 Cookie
-1. 使用 Chrome 浏览器打开 https://twitter.com 后，按`F12` 打开开发者控制台
-2. 选中顶部 `应用`，并复制对应项的值
+# 获取 Cookie、list_id 与 screen_name
 
-​	![ 2024-06-25 093928.png](https://s2.loli.net/2024/06/25/O6PwWGoqYLZAJXc.png)
+## 获取 Cookie
 
-# 获取 list_id, user_id, screen_name
-## list_id
+1. 用 Chrome 打开 <https://x.com> 并登录。
+2. 按 `F12` 打开开发者工具，切到 **Application（应用）** → **Cookies** → `https://x.com`。
+3. 复制 `auth_token` 与 `ct0` 两个值。
+4. 填入配置，三种入口任选：
+   - 交互式向导：`tmdp -conf`
+   - 直接编辑 `conf.yaml` 的 cookie 字段
+   - Web 控制台 **系统** 页的 Cookie 编辑器（支持多账号）
 
-![image-20240622184027270.png](https://s2.loli.net/2024/06/22/M4xmVUkZ6DpPrds.png "list_id")
+> Cookie 等同于账号凭据，不要提交到仓库、粘贴到公开渠道或分享给他人。账号被限制访问时，先确认 Cookie 未过期。
 
-## 用户的 screen_name
+## 获取 list_id
 
-![ 2024-06-22 185026.png](https://s2.loli.net/2024/06/22/u45c1nUwHOKtbjE.png "用户的screen_name")
+打开要下载的列表页，URL 形如 `https://x.com/i/lists/1234567890`，其中 `1234567890` 就是 list_id。
 
-## user_id
+## 获取 screen_name
 
-user_id 是 Twitter 用户的唯一数字标识符。可以通过以下方式获取：
+screen_name 是用户名（不含 `@`）。个人主页 URL 形如 `https://x.com/elonmusk`，路径最后一段即 screen_name；命令行也可直接写 `@elonmusk`。
 
-1. 使用第三方工具如 [twitter-id](https://twitter-id.vercel.app/) 查找
-2. 通过 API 响应中的 `user.id` 字段获取
-3. 在浏览器开发者工具的 Network 标签页中，查看 Twitter API 请求响应中的 `rest_id` 字段
+Web 控制台的下载页支持直接粘贴个人主页、推文或列表链接，由页面解析出 screen_name 或 list_id，无需手工提取。

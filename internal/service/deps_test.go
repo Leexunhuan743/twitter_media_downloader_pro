@@ -11,20 +11,6 @@ import (
 	"github.com/unkmonster/tmd/internal/config"
 )
 
-func TestDependencies_Struct(t *testing.T) {
-	tempDir := t.TempDir()
-	deps := &Dependencies{
-		Client:            resty.New(),
-		AdditionalClients: []*resty.Client{resty.New(), resty.New()},
-		Config:            &config.Config{RootPath: tempDir},
-	}
-
-	assert.NotNil(t, deps.Client)
-	assert.Len(t, deps.AdditionalClients, 2)
-	assert.NotNil(t, deps.Config)
-	assert.Equal(t, tempDir, deps.Config.RootPath)
-}
-
 func TestDependencies_Validate(t *testing.T) {
 	tests := []struct {
 		name    string

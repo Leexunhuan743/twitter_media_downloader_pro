@@ -2,7 +2,7 @@
 
 > **版本**: 3.7.2 | **状态**: 活跃维护 | **许可证**: GPL-3.0
 
-Twitter Media Downloader Pro（简称 `tmdp`）的代码基于 [unkmonster/tmd](https://github.com/unkmonster/tmd) 项目，修改了部分代码，添加了新的功能特性。新增的功能见 [CHANGELOG.md文件](CHANGELOG.md)
+Twitter Media Downloader Pro（简称 `tmdp`）基于 [unkmonster/tmd](https://github.com/unkmonster/tmd) 修改并扩展，新增功能与版本变更见 [Releases](https://github.com/Leexunhuan743/twitter_media_downloader_pro/releases)。
 
 ## 目录
 
@@ -34,11 +34,9 @@ Twitter Media Downloader Pro（简称 `tmdp`）的代码基于 [unkmonster/tmd](
 
 - [日志系统详解](#日志系统详解)
 
-- [项目架构](#项目架构)
-
 - [常见问题](#常见问题)
 
-- [输出结果格式](#输出结果格式)
+- [项目架构](#项目架构)
 
 - [性能参考](#性能参考)
 
@@ -94,13 +92,14 @@ Twitter Media Downloader Pro（简称 `tmdp`）的代码基于 [unkmonster/tmd](
 
 **2.1 直接下载（推荐）**
 
-前往 [Release](https://github.com/Leexunhuan743/twitter_media_downloader_pro/releases/latest) 下载对应平台的单文件可执行程序：
+前往 [Release](https://github.com/Leexunhuan743/twitter_media_downloader_pro/releases/latest) 下载对应平台的单文件可执行程序（每个平台提供 amd64 与 arm64 版本）：
 
-| 平台      | 文件名                      |
-| ------- | ------------------------ |
-| Windows | `tmdp-windows-amd64.exe` |
-| Linux   | `tmdp-linux-amd64`       |
-| macOS   | `tmdp-darwin-amd64`      |
+| 平台 | 文件名 |
+| --- | --- |
+| Windows | `tmdp-windows-amd64.exe` / `tmdp-windows-arm64.exe` |
+| Linux | `tmdp-linux-amd64` / `tmdp-linux-arm64` |
+| macOS | `tmdp-darwin-amd64` / `tmdp-darwin-arm64` |
+| 校验文件 | `checksums.txt` |
 
 > **单文件，无依赖**：下载后即可直接运行，无需安装任何运行时或依赖库。放桌面就能用，放到 `PATH` 目录下更方便全局调用。
 
@@ -116,33 +115,39 @@ tmdp-windows-amd64.exe
 
 > 注意：Twitter Media Downloader Pro 是命令行程序，当前可执行文件/命令名仍为 `tmdp`，请在终端中运行，**不要直接双击 exe 文件**（会一闪而过）。
 
-首次运行会自动检测配置文件，不存在时进入**交互式配置向导**，依次填写：
+首次运行会自动检测配置文件，不存在时进入**交互式配置向导**，依次填写 8 项：
 
 1. 下载根目录 storage dir（必填）
 2. `auth_token`
 3. `ct0`
-4. max download routine（最大并发下载数）
-5. max file name len（最大文件名长度）
-6. proxy_url（可留空）
-7. api_key（可留空，设置后开启 HTTP 认证）
+4. max download routine（最大并发下载数，1-100）
+5. max user media fetch concurrent（UserMedia 抓取并发，0-35，0=使用默认值）
+6. max file name len（最大文件名长度，50-245）
+7. proxy_url（可留空）
+8. api_key（可留空，设置后开启 HTTP 认证）
 
 配置完成后即可正常使用。
 
 > 注意：若设置了任一 `TMD_*` 环境变量（且未加 `-conf`），首次运行将跳过向导，直接使用环境变量配置。
+>
+> ⚠️ `-conf` 是**全量重填**：括号内显示的是各项默认值而不是当前值，直接回车会写入默认值或清空字符串字段，需要保留的旧值必须手动重新输入。
 
 如需重新配置或修改参数，Windows 当前目录下运行 `.\tmdp-windows-amd64.exe -conf`（或重命名后运行 `.\tmdp.exe -conf`）可再次进入配置向导。若已加入 `PATH`，也可以直接运行 `tmdp -conf`。各配置项说明如下：
 
-| 配置项                  | 说明                              | 默认值                 | 示例                      |
-| -------------------- | ------------------------------- | ------------------- | ----------------------- |
-| storage dir          | 文件存储目录                          | 无（必填）               | `D:\twitter_downloads`  |
-| auth_token          | Twitter Cookie 中的 auth_token   | 无（必填）               | `a1b2c3d4e5f6...`       |
-| ct0                  | Twitter Cookie 中的 ct0           | 无（必填）               | `x1y2z3...`             |
-| max download routine | 最大并发下载数（范围 1-100）               | `min(100, CPU×10)`¹ | `35`                    |
-| max file name len    | 最大文件名长度（50-245）                 | `158`               | `158`                   |
-| proxy_url           | 代理服务器 URL（支持 http/https/socks5/socks5h） | 空（使用 HTTP_PROXY/HTTPS_PROXY 环境变量代理；均未设置则直连） | `http://127.0.0.1:7890` |
-| api_key             | 可选：API Key 认证（设置后开启 HTTP 认证，至少 8 字符） | 空（不启用）                | `your-api-key`         |
+| 配置项 | 说明 | 默认值 | 示例 |
+| --- | --- | --- | --- |
+| storage dir | 文件存储目录 | 无（必填） | `D:\twitter_downloads` |
+| auth_token | Twitter Cookie 中的 auth_token | 无（必填） | `a1b2c3d4e5f6...` |
+| ct0 | Twitter Cookie 中的 ct0 | 无（必填） | `x1y2z3...` |
+| max download routine | 最大并发下载数（1-100） | `min(50, CPU×10)`¹ | `35` |
+| max user media fetch concurrent | UserMedia 抓取并发（0-35，0=默认） | `3` | `3` |
+| max file name len | 最大文件名长度（50-245） | `158` | `158` |
+| proxy_url | 代理 URL（http/https/socks5/socks5h） | 空（用 HTTP_PROXY/HTTPS_PROXY；均未设置则直连） | `http://127.0.0.1:7890` |
+| api_key | 可选：API Key 认证（设置后开启 HTTP 认证，至少 8 字符） | 空（不启用） | `your-api-key` |
 
-> ¹ `max download routine` 默认值为 `min(100, runtime.GOMAXPROCS(0)*10)`，即 CPU 核数的 10 倍且不超过 100。
+> ¹ `max download routine` 默认值为 `min(50, runtime.GOMAXPROCS(0)*10)`，即 CPU 核数的 10 倍且不超过 50。
+
+`bind_address` 不在向导中询问，只能编辑 `conf.yaml`：它是 API Server 的监听地址（仅 `-server` 生效），留空监听所有网卡；仅本机访问时设为 `127.0.0.1:25556`。
 
 **快速上手示例**
 
@@ -179,19 +184,21 @@ GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o tmdp-macos .
 
 ### 3. Docker
 
-项目通过 GitHub Actions 自动发布 Docker 镜像到 **Docker Hub** 和 **GHCR** 双仓库，两者镜像内容完全一致，任选其一即可：
+项目通过 GitHub Actions 在推送 `v*` 标签时发布 Docker 镜像到 **Docker Hub** 和 **GHCR** 双仓库，两者镜像内容完全一致，任选其一即可：
 
-| 镜像源                | 地址                                                         |
-| ------------------ | ---------------------------------------------------------- |
-| **Docker Hub**（推荐） | `docker.io/leeexx00/tmdp:<tag>`                            |
-| **GHCR**           | `ghcr.io/leexunhuan743/twitter_media_downloader_pro:<tag>` |
+| 镜像源 | 地址 |
+| --- | --- |
+| **Docker Hub**（推荐） | `docker.io/leeexx00/tmdp:<tag>` |
+| **GHCR** | `ghcr.io/leexunhuan743/twitter_media_downloader_pro:<tag>` |
+
+每次发布都会推送与 git tag 同名的镜像标签（如 `:3.7.2`）。**`:latest` 不会随每次发版自动刷新**（仅在手动触发的发布 workflow 中更新），生产环境请固定版本标签：
 
 ```bash
 # Docker Hub
-docker pull leeexx00/tmdp:latest
+docker pull leeexx00/tmdp:3.7.2
 
 # GHCR
-docker pull ghcr.io/leexunhuan743/twitter_media_downloader_pro:latest
+docker pull ghcr.io/leexunhuan743/twitter_media_downloader_pro:3.7.2
 ```
 
 **推荐方式：使用 docker compose**
@@ -228,7 +235,7 @@ docker compose ps
 docker compose logs -f
 ```
 
-README 中的 compose 示例与仓库根目录的 [docker-compose.yml](./docker-compose.yml) 保持一致（默认使用 Docker Hub 镜像源）：
+README 中的 compose 示例与仓库根目录的 [docker-compose.yml](./docker-compose.yml) 保持一致（默认使用 Docker Hub 镜像源）。需要可复现部署时，把示例里的 `:latest` 换成具体版本标签；`:latest` 只在手动触发的发布中刷新，可能落后于最新 tag。
 
 ```yaml
 services:
@@ -309,7 +316,7 @@ http://localhost:25556/api/v1/health
 
 - `TMD_MAX_DOWNLOAD_ROUTINE`：可选，默认由程序按 `min(50, CPU×10)` 计算；示例中设为 `8`
 
-- `TMD_MAX_USER_FETCH_CONCURRENT`：可选，默认 `3`，范围 `1-35`，控制 UserMedia 抓取并发
+- `TMD_MAX_USER_FETCH_CONCURRENT`：可选，默认 `3`，范围 `0-35`（0=默认），控制 UserMedia 抓取并发
 
 - `TMD_MAX_FILE_NAME_LEN`：可选，默认 `158`
 
@@ -339,6 +346,18 @@ http://localhost:25556/api/v1/health
 | Bot 配置    | `$HOME/.tmd2/bot_config.yaml`         | 六平台 Bot 配置：Telegram/Discord/WeChat/Feishu（命令控制）+ Gotify/Pushover（仅推送）。仅 Server 模式启动时自动生成（文件不存在时），CLI 模式不生成 |
 | 日志文件      | `$HOME/.tmd2/tmd2.log`                | 主日志（全量：所有域的 logrus 日志，级别随 `-dbg`）          |
 | HTTP 客户端日志 | `$HOME/.tmd2/client.log`              | Twitter API 客户端的全量请求/响应日志（方法、URL、状态码、耗时、headers、body） |
+
+**环境变量（覆盖 `conf.yaml` 对应项）**
+
+| 变量 | 说明 |
+| --- | --- |
+| `TMD_HOME` | 应用配置目录（默认 `%APPDATA%\.tmd2` / `~/.tmd2`），决定 `conf.yaml`、日志与 `bot_config.yaml` 的位置 |
+| `TMD_PORT` | API Server 端口（仅 `-server` 生效，默认 `25556`） |
+| `TMD_ROOT_PATH` | 存储根目录（覆盖 `root_path`） |
+| `TMD_AUTH_TOKEN` / `TMD_CT0` | Twitter Cookie |
+| `TMD_API_KEY` | API Key 认证 |
+| `TMD_PROXY_URL` | 代理地址 |
+| `TMD_MAX_DOWNLOAD_ROUTINE` / `TMD_MAX_USER_FETCH_CONCURRENT` / `TMD_MAX_FILE_NAME_LEN` | 并发与文件名长度 |
 
 **获取 Cookie**
 
@@ -375,20 +394,8 @@ http://localhost:25556/api/v1/health
 
 ### 数据隐私
 
-所有下载的数据**仅存储在本地**，不会上传到任何第三方服务器：
+所有下载的数据**仅存储在本地**，不会上传到任何第三方服务器；完整目录布局见[文件存储结构](#文件存储结构)。
 
-```
-{存储目录}/
-├── users/              # 推文媒体文件（图片/视频/GIF）
-│   └── {用户名}/
-│       ├── .loongtweet/   # 推文元数据（JSON/TXT）
-│       │   └── .profile/ # 用户资料（头像/横幅/简介）
-│       └── {日期}/        # 按日期组织的媒体文件
-├── .data/
-│   ├── foo.db          # SQLite 数据库（用户/列表/实体关系）
-│   └── errors.json     # 失败推文记录
-└── ...
-```
 
 **数据保护建议：**
 
@@ -479,7 +486,7 @@ server {
 }
 ```
 
-> 详细设计文档见 [`doc/tmd-api-auth-layer.md`](doc/tmd-api-auth-layer.md)，完整 API 文档见 [`doc/API_DOCUMENTATION.md`](doc/API_DOCUMENTATION.md)。
+> 完整 API 文档见 [doc/API_DOCUMENTATION.md](doc/API_DOCUMENTATION.md)。
 
 ***
 
@@ -598,26 +605,9 @@ tmdp -jsonfolder ./path/to/.loongtweet
 # 从多个 .loongtweet 文件夹下载
 tmdp -jsonfolder ./folder1/.loongtweet -jsonfolder ./folder2/.loongtweet
 
-# 注意：-jsonfile 和 -jsonfolder 是独占参数，优先级最高
-# 以下命令只会执行 -jsonfile，-user 被忽略
-tmdp -jsonfile ./search.json -user elonmusk
 ```
 
-**`-jsonfile`** **输出示例**：
-
-```
-[task] Result summary="main(downloaded=2, Failedtweet=0)"
-```
-
-> 通过 `-dbg` 模式可查看每条推文的处理详情。
-
-**`-jsonfolder`** **输出示例**：
-
-```
-[task] Result summary="main(downloaded=8, Failedtweet=2)"
-```
-
-> 💡 **推荐搭配**：使用 [twitter-web-exporter](https://github.com/prinsss/twitter-web-exporter) 浏览器脚本导出推文或用户列表为 JSON 格式，然后用 `-jsonfile` 或 `-jsonfolder` 参数下载。
+> 💡 **推荐搭配**：使用 [twitter-web-exporter](https://github.com/prinsss/twitter-web-exporter) 浏览器脚本导出推文或用户列表为 JSON 格式，然后用 `-jsonfile` 参数下载（`-jsonfolder` 只接受 tmdp 自己生成的 `.loongtweet` 目录）。
 
 ### 场景10：调试与排错
 
@@ -637,7 +627,7 @@ tmdp -user elonmusk -no-retry
 
 | 参数        | 类型   | 默认值   | 说明                                 |
 | --------- | ---- | ----- | ---------------------------------- |
-| `-conf`   | bool | false | 进入交互式向导，7 项全量重填；括号内显示各项默认值而非当前值；直接回车=使用默认值/清空字符串字段，storage dir 不可为空            |
+| `-conf`   | bool | false | 进入交互式向导，8 项全量重填；括号内显示各项默认值而非当前值；直接回车=使用默认值/清空字符串字段（不保留旧值），storage dir 不可为空 |
 | `-dbg`    | bool | false | 显示调试信息，包括请求计数等                     |
 | `-server` | bool | false | 启动 API Server 模式                   |
 | `-port`   | int  | 25556 | API Server 监听端口（仅与 `-server` 一起使用） |
@@ -763,95 +753,11 @@ tmdp -server -port 8080
 
 ### API 端点速查
 
-> 🔓 = 公开（免认证） | 🔒 = 需要 Bearer Token（详见[API Server 安全](#api-server-安全)）
+完整端点清单（下载、数据库管理、调度器、日志、配置、认证等）见 [API_DOCUMENTATION.md](doc/API_DOCUMENTATION.md)；常用调用的 curl 示例见[快速示例](#快速示例)。
 
-| 方法         | 端点                                               | 说明                            |  认证 |
-| ---------- | ------------------------------------------------ | ----------------------------- | :-: |
-| **GET**    | `/api/v1/health`                                 | 健康检查                          |  🔓 |
-| **POST**   | `/api/v1/auth/login`                             | API Key 换取 JWT 会话令牌           |  🔓 |
-| **POST**   | `/api/v1/auth/refresh`                           | 刷新 JWT 令牌                     |  🔒 |
-| **GET**    | `/api/v1/auth/check`                             | 检查 JWT 有效性                    |  🔒 |
-| **POST**   | `/api/v1/users/{screen_name}/download`           | 下载用户推文                        |  🔒 |
-| **POST**   | `/api/v1/users/{screen_name}/profile`            | 下载用户 Profile                  |  🔒 |
-| **POST**   | `/api/v1/users/{screen_name}/following/download` | 下载关注列表                        |  🔒 |
-| **POST**   | `/api/v1/users/{screen_name}/following/mark`     | 标记关注列表已下载                     |  🔒 |
-| **POST**   | `/api/v1/users/{screen_name}/mark`               | 标记用户已下载                       |  🔒 |
-| **POST**   | `/api/v1/lists/{list_id}/download`               | 下载列表推文                        |  🔒 |
-| **POST**   | `/api/v1/lists/{list_id}/profile`                | 下载列表 Profile                  |  🔒 |
-| **POST**   | `/api/v1/lists/{list_id}/mark`                   | 标记列表已下载                       |  🔒 |
-| **POST**   | `/api/v1/json/file/download`                     | JSON 文件导入下载（支持路径列表/文件上传）      |  🔒 |
-| **POST**   | `/api/v1/json/folder/download`                   | LoongTweet 文件夹下载（支持路径列表/文件上传） |  🔒 |
-| **POST**   | `/api/v1/batch/download`                         | 批量下载（多用户/列表）                  |  🔒 |
-| **POST**   | `/api/v1/batch/mark`                             | 批量标记下载（多用户/列表/关注）             |  🔒 |
-| **GET**    | `/api/v1/tasks`                                  | 任务列表                          |  🔒 |
-| **GET**    | `/api/v1/tasks/stats`                            | 任务统计（按状态计数）                   |  🔒 |
-| **GET**    | `/api/v1/tasks/{task_id}`                        | 任务详情                          |  🔒 |
-| **POST**   | `/api/v1/tasks/{task_id}/cancel`                 | 取消任务                          |  🔒 |
-| **POST**   | `/api/v1/tasks/cancel-queued`                    | 取消所有排队中的任务                    |  🔒 |
-| **POST**   | `/api/v1/tasks/{task_id}/retry`                  | 重试失败/取消的任务                    |  🔒 |
-| **DELETE** | `/api/v1/tasks/{task_id}`                        | 删除终端状态任务                      |  🔒 |
-| **GET**    | `/api/v1/sse/tasks`                              | SSE 实时任务推送                    |  🔒 |
-| **GET**    | `/api/v1/db/users`                               | 用户列表（分页）                      |  🔒 |
-| **GET**    | `/api/v1/db/users/{id}`                          | 用户详情                          |  🔒 |
-| **PATCH**  | `/api/v1/db/users/{id}`                          | 部分更新用户                        |  🔒 |
-| **DELETE** | `/api/v1/db/users/{id}`                          | 删除用户                          |  🔒 |
-| **GET**    | `/api/v1/db/users/{id}/previous-names`           | 用户历史名称                        |  🔒 |
-| **GET**    | `/api/v1/db/users/{id}/entities`                 | 获取用户的所有实体                     |  🔒 |
-| **GET**    | `/api/v1/db/users/{id}/links`                    | 获取用户的所有链接                     |  🔒 |
-| **GET**    | `/api/v1/db/user-previous-names`                 | 全局历史名称查询（含当前名称）               |  🔒 |
-| **GET**    | `/api/v1/db/lists`                               | 列表列表（分页）                      |  🔒 |
-| **GET**    | `/api/v1/db/lists/{id}`                          | 列表详情                          |  🔒 |
-| **PATCH**  | `/api/v1/db/lists/{id}`                          | 部分更新列表                        |  🔒 |
-| **DELETE** | `/api/v1/db/lists/{id}`                          | 删除列表                          |  🔒 |
-| **GET**    | `/api/v1/db/lists/{id}/entities`                 | 获取列表的所有实体                     |  🔒 |
-| **GET**    | `/api/v1/db/user-entities`                       | 用户实体列表（分页）                    |  🔒 |
-| **GET**    | `/api/v1/db/user-entities/{id}`                  | 用户实体详情                        |  🔒 |
-| **PATCH**  | `/api/v1/db/user-entities/{id}`                  | 部分更新用户实体                      |  🔒 |
-| **DELETE** | `/api/v1/db/user-entities/{id}`                  | 删除用户实体                        |  🔒 |
-| **GET**    | `/api/v1/db/list-entities`                       | 列表实体列表（分页）                    |  🔒 |
-| **GET**    | `/api/v1/db/list-entities/{id}`                  | 列表实体详情                        |  🔒 |
-| **PATCH**  | `/api/v1/db/list-entities/{id}`                  | 部分更新列表实体                      |  🔒 |
-| **DELETE** | `/api/v1/db/list-entities/{id}`                  | 删除列表实体                        |  🔒 |
-| **GET**    | `/api/v1/db/user-links`                          | 用户链接查询                        |  🔒 |
-| **GET**    | `/api/v1/db/user-links/{id}`                     | 用户链接详情                        |  🔒 |
-| **PATCH**  | `/api/v1/db/user-links/{id}`                     | 部分更新用户链接                      |  🔒 |
-| **DELETE** | `/api/v1/db/user-links/{id}`                     | 删除用户链接                        |  🔒 |
-| **GET**    | `/api/v1/db/stats`                               | 数据库各表记录数统计                    |  🔒 |
-| **GET**    | `/api/v1/config`                                 | 系统配置（脱敏）                      |  🔒 |
-| **GET**    | `/api/v1/config/raw`                             | 获取原始配置文件内容                    |  🔒 |
-| **PUT**    | `/api/v1/config/raw`                             | 更新原始配置文件 (YAML)               |  🔒 |
-| **GET**    | `/api/v1/config/fields`                          | 获取结构化配置字段列表                   |  🔒 |
-| **PUT**    | `/api/v1/config/fields`                          | 保存结构化配置字段                     |  🔒 |
-| **GET**    | `/api/v1/config/theme`                           | 获取当前前端主题                      |  🔓 |
-| **POST**   | `/api/v1/config/theme`                           | 切换前端主题                        |  🔓 |
-| **GET**    | `/api/v1/config/themes`                          | 获取可用主题列表                      |  🔓 |
-| **GET**    | `/api/v1/cookies`                                | 获取备用 Cookie 列表（脱敏）            |  🔒 |
-| **PUT**    | `/api/v1/cookies`                                | 保存备用 Cookie（表单）               |  🔒 |
-| **GET**    | `/api/v1/cookies/raw`                            | 获取原始 Cookie 文件内容              |  🔒 |
-| **PUT**    | `/api/v1/cookies/raw`                            | 更新原始 Cookie 文件 (YAML)         |  🔒 |
-| **POST**   | `/api/v1/server/shutdown`                        | 优雅关闭服务器                       |  🔒 |
-| **GET**    | `/api/v1/logs`                                   | 获取系统日志（支持筛选/分页）               |  🔒 |
-| **GET**    | `/api/v1/logs/stream`                            | SSE 实时日志流                     |  🔒 |
-| **GET**    | `/api/v1/logs/stats`                             | 日志级别统计计数                      |  🔒 |
-| **GET**    | `/api/v1/logs/export`                            | 导出完整日志文件                      |  🔒 |
-| **GET**    | `/api/v1/schedules`                              | 定时任务管理（详见[调度器API](#调度器-api)）  |  🔒 |
-| **GET**    | `/api/v1/errors`                                 | 失败推文摘要（含常规+JSON来源）            |  🔒 |
-| **POST**   | `/api/v1/errors/retry`                           | 重试所有历史失败推文                    |  🔒 |
-| **DELETE** | `/api/v1/errors`                                 | 清除所有失败推文记录                    |  🔒 |
-| **GET**    | `/api/v1/queue/status`                           | 下载队列状态（待处理/活跃/分离）             |  🔒 |
-| **GET**    | `/`                                              | Web 管理界面 - 仪表盘                |  🔓 |
-| **GET**    | `/favicon.ico`                                   | 浏览器图标（SPA 入口时自动请求）            |  🔓 |
-| **GET**    | `/tasks`                                         | Web 管理界面 - 任务                 |  🔓 |
-| **GET**    | `/data`                                          | Web 管理界面 - 数据                 |  🔓 |
-| **GET**    | `/schedules`                                     | Web 管理界面 - 调度                 |  🔓 |
-| **GET**    | `/system`                                        | Web 管理界面 - 系统                 |  🔓 |
-| **GET**    | `/logs`                                          | Web 管理界面 - 日志                 |  🔓 |
-| **GET**    | `/static/{$}`                                    | 静态资源文件（精确匹配）                  |  🔓 |
-| **GET**    | `/static/{path...}`                              | 静态资源文件（路径匹配）                  |  🔓 |
-
-> API JSON 中的 Twitter list ID 使用十进制字符串传输（例如 `"2033436439346905439"`），避免 JavaScript Number 对 64 位 ID 产生精度丢失；URL 路径参数仍直接使用同一个十进制 ID。
-
-> ⚠️ **认证说明**: 上表中 🔓 标为公开的路径始终免认证（用于 Web UI 加载、健康检查和主题切换）；🔒 标为需要认证的路径在 `api_key` 配置为空时同样免认证（向后兼容），设置 `api_key` 后必须携带 `Authorization: Bearer <key>` 头。详见 [API Server 安全](#api-server-安全)。
+> ⚠️ **认证**：`api_key` 为空时所有 `/api/v1` 路径免认证；设置 `api_key` 后，除公开路径（`/api/v1/health`、`/api/v1/auth/login`、`/api/v1/config/theme`、`/static/`、Web UI 页面）外必须携带 `Authorization: Bearer <key>`，也可先调用 `POST /api/v1/auth/login` 换取 1 小时有效的 JWT。401 响应含 `WWW-Authenticate` 与 `X-Token-Type`（`expired`/`invalid`）。详见[API Server 安全](#api-server-安全)。
+>
+> API JSON 中的 Twitter list ID 使用十进制字符串传输（如 `"2033436439346905439"`），避免 JavaScript Number 的 64 位精度丢失；URL 路径参数仍直接使用同一个十进制 ID。
 
 ### JSON 导入 API 详细说明
 
@@ -870,7 +776,7 @@ JSON 导入端点（`/api/v1/json/file/download` 和 `/api/v1/json/folder/downlo
 | 参数          | 默认值  | 说明             |
 | ----------- | ---- | -------------- |
 | `page`      | 1    | 页码             |
-| `pageSize`  | 20   | 每页数量（最大 200）   |
+| `pageSize`  | 20   | 每页数量（1-200，非法或超出范围回退 20） |
 | `sortBy`    | id   | 排序字段（白名单限制）    |
 | `sortOrder` | desc | 排序方向（asc/desc） |
 | `q`         | -    | 搜索关键词          |
@@ -935,105 +841,39 @@ Server 支持优雅关闭，确保所有资源正确释放：
 http://localhost:25556/
 ```
 
-**三主题界面**：内置三套无构建步骤的原生前端，页面左下角的 🎨 浮动按钮可随时切换（`web1` 经典主题功能最全，`web2` 精简主题更轻量，`web3` 深色玻璃拟态主题 v3.7.2 新增，hash 路由）：
+**单主题六视图界面（媒体控制台 / media console）**：内置一套无构建步骤的原生前端，唯一主题为 `download`（现代极简 SaaS 风格：中性灰底 + 圆角卡片 + 单一蓝色强调），真实路径路由的零构建 SPA，六个页面共用同一外壳；源码位于 `internal/api/web/download/`。
 
-| 主题   | 说明                    | 位置                             |
-| ---- | --------------------- | ------------------------------ |
-| web1 | 经典主题（默认），功能最全 | `internal/api/web/web1/`        |
-| web2 | 精简主题                  | `internal/api/web/web2/`        |
-| web3 | 深色玻璃拟态主题（v3.7.2 新增） | `internal/api/web/web3/`        |
+主题 API 保留：`GET /api/v1/config/themes`（可用主题+当前值）、`POST /api/v1/config/theme`（切换）。设置 `TMD_DEV=1` 启动时前端走本地目录文件而非嵌入资源，修改主题下的 HTML/JS/CSS 后刷新浏览器即可生效，无需重新编译。
 
-主题通过公开 API 切换：`GET /api/v1/config/themes`（可用主题+当前值）、`POST /api/v1/config/theme`（切换）。设置 `TMD_DEV=1` 启动时前端走本地目录文件而非嵌入资源，修改任意主题下的 HTML/JS/CSS 后刷新浏览器即可生效，无需重新编译。
+页面（顶栏六个标签）：`/` 总览、`/tasks` 下载、`/data` 数据、`/schedules` 计划、`/logs` 日志、`/system` 系统。
 
-界面功能：
+- **总览（`/`）**：队列深度、任务总数、失败记录、库内用户数四个指标，最近任务表、系统概况（版本、根目录、调度/日志统计），以及直达各页面的快捷入口
 
-- **仪表盘**：系统状态、任务统计、快速操作
+- **下载（`/tasks`）**：左主区「新建下载」+「台账」，右侧固定「进行中」队列与「失败记录」；窄屏单列，顺序为 表单 → 进行中 → 台账
 
-- **新建任务**：创建用户/列表/批量/JSON 下载任务
+  - 目标框支持 `@handle`、`x.com/twitter.com` 链接、数字 list id、JSON 文件/文件夹路径，可多行粘贴
+  - 目标链接由前端解析成裸 screen name（后端只接受裸 handle），并实时显示识别结果（用户/列表/JSON/混合）
+  - 七种方式：用户、关注、补档（profile）、列表、JSON、批量，以及「标记已下载」（可填时间）；可手动切换，未手动选择时按目标类型自动推断
+  - 选项即后端四个 `DownloadFlags`：自动关注、含关注者、跳过 profile、失败不重试；JSON 方式还能直接上传 `.json` 文件（multipart，上传的任务不可重试）
+  - `Enter` 或 `⌘/Ctrl + Enter` 提交；单次最多 20 个目标
+  - 台账支持状态过滤、关键词搜索、分页、取消/重试/删除，点行可打开任务详情（阶段、数据、错误、原始 JSON、同套操作按钮）
+  - 进行中任务以卡片显示阶段、计数与细进度条，运行中可直接取消；存在失败记录时出现重试/清除条
 
-- **任务列表**：实时显示任务状态、进度条、取消操作
+- **数据（`/data`）**：库统计 + 六个子标签（用户、列表、用户媒体、列表媒体、用户链接、改名历史），服务端搜索/排序/分页，可编辑（PATCH 只提交改动字段）、删除，用户与列表行可展开查看关联媒体、链接与改名历史
 
-- **数据管理**：完整的数据库 CRUD 操作
+- **计划（`/schedules`）**：计划条目增删改查、启停、立即触发、全部触发、重载配置，新建/编辑前先调 `/schedules/validate` 校验表达式，另有原始 `schedules.yaml` 编辑器
 
-  - **Users**：查看、搜索、排序、编辑、删除用户
+- **日志（`/logs`）**：按级别/关键词/来源/时间过滤分页浏览，级别统计徽章，可订阅 `/logs/stream` 实时流（自动滚底、上限 2000 行），一键导出
 
-  - **Lists**：查看、搜索、排序、编辑、删除列表
+- **系统（`/system`）**：结构化配置字段编辑（敏感值脱敏，只提交改动项，支持清空/重置）、原始 `conf.yaml` 编辑、Cookie 账号增删与原始 YAML、运行信息（根路径、并发、队列、库统计）、危险区（清空失败记录、关闭服务器）
 
-  - **User Entities**：查看、搜索、排序、编辑、删除用户实体
+- **实时更新**：使用 `GET /api/v1/sse/tasks` 的全量 `tasks` 快照与 `schedules` 快照，多标签页与断线重连都能保持一致；服务器关闭时出现横幅提示
 
-  - **List Entities**：查看、搜索、排序、编辑、删除列表实体
+- **多语言**：中文 / English 双语，右上角切换，选择保存在 `localStorage`（`tmd.lang`），默认跟随浏览器语言；支持 `?lang=en` 预览
 
-  - **User Links**：查看、搜索、排序、编辑、删除用户链接
+- **明暗主题**：浅色 / 跟随系统 / 深色三态切换，保存于 `tmd.theme`，首帧前由内联脚本应用避免闪白，跟随系统时实时响应 `prefers-color-scheme`；支持 `?theme=dark` 预览
 
-  - **User Previous Names**：查看用户历史名称变更记录
-
-- **定时任务**：调度器管理
-
-  - 创建任务：支持 interval 和 daily 两种调度模式
-
-  - 任务类型：支持 list/user/following/mixed 四种下载类型
-
-  - 任务控制：启用/禁用、手动触发、删除
-
-  - 原始编辑：支持 YAML 格式批量编辑
-
-- **系统管理**
-
-  - **配置编辑**（双模式）：
-
-    - 📝 **简易模式**：结构化表单，按分组显示字段（基础设置/Cookie认证/安全认证/高级选项）
-
-    - 🔧 **高级模式**：原始 YAML 编辑器，适合高级用户
-
-    - 自动备份、实时验证、敏感信息脱敏显示
-
-  - **Cookie 管理**：
-
-    - 📝 **表单模式**：结构化编辑备用 Cookie
-
-    - 🔧 **原始模式**：YAML 格式编辑
-
-    - 敏感信息脱敏显示
-
-  - **日志查看器**：
-
-    - 实时日志流（SSE 推送，无需轮询）
-
-    - 按级别筛选（DEBUG/INFO/WARN/ERROR），显示各级别日志计数
-
-    - 关键词搜索（300ms 防抖，减少请求频率）
-
-    - 分页浏览
-
-    - **日志导出**：一键下载完整日志文件
-
-  - **服务器控制**：优雅关闭服务器
-
-### API 文档
-
-详细的 API 文档请参考 [API_DOCUMENTATION.md](doc/API_DOCUMENTATION.md)，包含：
-
-- 所有 API 端点说明
-
-- 请求/响应格式
-
-- 错误处理
-
-- 使用示例
-
-- **数据库管理 API**：完整的 CRUD 操作文档
-
-  - 用户管理（Users）
-
-  - 列表管理（Lists）
-
-  - 用户实体管理（User Entities）
-
-  - 列表实体管理（List Entities）
-
-  - 用户链接查询（User Links）
-
-  - 用户历史名称查询（User Previous Names）
+- **认证**：`api_key` 非空时页面自动弹出对话框，输入 Key 换取 JWT（存 `localStorage`）；令牌过期先用 `/auth/refresh` 续期再重试一次，其余 401 直接弹框；页脚显示根目录、库统计、版本
 
 ### 快速示例
 
@@ -1216,9 +1056,10 @@ tmdp Server 模式支持接入 6 种 Bot 平台，用于远程命令控制、任
 
 ### 命令说明
 
-Telegram / WeChat / Feishu 使用文本命令，Discord 使用 Slash 命令（选项为原生布尔值）：
+Telegram / WeChat / Feishu 使用文本命令，Discord 使用 Slash 命令（选项为原生布尔值）；Telegram 额外支持 `/start`，`/dl` 也可写作 `/download`：
 
 ```
+/start                                         # 显示欢迎与帮助（Telegram）
 /dl [user|list|foll] <target> [opt=val ...]   # 下载：user 用户 / list 列表ID / foll 关注列表；省略类型时默认 user
 /status <task_id>                              # 查询任务状态
 /cancel <task_id>                              # 取消任务
@@ -1296,6 +1137,8 @@ pushover:
   sound: "gamelan"
 ```
 
+> 可选字段：`feishu.callback_path`（默认 `/api/v1/bot/feishu/callback`）；`gotify.priority` 留空或为 0 时按 5 发送。
+
 > ⚠️ **安全提示**：`allowed_users` 为空表示接受该平台能识别的任何用户发来的命令，本地测试方便，但暴露到公网的 Bot 建议务必配置白名单。日志中的 Bot 相关输出不会打印任何 token/密钥。
 
 ***
@@ -1348,7 +1191,7 @@ Profile 下载功能可以保存用户的完整个人资料：
 
 ## 推文 JSON 保存
 
-每次下载推文媒体时，会同时保存推文的完整信息到 `.loongtweet/` 子目录。
+每次下载推文媒体（`-user`/`-list`/`-foll`/`-jsonfile`）时，会同时保存推文的完整信息到 `.loongtweet/` 子目录；`-jsonfolder` 与失败重试复用已有元数据，不重复写入。
 
 ### 保存内容
 
@@ -1395,11 +1238,11 @@ media:2
 {存储目录}/
 ├── users/                          # 用户目录
 │   ├── Elon Musk(elonmusk)/        # 用户文件夹
-│   │   ├── 推文媒体文件...         # -user/-jsonfile/-jsonfolder 媒体文件均在此
-│   │   └── .loongtweet/           # 仅 -user 和 -jsonfile 创建
-│   │       ├── {推文文本}_{tweetID}.json    # 推文 JSON（均已清理：-user cleanTweetJson / -jsonfile 格式转换+清理）
+│   │   ├── {推文文本}_{tweetID}.jpg/png/gif/mp4   # 推文媒体，直接位于用户目录（不按日期分目录）
+│   │   └── .loongtweet/           # 推文元数据（-user/-list/-foll/-jsonfile 创建）
+│   │       ├── {推文文本}_{tweetID}.json    # 推文 JSON（已清理）
 │   │       ├── {推文文本}_{tweetID}.txt     # 推文文本
-│   │       └── .profile/            # 仅 -user 创建
+│   │       └── .profile/            # 用户资料（-noprofile 跳过）
 │   │           ├── avatar.jpg
 │   │           ├── banner.jpg
 │   │           ├── description.txt
@@ -1407,7 +1250,9 @@ media:2
 │   │           └── .versions/      # 历史版本
 │   └── NASA(NASA)/
 │       └── ...
-├── .data/                          # 数据目录
+├── 科技圈/                          # 列表目录（与 users/ 平级），内容为指向 users/… 的符号链接
+│   └── Elon Musk(elonmusk) -> D:\...\users\Elon Musk(elonmusk)   # 绝对路径
+└── .data/                          # 数据目录
     ├── foo.db                      # SQLite 数据库
     │                                 # 包含以下数据表：
     │                                 # - users: 用户信息（含 is_accessible 状态）
@@ -1502,7 +1347,7 @@ start-server.bat
 start-server.bat -port 8080
 ```
 
-> 脚本行为：自动查找同目录下的可执行文件并以 `-server` 模式启动，额外参数会透传给 tmdp。查找顺序：`tmdp-Windows-amd64.exe` → `tmdp.exe` → `tmdp` → `tmd-Windows-amd64.exe` → `tmd.exe` → `tmd`；若均不存在但本机装有 Go，会自动编译 `tmdp-test.exe` 后启动。设置 `TMD_DEV=1` 时直接 `go run . -server`，前端走本地文件（`internal/api/web/web1/`、`web2/`）支持热刷新。
+> 脚本行为：自动查找同目录下的可执行文件并以 `-server` 模式启动，额外参数会透传给 tmdp。查找顺序：`tmdp-Windows-amd64.exe` → `tmdp.exe` → `tmdp` → `tmd-Windows-amd64.exe` → `tmd.exe` → `tmd`；若均不存在但本机装有 Go，会自动编译 `tmdp-test.exe` 后启动。设置 `TMD_DEV=1` 时直接 `go run . -server`，前端走本地文件（`internal/api/web/download/`）支持热刷新。
 
 ***
 
@@ -1557,6 +1402,7 @@ tmdp -user elonmusk -dbg
 
 - 哈希校验失败（`[downloader] Hash check failed path=... error=...`）
 
+另：CLI 完成时输出 `[task] Result summary="main(downloaded=N, Failedtweet=N), profile(downloaded=N, failed=N, versionedfile=N)"`（无媒体统计的操作输出 `[task] Result message=...`，如 `"Marked 3 users as downloaded"`）；API 模式在 `GET /api/v1/tasks/{task_id}` 的任务详情中查看同样字段。
 
 
 ## 常见问题
@@ -1567,7 +1413,7 @@ tmdp -user elonmusk -dbg
 
 ### Q: Profile 文件存在时还会重新下载吗？
 
-如果文件内容未变更（MD5 校验），会自动跳过。详见[性能优化特性](#3-md5-去重)。
+如果文件内容未变更（MD5 校验），会自动跳过。详见[下载机制要点](#下载机制要点)。
 
 ### Q: 如何更新已下载用户的 Profile？
 
@@ -1592,111 +1438,6 @@ tmdp -user elonmusk -dbg
 
 ***
 
-## 输出结果格式
-
-> CLI 模式下所有结果通过日志输出（logrus TextFormatter）。推文/Profile/JSON 导入完成时输出 `[task] Result summary=...`；标记、重试等无媒体统计的操作输出 `[task] Result message=...`。阶段进度（`syncing`/`marking`）输出为 `[task] Progress stage=...`（`syncing` 仅列表类任务输出；`preparing` 无实际代码路径），而 `downloading`/`retrying`/`profile` 高频阶段不会刷日志（仅进 SSE/任务状态）。
-
-### 推文下载结果
-
-CLI 模式下，下载完成后的输出示例：
-
-CLI 单用户下载不输出阶段进度行（`syncing` 仅列表类任务输出，真实格式为 `[task] Progress stage=syncing current="list:123"`），完成后直接输出最终结果：
-
-```
-[task] Result summary="main(downloaded=164, Failedtweet=2), profile(downloaded=3, failed=0, versionedfile=0)"
-```
-
-字段说明：
-
-- `main(downloaded, Failedtweet)` — 推文媒体统计：成功下载数、失败推文数（注意 `Failedtweet` 首字母大写）
-
-- `profile(downloaded, failed, versionedfile)` — Profile 统计：成功数、失败数、版本备份数
-
-### Profile 下载结果
-
-CLI 模式下，Profile 下载结果通过日志输出，例如：
-
-```
-[task] Result summary="profile(downloaded=2, failed=1, versionedfile=3)"
-```
-
-当没有 Profile 任务执行时输出：
-
-```
-[task] Result message="No profile downloads performed"
-```
-
-API 模式下，Profile 结果可通过任务详情查看（`GET /api/v1/tasks/{task_id}`），包含 `profile.downloaded`、`profile.failed`、`profile.versioned` 字段。
-
-状态说明：
-
-- 用户级 `downloaded` — 下载成功
-
-- 用户级 `failed` — 下载失败
-
-- 文件级 `versioned` — 旧文件已备份到 `.versions/`
-
-### JSON 导入结果
-
-CLI 模式下，JSON 文件/文件夹导入的完成输出（summary 优先，message 不重复输出）：
-
-```
-[task] Result summary="main(downloaded=8, Failedtweet=2)"
-```
-
-服务端日志（logrus）中另有 `[jsonfile]` / `[jsonfolder]` 域的阶段汇总（推文/媒体数、失败数、耗时）。
-
-### 标记结果
-
-CLI 模式下，标记结果通过日志输出，例如：
-
-```
-[task] Result message="Marked 3 users as downloaded"
-```
-
-API 模式下，标记结果可以通过任务详情查看（`GET /api/v1/tasks/{task_id}`），包含 `message` 和统计信息。
-
-### 重试结果
-
-重试过程不输出逐条进度日志（`retrying` 阶段被抑制）；失败推文会持久化到 `errors.json`/`json_errors.json`。
-
-重试完成后输出（无剩余失败项）：
-
-```
-[task] Result message="completed"
-```
-
-无待重试项时（服务端日志）：
-
-```
-[download] Retry all skipped reason=no_pending_errors dur=...
-```
-
-### 任务失败
-
-任务失败时输出（错误信息经脱敏处理）：
-
-```
-[task] Failed task_id=task_xxx type=... dur=... error="..."
-```
-
-### 调试模式输出
-
-使用 `-dbg` 模式时可看到详细的下载进度：
-
-```
-[download] Skip non-retriable media tweet_id=1234567890 url=https://... error="403 Forbidden"
-[downloader] Download failed with non-2xx status status_code=403 url=https://...
-[downloader] Download failed, retrying... attempt=1 max_retries=2 url=https://... error="connection reset"
-[batch] Protected users skipped count=1 users=["Name(@screen_name)"]
-[batch] User depth exceeds limit entity="user" depth=1500
-[rate-limit] Sleeping endpoint=... wake_at=... remaining=... limit=...
-[rate-limit] Request count endpoint=... count=...
-[twitter] Account unavailable account=... error=...
-```
-
-***
-
 ## 项目架构
 
 > 完整的架构分层图、Service 层接口设计、开发指南（项目结构/测试/CI/CD/设计模式）已移至 [doc/architecture.md](doc/architecture.md)，面向开发者，普通用户无需阅读。
@@ -1715,96 +1456,34 @@ tmdp 采用"入口层 → 服务层 → 业务层 → 基础设施层"的四层�
 | **20-35** | 企业网络 / 独享带宽      | 中 (20-50 Mbps)  | ⭐⭐⭐⭐ **推荐值** |
 | **35-50** | 服务器 / VPS / 高速宽带 | 高 (50-100 Mbps) | ⭐⭐ 需要优质网络    |
 
+> 上表是经验参考，不是硬性限制：`max_download_routine` 可设 1-100，默认 `min(50, CPU×10)`；实际吞吐还受代理带宽、Twitter 限流与磁盘 I/O 影响。
+
 **配置方法：**
 
 ```bash
-# 方式1: 首次配置时设置
+# 方式1：直接编辑 conf.yaml
+#   max_download_routine: 35
+
+# 方式2：环境变量临时覆盖
+#   TMD_MAX_DOWNLOAD_ROUTINE=35 tmdp -user elonmusk
+
+# 方式3：交互式向导（全量重填，括号内显示默认值而非当前值）
 tmdp -conf
-# 输入 max download routine: 35
-
-# 方式2: 修改配置文件后更新
-tmdp -conf
-# 仅修改需要调整的字段，其他留空保持原值
 ```
 
-### 性能优化特性
+### 下载机制要点
 
-tmdp 内置多项性能优化机制：
-
-#### 1. 流式下载（v2.12.3+）
-
-自动根据文件大小选择最优策略：
-
-```
-文件大小 < 10MB → Buffer 模式（内存缓冲，支持 MD5 去重）
-文件大小 ≥ 10MB → 流式模式（分块写入，节省内存）
-```
-
-**优势：**
-
-- 大视频文件不再占用大量内存
-
-- 任务级进度经 SSE 推送(完成文件数/总数),无逐文件字节级进度
-
-- 失败时整文件重试(最多 2 次,间隔递增),最后一次尝试自动回退 Buffer 模式;不支持断点续传
-
-#### 2. 增量下载
-
-基于 `user_entities.latest_release_time` 时间戳的智能增量拉取（逻辑示意，实际由实体时间戳控制，非 SQL 查询）：
-
-```text
-首次运行：无 latest_release_time → 全量拉取
-后续运行：仅拉取发布时间晚于 latest_release_time 的推文，完成后更新时间戳
-```
-
-**效果：**
-
-- 首次运行：全量下载用户所有推文
-
-- 后续运行：仅下载新增推文（通常几分钟完成）
-
-- 节省 API 配额和网络带宽
-
-#### 3. MD5 去重
-
-相同内容的文件自动跳过。写入时开启 `SkipUnchanged` 选项：先比对目标文件的大小 + MD5（大小不同直接写入，大小相同再比 MD5），内容未变更则静默跳过，不产生日志：
-
-```go
-// fileWriter 写入时比对大小 + MD5，内容一致则跳过
-if req.Options.SkipUnchanged && sameSize && sameMD5 {
-    return nil // 跳过重复下载
-}
-```
-
-**适用场景：**
-
-- 重试失败任务时跳过已成功的文件
-
-- 多列表包含同一用户时避免重复保存
-
-- Profile 未变更时自动跳过
-
-#### 4. 符号链接去重
-
-多列表包含同一用户时使用符号链接：
-
-```
-lists/科技圈/users/ -> ../../users/Elon Musk(elonmusk)/
-lists/新闻/users/   -> ../../users/Elon Musk(elonmusk)/
-```
-
-**节省空间：**
-
-- 无论多少列表包含同一用户，本地仅保留一份存档
-
-- 显著减少磁盘空间占用（尤其对于热门用户）
+- **流式下载**：媒体小于 10 MB 走 Buffer（内存缓冲，支持 MD5 去重），大于等于 10 MB 走流式分块写入；失败整文件重试最多 2 次（间隔递增），最后一次不会自动回退 Buffer；不支持断点续传。
+- **增量拉取**：按 `user_entities.latest_release_time` 只拉取新推文，完成后更新时间戳。
+- **MD5 去重**：写入前比对目标文件大小与 MD5（大小不同直接写，大小相同再比 MD5），内容未变则静默跳过。
+- **符号链接去重**：多列表包含同一用户时，列表目录下只放指向 `users/…` 的符号链接，本地仅保留一份存档；Windows 需管理员权限或开发者模式。
 
 ### 性能瓶颈与解决方案
 
 | 瓶颈                   | 表现                   | 解决方案                                   |
 | -------------------- | -------------------- | -------------------------------------- |
 | **Twitter API 速率限制** | 日志显示 `rate limit` 提示 | 添加备用 Cookie（`additional_cookies.yaml`） |
-| **UserMedia 抓取并发过高** | 日志出现 429 / `error code: 1015` | 降低 `max_user_fetch_concurrent`（默认 `3`，范围 `1-35`） |
+| **UserMedia 抓取并发过高** | 日志出现 429 / `error code: 1015` | 降低 `max_user_fetch_concurrent`（默认 `3`，范围 `0-35`，0=默认） |
 | **磁盘 I/O 瓶颈**        | 下载速度远低于带宽            | 使用 SSD 存储，或降低并发数                       |
 | **网络延迟高**            | 单个文件下载时间长            | 检查代理设置，或启用调试模式 (`-dbg`) 查看请求耗时         |
 | **内存不足**             | 系统卡顿或 OOM            | 降低 `max_download_routine` 到 10-20      |
@@ -1888,7 +1567,6 @@ tmdp -user elonmusk -dbg
 ```
 
 
-
 ### 典型问题场景与解决方案
 
 #### 场景 1：首次使用完全无法下载
@@ -1896,7 +1574,7 @@ tmdp -user elonmusk -dbg
 **症状：**
 
 ```
-[startup] Login failed error="..."
+[startup] login failed: <error details>
 ```
 
 **排查步骤：**
@@ -1939,6 +1617,8 @@ tmdp -user elonmusk -dbg
 ```
 
 **原因：** Windows 需要管理员权限才能创建符号链接
+
+> 符号链接创建失败只会告警/抑制，不影响媒体下载（`internal/downloading/batch_download.go:259-278`）；也可改用 `-jsonfolder` 补下缺失媒体。
 
 **解决方案：**
 

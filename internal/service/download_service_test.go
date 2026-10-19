@@ -355,42 +355,6 @@ func TestDownloadServiceImpl_UserDownloadErrorDoesNotCallReporterOnError(t *test
 	require.Error(t, err)
 	assert.Empty(t, reporter.ErrorCalls)
 }
-
-func TestDownloadOptions_Combinations(t *testing.T) {
-	testCases := []struct {
-		name        string
-		opts        DownloadOptions
-		expectRetry bool
-	}{
-		{
-			name:        "NoRetry true",
-			opts:        DownloadOptions{NoRetry: true},
-			expectRetry: false,
-		},
-		{
-			name:        "NoRetry false",
-			opts:        DownloadOptions{NoRetry: false},
-			expectRetry: true,
-		},
-		{
-			name:        "SkipProfile true",
-			opts:        DownloadOptions{SkipProfile: true},
-			expectRetry: true,
-		},
-		{
-			name:        "AutoFollow true",
-			opts:        DownloadOptions{AutoFollow: true},
-			expectRetry: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.expectRetry, !tc.opts.NoRetry)
-		})
-	}
-}
-
 func TestEffectiveAutoFollowDisabledWhenFollowMembersEnabled(t *testing.T) {
 	assert.True(t, effectiveAutoFollow(DownloadOptions{AutoFollow: true}))
 	assert.False(t, effectiveAutoFollow(DownloadOptions{AutoFollow: true, FollowMembers: true}))
@@ -433,48 +397,6 @@ func TestDedupeProfileUsersUsesScreenNameAndID(t *testing.T) {
 	assert.Same(t, invalidA, got[3])
 	assert.Same(t, invalidB, got[4])
 }
-
-func TestMockProgressReporter_Recording(t *testing.T) {
-	reporter := NewMockProgressReporter()
-
-	reporter.OnProgress("task-1", Progress{Stage: "downloading", Current: "user1"})
-	reporter.OnProgress("task-1", Progress{Stage: "completed", Current: "user1"})
-	reporter.OnComplete("task-1", Result{Message: "Done"})
-	reporter.OnError("task-1", errors.New("test error"))
-
-	assert.Len(t, reporter.ProgressCalls, 2)
-	assert.Len(t, reporter.CompleteCalls, 1)
-	assert.Len(t, reporter.ErrorCalls, 1)
-
-	assert.Equal(t, "downloading", reporter.ProgressCalls[0].Progress.Stage)
-	assert.Equal(t, "completed", reporter.ProgressCalls[1].Progress.Stage)
-	assert.Equal(t, "Done", reporter.CompleteCalls[0].Result.Message)
-	assert.Equal(t, "test error", reporter.ErrorCalls[0].Err.Error())
-}
-
-func TestMockProgressReporter_MultipleTasks(t *testing.T) {
-	reporter := NewMockProgressReporter()
-
-	reporter.OnProgress("task-1", Progress{Stage: "downloading"})
-	reporter.OnProgress("task-2", Progress{Stage: "syncing"})
-	reporter.OnComplete("task-1", Result{Message: "Task 1 Done"})
-	reporter.OnComplete("task-2", Result{Message: "Task 2 Done"})
-
-	assert.Len(t, reporter.ProgressCalls, 2)
-	assert.Len(t, reporter.CompleteCalls, 2)
-
-	assert.Equal(t, "task-1", reporter.ProgressCalls[0].TaskID)
-	assert.Equal(t, "task-2", reporter.ProgressCalls[1].TaskID)
-}
-
-func TestMockProgressReporter_EmptyCalls(t *testing.T) {
-	reporter := NewMockProgressReporter()
-
-	assert.Empty(t, reporter.ProgressCalls)
-	assert.Empty(t, reporter.CompleteCalls)
-	assert.Empty(t, reporter.ErrorCalls)
-}
-
 func TestDownloadServiceImpl_WithAdditionalClients(t *testing.T) {
 	tempDir := t.TempDir()
 	deps := &Dependencies{
@@ -496,45 +418,6 @@ func TestDownloadServiceImpl_WithAdditionalClients(t *testing.T) {
 	assert.True(t, ok)
 	assert.Len(t, impl.deps.AdditionalClients, 3)
 }
-
-func TestDownloadServiceImpl_DownloadOptions_Variations(t *testing.T) {
-	testCases := []struct {
-		name string
-		opts DownloadOptions
-	}{
-		{
-			name: "All false",
-			opts: DownloadOptions{
-				AutoFollow:  false,
-				SkipProfile: false,
-				NoRetry:     false,
-			},
-		},
-		{
-			name: "All true",
-			opts: DownloadOptions{
-				AutoFollow:  true,
-				SkipProfile: true,
-				NoRetry:     true,
-			},
-		},
-		{
-			name: "Mixed",
-			opts: DownloadOptions{
-				AutoFollow:  true,
-				SkipProfile: false,
-				NoRetry:     true,
-			},
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.NotNil(t, tc.opts)
-		})
-	}
-}
-
 func TestDownloadServiceImpl_ContextHandling(t *testing.T) {
 	deps := createTestDependencies(t)
 	service, err := NewDownloadService(deps)
@@ -624,80 +507,6 @@ func TestDownloadServiceImpl_DependenciesVariations(t *testing.T) {
 func TestDownloadServiceImpl_InterfaceCompliance(t *testing.T) {
 	var _ DownloadService = (*downloadServiceImpl)(nil)
 }
-
-func TestDownloadOptions_AllCombinations(t *testing.T) {
-	boolValues := []bool{true, false}
-
-	for _, autoFollow := range boolValues {
-		for _, skipProfile := range boolValues {
-			for _, noRetry := range boolValues {
-				opts := DownloadOptions{
-					AutoFollow:  autoFollow,
-					SkipProfile: skipProfile,
-					NoRetry:     noRetry,
-				}
-				assert.Equal(t, autoFollow, opts.AutoFollow)
-				assert.Equal(t, skipProfile, opts.SkipProfile)
-				assert.Equal(t, noRetry, opts.NoRetry)
-			}
-		}
-	}
-}
-
-func TestMockProgressReporter_ProgressStages(t *testing.T) {
-	reporter := NewMockProgressReporter()
-	stages := []string{"syncing", "downloading", "retrying", "profile", "profile_warning", "marking", "completed"}
-
-	for _, stage := range stages {
-		reporter.OnProgress("task-1", Progress{Stage: stage, Current: "test"})
-	}
-
-	assert.Len(t, reporter.ProgressCalls, len(stages))
-
-	for i, stage := range stages {
-		assert.Equal(t, stage, reporter.ProgressCalls[i].Progress.Stage)
-	}
-}
-
-func TestMockProgressReporter_ResultVariations(t *testing.T) {
-	reporter := NewMockProgressReporter()
-
-	// 测试不同结果类型
-	reporter.OnComplete("task-1", Result{
-		Main: &MainResult{
-			Downloaded: 100,
-			Failed:     5,
-		},
-		Profile: &ProfileResult{
-			Downloaded: 8,
-			Failed:     1,
-			Versioned:  10,
-		},
-		Message: "Stats",
-	})
-	reporter.OnComplete("task-2", Result{Message: "Only message"})
-	reporter.OnComplete("task-3", Result{})
-
-	assert.Len(t, reporter.CompleteCalls, 3)
-	require.NotNil(t, reporter.CompleteCalls[0].Result.Main)
-	assert.Equal(t, 100, reporter.CompleteCalls[0].Result.Main.Downloaded)
-	assert.Equal(t, "Only message", reporter.CompleteCalls[1].Result.Message)
-	assert.Equal(t, "", reporter.CompleteCalls[2].Result.Message)
-}
-
-func TestMockProgressReporter_ErrorVariations(t *testing.T) {
-	reporter := NewMockProgressReporter()
-
-	reporter.OnError("task-1", errors.New("error 1"))
-	reporter.OnError("task-2", errors.New("error 2"))
-	reporter.OnError("task-3", nil)
-
-	assert.Len(t, reporter.ErrorCalls, 3)
-	assert.Equal(t, "error 1", reporter.ErrorCalls[0].Err.Error())
-	assert.Equal(t, "error 2", reporter.ErrorCalls[1].Err.Error())
-	assert.Nil(t, reporter.ErrorCalls[2].Err)
-}
-
 func TestDownloadServiceImpl_UserDownload_ReturnsErrorWithoutReporterOnError(t *testing.T) {
 	deps := createTestDependencies(t)
 	tempDir := t.TempDir()
