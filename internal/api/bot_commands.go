@@ -35,9 +35,25 @@ func StartBotDownload(tm *TaskManager, req bot.Request, enqueue func(*Task) erro
 		return task, bot.EnqueueFailed
 	}
 	if err := enqueue(task); err != nil {
+		// 入队失败的任务不会再被执行，标记为失败，避免它一直以 queued 状态留在任务列表里。
+		tm.SetTaskError(task.ID, err)
 		return task, fmt.Sprintf("Failed to enqueue download task: %s", err.Error())
 	}
 	return task, ""
+}
+
+// NotifyIfTerminal 在任务提交并登记归属后立刻检查它是否已经进入终态。
+// 入队后 worker 可能瞬间失败，SSE 的终态事件会早于适配器里的 Track 到达，
+// 之后不会再推同一个任务，通知与归属清理就会漏掉。
+func NotifyIfTerminal(tm *TaskManager, taskID string, notify func([]*Task)) {
+	if tm == nil || notify == nil || taskID == "" {
+		return
+	}
+	task, ok := tm.GetTask(taskID)
+	if !ok || !isTerminalStatus(task.Status) {
+		return
+	}
+	notify([]*Task{task})
 }
 
 // codeText 在 markdown 模式下把文本包成行内代码，避免任务 ID 里的下划线被解析成斜体。

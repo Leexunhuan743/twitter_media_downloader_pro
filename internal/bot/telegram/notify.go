@@ -21,10 +21,16 @@ func (b *Bot) notifyTaskChanges(data interface{}) {
 	}
 	var notifications []notification
 	for _, task := range tasks {
-		if task.Status != api.TaskStatusCompleted && task.Status != api.TaskStatusFailed {
+		terminal := task.Status == api.TaskStatusCompleted || task.Status == api.TaskStatusFailed
+		// 取消的任务不发通知，但同样要从追踪表里取出，避免条目永久留在内存里。
+		if !terminal && task.Status != api.TaskStatusCancelled {
 			continue
 		}
-		for _, scope := range b.tracker.Drain(task.ID) {
+		scopes := b.tracker.Drain(task.ID)
+		if !terminal {
+			continue
+		}
+		for _, scope := range scopes {
 			chatID, err := strconv.ParseInt(scope, 10, 64)
 			if err != nil {
 				continue

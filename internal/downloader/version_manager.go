@@ -45,6 +45,9 @@ func NewVersionManagerWithWriter(versionsDirName string, fw FileWriter) *Default
 }
 
 // SetFileWriter 设置用于写出备份文件的 FileWriter。
+// 不要把正在用于主文件流式写入的同一个 DefaultFileWriter 传进来：备份写入
+// 会在该 writer 的路径锁内再次申请锁，两个路径落到同一槽位时会自死锁。
+// 生产装配始终传 nil（使用非流式的 fallback writer）。
 func (vm *DefaultVersionManager) SetFileWriter(fw FileWriter) {
 	vm.mu.Lock()
 	vm.fileWriter = fw
@@ -89,23 +92,30 @@ func (vm *DefaultVersionManager) CreateVersion(sourcePath string) (string, error
 	if err := os.MkdirAll(versionsDir, 0755); err != nil {
 		return "", err
 	}
-	versionPath, err := reserveVersionPath(versionsDir, stem, ext, time.Now())
-	if err != nil {
-		return "", err
-	}
-
+	// 先打开源文件再预留备份路径：若源文件打不开（权限、被锁、路径竞态）
+	// 直接返回，不会在版本目录里留下 0 字节的预留文件。
 	source, err := os.Open(sourcePath)
 	if err != nil {
 		return "", err
 	}
 	defer source.Close()
 
+	versionPath, err := reserveVersionPath(versionsDir, stem, ext, time.Now())
+	if err != nil {
+		return "", err
+	}
+
 	if _, err := vm.writer().Write(WriteRequest{Path: versionPath, Reader: source, Size: info.Size()}); err != nil {
 		// 预留的空文件在写入失败时删除，避免留下 0 字节备份。
 		os.Remove(versionPath)
 		return versionPath, err
 	}
-	vm.pruneVersions(versionsDir, stem, ext)
+	vm.pruneVersions(versionsDir, stem, ext, versionPath)
+	// 防御：清理逻辑若因未来的排序改动误删了本次备份，宁可返回错误也不能
+	// 让调用方以为备份成功而丢掉旧内容。
+	if _, statErr := os.Stat(versionPath); statErr != nil {
+		return "", fmt.Errorf("version backup vanished after cleanup: %w", statErr)
+	}
 	return versionPath, nil
 }
 
@@ -145,7 +155,10 @@ func reserveVersionPath(versionsDir, stem, ext string, now time.Time) (string, e
 
 // pruneVersions 删除同一文件超出保留上限的最旧备份。清理失败只记录日志，
 // 不影响已完成的备份。
-func (vm *DefaultVersionManager) pruneVersions(versionsDir, stem, ext string) {
+// keepPath 是本次刚写好的备份，任何时候都不会被删除：备份名用的是本地时间，
+// 夏令时回拨或系统时钟回退时新备份可能排在已有备份之前，按名字取最旧会把
+// 它自己删掉。
+func (vm *DefaultVersionManager) pruneVersions(versionsDir, stem, ext, keepPath string) {
 	limit := vm.MaxVersions()
 	if limit <= 0 {
 		return
@@ -166,7 +179,18 @@ func (vm *DefaultVersionManager) pruneVersions(versionsDir, stem, ext string) {
 		return
 	}
 	sort.Strings(paths)
-	stale := paths[:len(paths)-limit]
+	stale := make([]string, 0, len(paths)-limit)
+	remaining := len(paths)
+	for _, path := range paths {
+		if remaining <= limit {
+			break
+		}
+		if path == keepPath {
+			continue
+		}
+		stale = append(stale, path)
+		remaining--
+	}
 	removed := 0
 	for _, path := range stale {
 		if err := os.Remove(path); err != nil {
@@ -187,7 +211,9 @@ func isVersionFileName(name, stem, ext string) bool {
 	}
 	rest := strings.TrimSuffix(strings.TrimPrefix(name, stem+"_"), ext)
 	parts := strings.Split(rest, "_")
-	if len(parts) != 3 || len(parts[0]) != 8 || len(parts[1]) != 6 || len(parts[2]) != 3 {
+	// 老的备份名毫秒段不补零（0–99 只有 1–2 位），保留 1–3 位才能让升级前
+	// 生成的备份也进入保留上限的计数，否则它们永远不会被清理。
+	if len(parts) != 3 || len(parts[0]) != 8 || len(parts[1]) != 6 || len(parts[2]) < 1 || len(parts[2]) > 3 {
 		return false
 	}
 	for _, part := range parts {

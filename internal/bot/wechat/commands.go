@@ -30,6 +30,7 @@ func (b *Bot) cmdDownload(ctx context.Context, msg *wechat.Message, args string)
 		return
 	}
 	b.tracker.Track(msg.FromUserID, task.ID)
+	api.NotifyIfTerminal(b.taskManager, task.ID, func(tasks []*api.Task) { b.notifyTaskChanges(tasks) })
 	b.wechatBot.Reply(ctx, msg, bot.DownloadStartedMessage(req.Target, task.ID, false))
 }
 

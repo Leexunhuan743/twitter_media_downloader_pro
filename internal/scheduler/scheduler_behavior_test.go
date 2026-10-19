@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +23,8 @@ func TestFormatScheduleDisplayIncludesSeconds(t *testing.T) {
 		{90 * time.Minute, "每 1 小时 30 分钟"},
 		{36 * time.Hour, "每 1 天 12 小时"},
 		{72 * time.Hour, "每 3 天"},
+		{time.Minute + 500*time.Millisecond, "每 1 分钟 0.5 秒"},
+		{time.Hour + 1250*time.Millisecond, "每 1 小时 1.25 秒"},
 	}
 	for _, tc := range cases {
 		got := FormatScheduleDisplay(&ParsedSchedule{Mode: ScheduleModeInterval, Interval: tc.interval}, "")
@@ -34,6 +37,29 @@ func TestFormatScheduleDisplayIncludesSeconds(t *testing.T) {
 func TestFormatScheduleDisplayNilReturnsRaw(t *testing.T) {
 	if got, want := FormatScheduleDisplay(nil, "interval:2h"), "interval:2h"; got != want {
 		t.Fatalf("display = %q, want %q", got, want)
+	}
+}
+
+func TestParseScheduleDedupesBeforeDailyLimit(t *testing.T) {
+	// 97 个相同时间只算 1 个；上限按去重后的时间点数判定。
+	dups := make([]string, 0, 97)
+	for i := 0; i < 97; i++ {
+		dups = append(dups, "07:00")
+	}
+	parsed, err := ParseSchedule("daily:" + strings.Join(dups, ","))
+	if err != nil {
+		t.Fatalf("ParseSchedule(97 duplicate times): %v", err)
+	}
+	if got := len(parsed.Times); got != 1 {
+		t.Fatalf("deduped times = %d, want 1", got)
+	}
+
+	distinct := make([]string, 0, maxDailyTimes+1)
+	for i := 0; i <= maxDailyTimes; i++ {
+		distinct = append(distinct, fmt.Sprintf("%02d:%02d", i/60, i%60))
+	}
+	if _, err := ParseSchedule("daily:" + strings.Join(distinct, ",")); err == nil {
+		t.Fatalf("ParseSchedule(%d distinct times) error = nil, want limit error", len(distinct))
 	}
 }
 
@@ -68,7 +94,7 @@ func TestGetStatusesReturnsIsolatedTimeValues(t *testing.T) {
 	lastRun := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	nextRun := time.Date(2026, 1, 2, 4, 4, 5, 0, time.UTC)
 	sc := &Scheduler{statuses: []ScheduleStatus{{
-		Entry:     ScheduleEntry{ID: "a"},
+		Entry:     ScheduleEntry{ID: "a", Users: []string{"alice"}, Lists: []string{"42"}},
 		LastRunAt: &lastRun,
 		NextRunAt: &nextRun,
 	}}}
@@ -89,6 +115,15 @@ func TestGetStatusesReturnsIsolatedTimeValues(t *testing.T) {
 	}
 	if sc.statuses[0].Entry.Name == "mutated" {
 		t.Fatal("internal Entry mutated through snapshot")
+	}
+
+	snapshot[0].Entry.Users[0] = "mutated"
+	snapshot[0].Entry.Lists = append(snapshot[0].Entry.Lists, "99")
+	if got := sc.statuses[0].Entry.Users[0]; got != "alice" {
+		t.Fatalf("internal Entry.Users mutated through snapshot: %q", got)
+	}
+	if got := len(sc.statuses[0].Entry.Lists); got != 1 {
+		t.Fatalf("internal Entry.Lists mutated through snapshot: len = %d", got)
 	}
 }
 
@@ -113,6 +148,23 @@ func TestStatusChangeCallbackCannotMutateSchedulerState(t *testing.T) {
 	if !sc.statuses[0].NextRunAt.Equal(nextRun) {
 		t.Fatalf("callback mutated internal NextRunAt: %v", sc.statuses[0].NextRunAt)
 	}
+}
+
+func TestIsRunningDoesNotWaitForLifecycleLock(t *testing.T) {
+	sc := &Scheduler{}
+	sc.lifecycleMu.Lock()
+	done := make(chan struct{})
+	go func() {
+		_ = sc.IsRunning()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		sc.lifecycleMu.Unlock()
+		t.Fatal("IsRunning blocked on lifecycleMu; a status callback calling it would deadlock Stop")
+	}
+	sc.lifecycleMu.Unlock()
 }
 
 func newPanicScheduler(t *testing.T) (*Scheduler, ScheduleEntry) {

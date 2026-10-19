@@ -54,6 +54,11 @@ func TestStartBotDownload(t *testing.T) {
 		task, message := StartBotDownload(tm, req, func(*Task) error { return errors.New("boom") })
 		require.NotNil(t, task)
 		assert.Contains(t, message, "boom")
+		// 入队失败的任务必须落到 failed，不能在任务列表里一直排着。
+		stored, ok := tm.GetTask(task.ID)
+		require.True(t, ok)
+		assert.Equal(t, TaskStatusFailed, stored.Status)
+		assert.Contains(t, stored.Error, "boom")
 	})
 
 	t.Run("enqueued", func(t *testing.T) {
@@ -67,6 +72,46 @@ func TestStartBotDownload(t *testing.T) {
 		assert.Empty(t, message)
 		assert.Same(t, task, submitted)
 	})
+}
+
+func TestNotifyIfTerminal(t *testing.T) {
+	req, err := bot.ParseDownloadCommand("elonmusk")
+	require.NoError(t, err)
+
+	t.Run("terminal task is notified immediately", func(t *testing.T) {
+		tm := NewTaskManager(nil)
+		task, _ := StartBotDownload(tm, req, func(*Task) error { return errors.New("boom") })
+		require.Equal(t, TaskStatusFailed, mustTask(t, tm, task.ID).Status)
+
+		var notified [][]*Task
+		NotifyIfTerminal(tm, task.ID, func(tasks []*Task) { notified = append(notified, tasks) })
+		require.Len(t, notified, 1)
+		assert.Equal(t, task.ID, notified[0][0].ID)
+	})
+
+	t.Run("queued task is not notified", func(t *testing.T) {
+		tm := NewTaskManager(nil)
+		task, message := StartBotDownload(tm, req, func(*Task) error { return nil })
+		require.Empty(t, message)
+
+		called := false
+		NotifyIfTerminal(tm, task.ID, func([]*Task) { called = true })
+		assert.False(t, called)
+	})
+
+	t.Run("missing task or nil args are ignored", func(t *testing.T) {
+		tm := NewTaskManager(nil)
+		NotifyIfTerminal(tm, "nope", func([]*Task) { t.Fatal("should not be called") })
+		NotifyIfTerminal(nil, "x", func([]*Task) { t.Fatal("should not be called") })
+		NotifyIfTerminal(tm, "", func([]*Task) { t.Fatal("should not be called") })
+	})
+}
+
+func mustTask(t *testing.T, tm *TaskManager, id string) *Task {
+	t.Helper()
+	task, ok := tm.GetTask(id)
+	require.True(t, ok)
+	return task
 }
 
 func TestFormatTaskStatus(t *testing.T) {

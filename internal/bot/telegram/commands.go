@@ -36,6 +36,7 @@ func (b *Bot) cmdDownload(msg *tgbotapi.Message) {
 		return
 	}
 	b.tracker.Track(strconv.FormatInt(msg.Chat.ID, 10), task.ID)
+	api.NotifyIfTerminal(b.taskManager, task.ID, func(tasks []*api.Task) { b.notifyTaskChanges(tasks) })
 	b.sendText(msg.Chat.ID, bot.DownloadStartedMessage(req.Target, task.ID, true))
 }
 

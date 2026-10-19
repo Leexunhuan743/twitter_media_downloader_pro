@@ -256,13 +256,13 @@ tmd/
 四个可交互平台（Telegram / Discord / Feishu / WeChat）共用一层命令实现，平台包只保留网络与会话细节：
 
 - `internal/bot/commands.go`：`ParseDownloadCommand` 解析 `/dl`（类型词 user/list/foll|following、列表 ID 校验、`key=value` 选项），并集中保存所有命令回复文案；`KindFromString` 与 `NewDownloadRequest` 供 Discord 的结构化选项复用。
-- `internal/bot/tracker.go`：`TaskTracker` 按会话记录已提交任务，终态通知时 `Drain` 一次取出并清理，替代各平台原先各自维护的三层 map。
+- `internal/bot/tracker.go`：`TaskTracker` 按会话记录已提交任务，任务进入终态（完成/失败/取消）时 `Drain` 一次取出并清理；完成/失败发通知，取消只清理。`NotifyIfTerminal` 在登记归属后复查任务状态，补上「终态事件早于归属登记」的窗口。替代各平台原先各自维护的三层 map。
 - `internal/api/bot_commands.go`：`NewBotDownloadTask` / `StartBotDownload` 负责按 kind 建任务并入队，`FormatTaskStatus` / `FormatTaskList` / `FormatCancelMessage` / `FormatTaskStats` 负责文本渲染（`markdown` 参数控制是否用反引号包裹 ID）。
 - 平台包只做三件事：把平台事件转成命令字符串、调用共享函数、用平台 API 发回文本；`/stats` 等新命令因此只需在各平台分发处加一个 case。
 
 ### 运行测试
 
-项目包含 **100 个测试文件**、1188 个测试函数（含 fuzz 目标），覆盖核心业务逻辑；HTTP 处理器契约测试集中在 `internal/api/contract_gaps_test.go`（日志、Cookie、配置、数据库子资源）：
+项目包含 **101 个测试文件**、1200 个测试函数（含 fuzz 目标），覆盖核心业务逻辑；HTTP 处理器契约测试集中在 `internal/api/contract_gaps_test.go`（日志、Cookie、配置、数据库子资源）：
 
 ```bash
 # 运行所有测试（含竞态检测）

@@ -64,6 +64,26 @@ func TestBot_NotifyTaskChangesDoesNotRepeatTerminalTask(t *testing.T) {
 
 	assert.Equal(t, 1, requests)
 }
+func TestBot_NotifyTaskChangesPrunesExpiredTasks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	bot := NewBot(&config.GotifyBotConfig{ServerURL: server.URL, Token: "test-token"}, nil, nil)
+	first := &api.Task{ID: "task_one", Status: api.TaskStatusCompleted}
+	second := &api.Task{ID: "task_two", Status: api.TaskStatusCompleted}
+
+	bot.notifyTaskChanges([]*api.Task{first})
+	// 新快照里只有 second，first 已不在快照中，其标记应被清掉。
+	bot.notifyTaskChanges([]*api.Task{second})
+
+	bot.mu.Lock()
+	tracked := len(bot.notifiedTasks)
+	bot.mu.Unlock()
+	assert.Equal(t, 1, tracked, "已从快照消失的任务不应一直占着通知去重表")
+}
+
 func TestBotStopIsIdempotent(t *testing.T) {
 	bot := &Bot{stopCh: make(chan struct{})}
 

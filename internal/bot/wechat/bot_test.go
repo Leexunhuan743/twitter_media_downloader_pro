@@ -64,6 +64,14 @@ func TestBot_NotifyTaskChanges(t *testing.T) {
 	assert.Equal(t, 1, sut.tracker.Pending("user1"),
 		"running tasks should not be cleaned up")
 
+	// cancelled task → no notification, but the tracker entry must be released
+	sut.tracker.Track("user2", "task_cancel")
+	sut.notifyTaskChanges([]*api.Task{
+		{ID: "task_cancel", Status: api.TaskStatusCancelled},
+	})
+	assert.Equal(t, 0, sut.tracker.Pending("user2"),
+		"cancelled tasks should be dropped from the tracker")
+
 	// nil/empty data → no crash
 	sut.notifyTaskChanges(nil)
 	sut.notifyTaskChanges("bad type")

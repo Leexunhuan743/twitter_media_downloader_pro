@@ -49,6 +49,7 @@ func (b *Bot) cmdDownload(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		return
 	}
 	b.tracker.Track(i.ChannelID, task.ID)
+	api.NotifyIfTerminal(b.taskManager, task.ID, func(tasks []*api.Task) { b.notifyTaskChanges(tasks) })
 	b.respond(s, i, bot.DownloadStartedMessage(req.Target, task.ID, true))
 }
 

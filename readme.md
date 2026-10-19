@@ -1047,7 +1047,7 @@ tmdp Server 模式支持接入 6 种 Bot 平台，用于远程命令控制、任
 
 | 平台      | 传输方式                                        | 命令控制 | 通知范围              | 配置要求                    |
 | ------- | ------------------------------------------- | ---- | ----------------- | ----------------------- |
-| Telegram | 长轮询（`getUpdates`，60s timeout）               | `/dl` `/status` `/cancel` `/tasks` `/help` | 任务发起者的聊天；日志告警推送给 allowed_users | `token`（必填）             |
+| Telegram | 长轮询（`getUpdates`，60s timeout）               | `/dl` `/status` `/cancel` `/tasks` `/stats` `/help` | 任务发起者的聊天；日志告警推送给 allowed_users | `token`（必填）             |
 | Discord  | WebSocket Gateway + 全局 Slash 命令             | 同上（原生布尔选项）      | 任务发起者的频道；日志告警 DM 给 allowed_users | `token`（必填）             |
 | WeChat   | wechat-robot-go iLink 协议（首次登录需扫码）          | 同上               | 任务发起者；日志告警给本次运行中出现过的用户     | `credential_path`（必填）   |
 | Feishu   | HTTP 回调（默认 `/api/v1/bot/feishu/callback`）  | 同上               | 任务发起者；日志告警给本次运行中出现过的用户     | `app_id` + `app_secret`（必填） |
@@ -1087,13 +1087,15 @@ Telegram / WeChat / Feishu 使用文本命令，Discord 使用 Slash 命令（�
 | `skip_profile`   | `sp` | 跳过 Profile 下载               | user/list/foll |
 | `no_retry`       | `nr` | 不重试失败推文                     | user/list/foll |
 
-> Bot 命令走与 HTTP/调度器相同的任务队列路径：`/dl` 创建任务后必须经 `Server.EnqueueTask` 入队才会执行；`/cancel` 通过 `TaskManager.CancelTask` 取消，保证任务状态、上下文和 SSE 推送一致。
+> Bot 命令走与 HTTP/调度器相同的任务队列路径：`/dl` 创建任务后必须经 `Server.EnqueueTask` 入队才会执行；`/cancel` 通过 `TaskManager.CancelTask` 取消，保证任务状态、上下文和 SSE 推送一致。入队失败会把任务标记为 failed，不会留下永远 queued 的任务。
+>
+> 任务在入队后可能瞬间失败，终态事件甚至早于适配器登记归属；各平台在登记后会立即复查任务状态，已终态则马上补发通知。
 
 > 四个命令平台共用同一套解析与渲染：`internal/bot/commands.go` 负责 `/dl` 参数解析（类型词、列表 ID 校验、选项）与回复文案，`internal/bot/tracker.go` 记录“哪个聊天提交了哪些任务”，`internal/api/bot_commands.go` 负责建任务、入队与状态/列表/统计的文本渲染。新增命令时先扩展这两个共享文件，再在各平台接线。
 
 ### 通知机制
 
-- **任务结果**：命令类平台只通知**发起该任务的聊天/用户/频道**（每平台维护任务归属表）；Gotify/Pushover 对每个终止任务广播一次（内部去重，避免重复推送）。
+- **任务结果**：命令类平台只通知**发起该任务的聊天/用户/频道**（共享 `internal/bot/tracker.go` 的 `TaskTracker` 记录归属）；完成/失败会发通知，取消只清理归属不发消息；Gotify/Pushover 对每个终止任务广播一次（内部去重，避免重复推送）。
 - **日志告警**：所有平台订阅日志流，仅推送 `ERRO`/`FATA` 级别日志行，且每个平台限速 1 行/秒。
 
 ### bot_config.yaml 字段
@@ -1191,7 +1193,7 @@ Profile 下载功能可以保存用户的完整个人资料：
 
 版本命名格式：`{类型}_{日期}_{时间}_{毫秒}.{扩展名}`（毫秒 0-999）
 
-备份以流式复制写出，不会把大文件整块读进内存。每个文件默认只保留最近 20 份备份，更早的会在新备份写入成功后自动删除；不认识的同名文件（例如手工放进去的备份）不会被清理。
+备份以流式复制写出，不会把大文件整块读进内存。每个文件默认只保留最近 20 份备份，更早的会在新备份写入成功后自动删除；本次刚写好的备份无论文件名排序如何都不会被删（系统时钟回拨时按名字排序可能显得更旧），旧版本毫秒位不补零的备份名同样计入上限。不认识的同名文件（例如手工放进去的备份）不会被清理。
 
 ***
 

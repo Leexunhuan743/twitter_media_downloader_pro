@@ -27,6 +27,7 @@ func (b *Bot) cmdDownload(msgID, raw, openID string) {
 		return
 	}
 	b.tracker.Track(openID, task.ID)
+	api.NotifyIfTerminal(b.taskManager, task.ID, func(tasks []*api.Task) { b.notifyTaskChanges(tasks) })
 	b.sendReply(msgID, bot.DownloadStartedMessage(req.Target, task.ID, false))
 }
 

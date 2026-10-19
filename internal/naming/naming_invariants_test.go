@@ -3,7 +3,6 @@ package naming
 import (
 	"strings"
 	"testing"
-	"unicode"
 
 	"github.com/unkmonster/tmd/internal/utils"
 )
@@ -29,8 +28,10 @@ func requireSafeComponent(t *testing.T, label, name string, maxLen int) {
 	if strings.ContainsAny(name, "/\\") || strings.ContainsRune(name, 0) {
 		t.Fatalf("%s %q contains path separator or NUL", label, name)
 	}
+	// 只禁止 Windows 文件名真正不允许的 C0 控制符与 DEL；C1（U+0080–U+009F）
+	// 是合法文件名字符，清洗器保留它们，禁止会与实现分叉并让 fuzz 目标恒失败。
 	for _, r := range name {
-		if unicode.IsControl(r) {
+		if r < 0x20 || r == 0x7f {
 			t.Fatalf("%s %q contains control rune %U", label, name, r)
 		}
 	}

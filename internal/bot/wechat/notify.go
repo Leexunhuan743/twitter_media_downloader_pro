@@ -17,11 +17,17 @@ func (b *Bot) notifyTaskChanges(data interface{}) {
 	}
 	var notifications []notification
 	for _, task := range tasks {
-		if task.Status != api.TaskStatusCompleted && task.Status != api.TaskStatusFailed {
+		terminal := task.Status == api.TaskStatusCompleted || task.Status == api.TaskStatusFailed
+		// 取消的任务不发通知，但同样要从追踪表里取出，避免条目永久留在内存里。
+		if !terminal && task.Status != api.TaskStatusCancelled {
+			continue
+		}
+		scopes := b.tracker.Drain(task.ID)
+		if !terminal {
 			continue
 		}
 		text := api.FormatTaskResult(task, false)
-		for _, userID := range b.tracker.Drain(task.ID) {
+		for _, userID := range scopes {
 			notifications = append(notifications, notification{userID: userID, text: text})
 		}
 	}

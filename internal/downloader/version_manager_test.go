@@ -254,7 +254,10 @@ func TestIsVersionFileName(t *testing.T) {
 		{"clip_20240101_000000_007.mp4", "clip", ".mp4", true},
 		{"clip_20240101_000000_007", "clip", "", true},
 		{"clip_2024_01_000000_007.mp4", "clip", ".mp4", false},
-		{"clip_20240101_000000_00.mp4", "clip", ".mp4", false},
+		// 旧实现的毫秒段不补零，1–2 位也是合法备份名。
+		{"clip_20240101_000000_00.mp4", "clip", ".mp4", true},
+		{"clip_20240101_000000_0.mp4", "clip", ".mp4", true},
+		{"clip_20240101_000000_0007.mp4", "clip", ".mp4", false},
 		{"clip_20240101_000000_00a.mp4", "clip", ".mp4", false},
 		{"clip_manual_backup.mp4", "clip", ".mp4", false},
 		{"other_20240101_000000_007.mp4", "clip", ".mp4", false},

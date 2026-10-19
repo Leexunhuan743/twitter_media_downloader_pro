@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -56,8 +57,9 @@ type Scheduler struct {
 	stopRequested  bool
 	// OnStatusChange 在状态更新后的调度器 goroutine 内同步调用。回调不得
 	// 再调用 Scheduler 的生命周期方法（Start/Stop/Reload）：Stop 会
-	// wg.Wait 等待当前 goroutine，造成自等死锁。服务器实际回调只做
-	// eventBus 发布（非阻塞），不触生命周期。
+	// wg.Wait 等待当前 goroutine，造成自等死锁。IsRunning 不持 lifecycleMu，
+	// 在回调里查询运行状态是安全的。服务器实际回调只做 eventBus 发布
+	// （非阻塞），不触生命周期。
 	OnStatusChange ScheduleStatusChangeFunc
 }
 
@@ -271,10 +273,13 @@ func (sc *Scheduler) Reload() error {
 	return nil
 }
 
+// IsRunning 只读 started 标志，不抢 lifecycleMu：OnStatusChange 回调在
+// 调度器 goroutine 内同步调用，若这里等 lifecycleMu，回调里调用 IsRunning
+// 会和持有该锁等待 wg 的 Stop 互等死锁。
 func (sc *Scheduler) IsRunning() bool {
-	sc.lifecycleMu.Lock()
-	defer sc.lifecycleMu.Unlock()
-	return sc.isRunningLockedLifecycle()
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return sc.started
 }
 
 func (sc *Scheduler) isRunningLockedLifecycle() bool {
@@ -654,7 +659,8 @@ func (sc *Scheduler) statusChangeSnapshotLocked() (ScheduleStatusChangeFunc, boo
 	return callback, sc.started, cloneStatuses(sc.statuses)
 }
 
-// cloneStatuses 深拷贝状态快照，包括 LastRunAt/NextRunAt 指向的时间值。
+// cloneStatuses 深拷贝状态快照：LastRunAt/NextRunAt 指向的时间值与
+// Entry 里的 Users/Lists/FollowingNames 切片都不与调度器内部共享。
 // 调用方（HTTP 处理器、SSE、OnStatusChange 回调）拿到的是独立副本，
 // 修改快照不会污染调度器内部状态。
 func cloneStatuses(statuses []ScheduleStatus) []ScheduleStatus {
@@ -668,7 +674,21 @@ func cloneStatuses(statuses []ScheduleStatus) []ScheduleStatus {
 func cloneStatus(status ScheduleStatus) ScheduleStatus {
 	status.LastRunAt = cloneTimePtr(status.LastRunAt)
 	status.NextRunAt = cloneTimePtr(status.NextRunAt)
+	// 条目里的切片与调度器内部共享底层数组；快照必须独立，调用方改写
+	// 快照（例如 API 层复用请求体）才不会污染调度器状态。
+	status.Entry.Users = cloneStrings(status.Entry.Users)
+	status.Entry.Lists = cloneStrings(status.Entry.Lists)
+	status.Entry.FollowingNames = cloneStrings(status.Entry.FollowingNames)
 	return status
+}
+
+func cloneStrings(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	cloned := make([]string, len(values))
+	copy(cloned, values)
+	return cloned
 }
 
 func cloneTimePtr(value *time.Time) *time.Time {
@@ -740,9 +760,6 @@ func ParseSchedule(raw string) (*ParsedSchedule, error) {
 				return nil, fmt.Errorf("invalid daily time %q: %w", ts, err)
 			}
 			times = append(times, t)
-			if len(times) > maxDailyTimes {
-				return nil, fmt.Errorf("too many daily times: %d (maximum %d)", len(times), maxDailyTimes)
-			}
 		}
 		if len(times) == 0 {
 			return nil, fmt.Errorf("no daily times specified")
@@ -760,6 +777,9 @@ func ParseSchedule(raw string) (*ParsedSchedule, error) {
 			unique = append(unique, t)
 		}
 		times = unique
+		if len(times) > maxDailyTimes {
+			return nil, fmt.Errorf("too many daily times: %d (maximum %d)", len(times), maxDailyTimes)
+		}
 		sorted := make([]time.Time, len(times))
 		copy(sorted, times)
 		sort.Slice(sorted, func(i, j int) bool { return sorted[i].Before(sorted[j]) })
@@ -768,42 +788,29 @@ func ParseSchedule(raw string) (*ParsedSchedule, error) {
 	return nil, fmt.Errorf("unknown schedule format: %q (use 'interval:2h' or 'daily:07:00,21:00')", raw)
 }
 
+// formatSeconds 渲染不足一分钟的剩余时长：整秒用整数，含亚秒时保留
+// 完整精度（例如 1m0.5s 显示「0.5 秒」而不是被丢掉）。
+func formatSeconds(d time.Duration) string {
+	if d%time.Second == 0 {
+		return fmt.Sprintf("%d 秒", int(d/time.Second))
+	}
+	return strconv.FormatFloat(float64(d)/float64(time.Second), 'f', -1, 64) + " 秒"
+}
+
 func FormatScheduleDisplay(parsed *ParsedSchedule, raw string) string {
 	if parsed == nil {
 		return raw
 	}
 	switch parsed.Mode {
 	case ScheduleModeInterval:
-		d := int(parsed.Interval / (24 * time.Hour))
-		h := int(parsed.Interval/time.Hour) % 24
-		m := int(parsed.Interval/time.Minute) % 60
-		s := int(parsed.Interval/time.Second) % 60
-		if s == 0 {
-			if d > 0 && h == 0 && m == 0 {
-				if d == 1 {
-					return "每 24 小时"
-				}
-				return fmt.Sprintf("每 %d 天", d)
-			}
-			if d > 0 {
-				parts := []string{fmt.Sprintf("%d 天", d)}
-				if h > 0 {
-					parts = append(parts, fmt.Sprintf("%d 小时", h))
-				}
-				if m > 0 {
-					parts = append(parts, fmt.Sprintf("%d 分钟", m))
-				}
-				return "每 " + strings.Join(parts, " ")
-			}
-			if h > 0 && m > 0 {
-				return fmt.Sprintf("每 %d 小时 %d 分钟", h, m)
-			} else if h > 0 {
-				return fmt.Sprintf("每 %d 小时", h)
-			}
-			return fmt.Sprintf("每 %d 分钟", m)
+		interval := parsed.Interval
+		d := int(interval / (24 * time.Hour))
+		h := int(interval/time.Hour) % 24
+		m := int(interval/time.Minute) % 60
+		rest := interval - time.Duration(d)*24*time.Hour - time.Duration(h)*time.Hour - time.Duration(m)*time.Minute
+		if d == 1 && h == 0 && m == 0 && rest == 0 {
+			return "每 24 小时"
 		}
-		// 秒级间隔（例如 interval:90s）此前会被截断成「每 1 分钟」，
-		// 导致展示周期与实际触发周期不一致。
 		parts := make([]string, 0, 4)
 		if d > 0 {
 			if d == 1 && h == 0 && m == 0 {
@@ -818,7 +825,11 @@ func FormatScheduleDisplay(parsed *ParsedSchedule, raw string) string {
 		if m > 0 {
 			parts = append(parts, fmt.Sprintf("%d 分钟", m))
 		}
-		parts = append(parts, fmt.Sprintf("%d 秒", s))
+		// 秒级间隔（例如 interval:90s）此前会被截断成「每 1 分钟」，
+		// 导致展示周期与实际触发周期不一致；不足一秒的部分同样保留。
+		if rest > 0 {
+			parts = append(parts, formatSeconds(rest))
+		}
 		return "每 " + strings.Join(parts, " ")
 	case ScheduleModeDaily:
 		parts := make([]string, len(parsed.Times))

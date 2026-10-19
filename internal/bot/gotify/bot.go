@@ -70,12 +70,23 @@ func (b *Bot) notifyTaskChanges(data interface{}) {
 	}
 	var pending []*api.Task
 	b.mu.Lock()
+	if b.notifiedTasks == nil {
+		b.notifiedTasks = make(map[string]struct{})
+	}
+	// 事件里是当前任务的全量快照，快照外的任务已过期或删除：清掉它们的
+	// 已通知标记，避免这张 map 随进程运行无限增长。
+	live := make(map[string]struct{}, len(tasks))
+	for _, task := range tasks {
+		live[task.ID] = struct{}{}
+	}
+	for id := range b.notifiedTasks {
+		if _, ok := live[id]; !ok {
+			delete(b.notifiedTasks, id)
+		}
+	}
 	for _, task := range tasks {
 		if task.Status != api.TaskStatusCompleted && task.Status != api.TaskStatusFailed {
 			continue
-		}
-		if b.notifiedTasks == nil {
-			b.notifiedTasks = make(map[string]struct{})
 		}
 		if _, ok := b.notifiedTasks[task.ID]; ok {
 			continue
