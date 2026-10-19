@@ -76,7 +76,7 @@ Twitter Media Downloader Pro（简称 `tmdp`）基于 [unkmonster/tmd](https://g
 
 ### 1. 环境要求
 
-- **Go**: >= 1.25.0（从源码编译时需要）
+- **Go**: >= 1.26.0（从源码编译时需要）
 
 - **操作系统**: Windows 10+, macOS 10.15+, Ubuntu 18.04+
 

@@ -1,6 +1,6 @@
 # TMD Agent Rules
 
-TMD 是 Twitter/X 媒体下载器：CLI、API Server 与内嵌 Web 控制台共用一个 Go 模块（Go 1.25，`github.com/unkmonster/tmd`）。
+TMD 是 Twitter/X 媒体下载器：CLI、API Server 与内嵌 Web 控制台共用一个 Go 模块（Go 1.26，`github.com/unkmonster/tmd`）。
 
 ## 目标
 
