@@ -19,20 +19,86 @@ const (
 	maxLogsPageSize     = 200
 )
 
-// logrus TextFormatter 时间格式: INFO[2024-06-04T10:00:00+08:00]
-var logTimeRegex = regexp.MustCompile(`^(?:DEBU|INFO|WARN|ERRO|FATA)\[([^\]]+)\]`)
-var logDomainRegex = regexp.MustCompile(`(?i)^(?:(?:DEBU|INFO|WARN|ERRO|FATA)\[[^\]]+\]\s+)?\[([a-z0-9_-]+)\]`)
+// 日志行有两种格式：
+//   - logrus 文本（输出被重定向、没有终端时）：time="2026-10-19T14:14:57+08:00" level=info msg="[api] GET …"
+//   - logrus 终端（带颜色时）：INFO[2026-10-19T14:14:57+08:00] [api] GET …
+//
+// 两种格式都要能被级别 / 来源 / 时间过滤识别，否则服务端过滤会静默失效。
+var (
+	legacyLogLineRe = regexp.MustCompile(`^(DEBU|INFO|WARN|ERRO|FATA)\[([^\]]+)\]\s*(.*)$`)
+	kvLogTimeRe     = regexp.MustCompile(`(?:^|\s)time=("([^"]*)"|([^\s]+))`)
+	kvLogLevelRe    = regexp.MustCompile(`(?:^|\s)level="?([a-zA-Z]+)"?`)
+	kvLogMsgRe      = regexp.MustCompile(`(?:^|\s)msg="((?:[^"\\]|\\.)*)"`)
+	logDomainTagRe  = regexp.MustCompile(`^\s*\[([a-z0-9_-]+)\]`)
+)
 
 func parseLogTime(line string) (time.Time, bool) {
-	m := logTimeRegex.FindStringSubmatch(line)
-	if m == nil {
+	var raw string
+	if m := legacyLogLineRe.FindStringSubmatch(line); m != nil {
+		raw = m[2]
+	} else if m := kvLogTimeRe.FindStringSubmatch(line); m != nil {
+		raw = m[2]
+		if raw == "" {
+			raw = m[3]
+		}
+	}
+	if raw == "" {
 		return time.Time{}, false
 	}
-	t, err := time.Parse(time.RFC3339, m[1])
-	if err != nil {
-		return time.Time{}, false
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+	} {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return t, true
+		}
 	}
-	return t, true
+	return time.Time{}, false
+}
+
+// parseLogLevel 返回日志行的规范化级别（debug/info/warn/error/fatal），无法识别时返回空串。
+func parseLogLevel(line string) string {
+	if m := legacyLogLineRe.FindStringSubmatch(line); m != nil {
+		return normalizeLogLevel(m[1])
+	}
+	if m := kvLogLevelRe.FindStringSubmatch(line); m != nil {
+		return normalizeLogLevel(m[1])
+	}
+	return ""
+}
+
+func normalizeLogLevel(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "debu", "debug", "trace":
+		return "debug"
+	case "info":
+		return "info"
+	case "warn", "warni", "warning":
+		return "warn"
+	case "erro", "error", "err":
+		return "error"
+	case "fata", "fatal", "panic":
+		return "fatal"
+	}
+	return ""
+}
+
+// logPayload 取日志正文（msg 字段内容，或旧格式里级别前缀之后的部分）。
+func logPayload(line string) string {
+	if m := legacyLogLineRe.FindStringSubmatch(line); m != nil {
+		return m[3]
+	}
+	if m := kvLogMsgRe.FindStringSubmatch(line); m != nil {
+		return unescapeLogField(m[1])
+	}
+	return strings.TrimSpace(line)
+}
+
+func unescapeLogField(value string) string {
+	return strings.NewReplacer(`\n`, "\n", `\t`, "\t", `\r`, "", `\"`, `"`, `\\`, `\`).Replace(value)
 }
 
 func parseFilterTime(s string) (time.Time, bool) {
@@ -101,12 +167,12 @@ func (s *Server) handleLogStats(w http.ResponseWriter, r *http.Request) {
 	lines := s.logHub.Snapshot()
 	stats := map[string]int{"debug": 0, "info": 0, "warn": 0, "error": 0, "total": len(lines)}
 	for _, line := range lines {
-		switch {
-		case matchLogLevel(line, "error") || matchLogLevel(line, "fatal"):
+		switch parseLogLevel(line) {
+		case "error", "fatal":
 			stats["error"]++
-		case matchLogLevel(line, "warn"):
+		case "warn":
 			stats["warn"]++
-		case matchLogLevel(line, "debug"):
+		case "debug":
 			stats["debug"]++
 		default:
 			stats["info"]++
@@ -178,37 +244,31 @@ func matchLogDomain(line, domain string) bool {
 	if domain == "" || domain == "all" {
 		return true
 	}
-	m := logDomainRegex.FindStringSubmatch(strings.ToLower(line))
-	return m != nil && m[1] == domain
+	if m := logDomainTagRe.FindStringSubmatch(strings.ToLower(logPayload(line))); m != nil {
+		return m[1] == domain
+	}
+	// 兜底：没有 msg 字段的行，直接看整行开头的方括号标签。
+	if m := logDomainTagRe.FindStringSubmatch(strings.ToLower(line)); m != nil {
+		return m[1] == domain
+	}
+	return false
 }
 
 func matchLogLevel(line, level string) bool {
-	level = strings.ToLower(strings.TrimSpace(level))
-	if level == "" || level == "all" {
-		return true
+	level = normalizeLogLevel(level)
+	if level == "" {
+		// 空串 / all / 未知级别：不过滤
+		raw := strings.ToLower(strings.TrimSpace(level))
+		return raw == "" || raw == "all"
+	}
+	got := parseLogLevel(line)
+	if got == "" {
+		return false
 	}
 	if level == "error" {
-		return strings.HasPrefix(line, "ERRO[") || strings.HasPrefix(line, "FATA[")
+		return got == "error" || got == "fatal"
 	}
-
-	return strings.HasPrefix(line, logLevelPrefix(level)+"[")
-}
-
-func logLevelPrefix(level string) string {
-	switch level {
-	case "debug":
-		return "DEBU"
-	case "info":
-		return "INFO"
-	case "warn":
-		return "WARN"
-	case "error":
-		return "ERRO"
-	case "fatal":
-		return "FATA"
-	default:
-		return ""
-	}
+	return got == level
 }
 
 func isValidLogLevel(level string) bool {
