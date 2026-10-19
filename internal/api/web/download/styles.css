@@ -1999,6 +1999,18 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 }
 .metabar[data-status="failed"] > i { background: var(--danger); }
 .metabar[data-status="completed"] > i { background: var(--ok); }
+/* 运行中但还拿不到总数时，用滑动的色块表示「在工作」，而不是假装 32% 的固定进度。 */
+.metabar--indeterminate > i {
+  width: 34% !important;
+  animation: metabar-slide 1.4s ease-in-out infinite;
+}
+@keyframes metabar-slide {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(320%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .metabar--indeterminate > i { animation: none; width: 100% !important; opacity: .45; }
+}
 .lrow__progtxt {
   color: var(--muted);
   font-size: 11.5px;

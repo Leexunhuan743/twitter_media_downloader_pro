@@ -12,6 +12,7 @@
   var MODE_KEY = 'tmd.mode';
   var MAX_TARGETS = 20;
   var LEDGER_PAGE = 20;
+  var LEDGER_MAX = 200;
 
   /* ---------------- i18n ---------------- */
 
@@ -23,7 +24,7 @@
       lang: { group: '语言', switched: '界面语言：{name}' },
       status: {
         checking: '健康检查中…',
-        health: 'v{version} · 正常',
+        health: '{version} · 正常',
         healthFail: '服务不可达',
         queue: '队列 {active} 活动 / {pending} 等待',
         queueEmpty: '队列 —',
@@ -66,7 +67,7 @@
         title: '进行中',
         cancelQueued: '取消排队',
         refresh: '刷新',
-        empty: '还没有任务。在上面贴一个目标，按 Enter 开始。'
+        empty: '还没有任务。在上面贴一个目标，按 ⌘/Ctrl + Enter 开始。'
       },
       ledger: {
         title: '台账',
@@ -100,7 +101,8 @@
         title: '失败记录',
         retryAll: '全部重试',
         clear: '清除记录',
-        summary: '{users} 个账号 · {json} 个 JSON 来源'
+        accounts: '{n} 个账号',
+        jsonSources: '{n} 个 JSON 来源'
       },
       footer: {
         root: '根目录 {path}',
@@ -133,12 +135,14 @@
         online: '实时连接已恢复',
         batch: '批量操作：成功 {ok} 条，失败 {fail} 条',
         batchEmpty: '当前列表里没有可操作的任务',
-        copyManual: '浏览器拒绝了自动复制，已选中文本，请按 Ctrl+C'
+        copyManual: '浏览器拒绝了自动复制，已选中文本，请按 Ctrl+C',
+        copyFailed: '复制失败，请手动选中文本后按 Ctrl+C'
       },
       confirm: {
         delete: '删除任务 {id} 的记录？任务数据不会保留。',
         clearErrors: '清除全部失败记录？',
-        cancelQueued: '取消所有排队中的任务？'
+        cancelQueued: '取消所有排队中的任务？',
+        batchDelete: '删除当前列表里 {n} 个已结束任务的记录？此操作不可撤销。'
       },
       rel: { now: '刚刚', min: '{n} 分钟前', hour: '{n} 小时前', day: '{n} 天前' }
     },
@@ -149,7 +153,7 @@
       lang: { group: 'Language', switched: 'Language: {name}' },
       status: {
         checking: 'checking…',
-        health: 'v{version} · ok',
+        health: '{version} · ok',
         healthFail: 'unreachable',
         queue: 'queue {active} active / {pending} waiting',
         queueEmpty: 'queue —',
@@ -192,7 +196,7 @@
         title: 'In flight',
         cancelQueued: 'Cancel queued',
         refresh: 'Refresh',
-        empty: 'No tasks yet. Paste a target above and press Enter.'
+        empty: 'No tasks yet. Paste a target above, then press ⌘/Ctrl + Enter.'
       },
       ledger: {
         title: 'Ledger',
@@ -226,7 +230,10 @@
         title: 'Failure log',
         retryAll: 'Retry all',
         clear: 'Clear log',
-        summary: '{users} account(s) · {json} JSON source(s)'
+        accountsOne: '{n} account failed',
+        accountsMany: '{n} accounts failed',
+        jsonOne: '{n} JSON import failed',
+        jsonMany: '{n} JSON imports failed'
       },
       footer: {
         root: 'root {path}',
@@ -259,12 +266,14 @@
         online: 'live stream restored',
         batch: 'Batch: {ok} done, {fail} failed',
         batchEmpty: 'No task in this list can be acted on',
-        copyManual: 'Automatic copy was blocked; text selected — press Ctrl+C'
+        copyManual: 'Automatic copy was blocked; text selected — press Ctrl+C',
+        copyFailed: 'Copy failed — select the text and press Ctrl+C'
       },
       confirm: {
         delete: 'Delete the record for task {id}?',
         clearErrors: 'Clear the whole failure log?',
-        cancelQueued: 'Cancel every queued task?'
+        cancelQueued: 'Cancel every queued task?',
+        batchDelete: 'Delete the records of {n} finished tasks in this list? This cannot be undone.'
       },
       rel: { now: 'just now', min: '{n} min ago', hour: '{n} h ago', day: '{n} d ago' }
     }
@@ -279,7 +288,7 @@
     errors: { regular: {}, json: [] },
     filter: 'all',
     query: '',
-    ledger: { items: [], total: 0, page: 1, pageSize: LEDGER_PAGE, loading: false },
+    ledger: { items: [], total: 0, window: LEDGER_PAGE, loading: false, pending: null },
     context: null,
     mode: 'user',
     manualMode: false,
@@ -326,6 +335,14 @@
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  }
+
+  function versionLabel(value) {
+    var v = String(value === undefined || value === null ? '' : value).trim();
+    if (!v) return '?';
+    if (/^v[0-9]/i.test(v)) return v;
+    if (/^[0-9]/.test(v)) return 'v' + v;
+    return v;
   }
 
   function lookup(dict, path) {
@@ -1034,14 +1051,39 @@
 
   var ledgerTimer = null;
 
+  // 指针停在台账 / 队列上时推迟自动重绘：innerHTML 被替换后，按下与松开落在不同节点上，
+  // click 不会触发，用户会看到「按钮点了没反应」。按住期间挂起刷新，松手 300ms 后补上。
+  var holdUntil = 0;
+  var HOLD_ZONE = '#ledger, #ledger-filters, #queue, #queue-section, #ledger-empty, #btn-batch-retry, #btn-batch-delete';
+
+  function interactionHeld() { return holdUntil > Date.now(); }
+
+  function trackInteraction() {
+    document.addEventListener('pointerdown', function (event) {
+      var el = event.target;
+      if (el && el.closest && el.closest(HOLD_ZONE)) holdUntil = Date.now() + 900;
+    }, true);
+    document.addEventListener('pointerup', function () {
+      if (holdUntil) holdUntil = Math.max(holdUntil, Date.now() + 300);
+    }, true);
+  }
+
   // SSE 每次推全量快照都会触发队列重绘；台账查询合并成 300ms 一次，避免每个事件打一次接口。
   function scheduleLedgerRefresh() {
     clearTimeout(ledgerTimer);
-    ledgerTimer = setTimeout(function () { loadLedger(true); loadStats(); }, 300);
+    var wait = 300;
+    if (interactionHeld()) wait = Math.max(wait, holdUntil - Date.now() + 60);
+    ledgerTimer = setTimeout(function () { loadLedger('keep'); loadStats(); }, wait);
+  }
+
+  // 台账一次取「前 N 条」，N 随「显示更多」翻倍增长。这样 SSE 刷新不会把已展开的列表收回去。
+  function ledgerWindow() {
+    var size = Number(state.ledger.window) || LEDGER_PAGE;
+    return Math.min(Math.max(size, LEDGER_PAGE), LEDGER_MAX);
   }
 
   function ledgerParams() {
-    var params = { page: state.ledger.page, pageSize: state.ledger.pageSize };
+    var params = { page: 1, pageSize: ledgerWindow() };
     if (state.filter === 'active') params.status = 'queued,running';
     else if (state.filter !== 'all') params.status = state.filter;
     if (state.query) params.q = state.query;
@@ -1050,32 +1092,27 @@
     return params;
   }
 
-  // loadLedger 走服务端过滤分页（/tasks/query）；reset=true 表示回到第 1 页并替换列表。
-  function loadLedger(reset) {
-    if (state.ledger.loading) return Promise.resolve();
-    if (reset) state.ledger.page = 1;
+  // loadLedger 走服务端过滤（/tasks/query）。mode: 'reset' 收起窗口、'more' 扩大窗口、
+  // 'keep' 保持当前窗口（SSE 与轮询刷新用它）。请求进行中的调用排队到本次结束后重放，
+  // 否则 300ms 内的筛选切换会被静默丢弃。
+  function loadLedger(mode) {
+    if (state.ledger.loading) { state.ledger.pending = mode || 'keep'; return Promise.resolve(); }
+    if (mode === 'reset') state.ledger.window = LEDGER_PAGE;
+    else if (mode === 'more') state.ledger.window = Math.min(ledgerWindow() + LEDGER_PAGE, LEDGER_MAX);
     state.ledger.loading = true;
     return request('/api/v1/tasks/query' + buildQuery(ledgerParams()))
       .then(function (data) {
-        var items = (data && data.items) || [];
         state.ledger.total = (data && data.total) || 0;
-        state.ledger.items = reset ? items : state.ledger.items.concat(items);
+        state.ledger.items = (data && data.items) || [];
       })
       .catch(function () { })
       // loading 必须在重绘前落下，否则空结果会停在骨架屏上。
-      .then(function () { state.ledger.loading = false; renderLedger(); });
-  }
-
-  // loadMeta 只取 download/context 没有的字段（根目录、库统计）；
-  // 版本、队列与并发上限已由 loadContext 一次带回。
-  function loadMeta() {
-    request('/api/v1/config')
-      .then(function (data) { state.config = data || null; renderFooter(); })
-      .catch(function () { });
-
-    request('/api/v1/db/stats')
-      .then(function (data) { state.dbStats = data || null; renderFooter(); })
-      .catch(function () { });
+      .then(function () {
+        state.ledger.loading = false;
+        renderLedger();
+        var next = state.ledger.pending;
+        if (next) { state.ledger.pending = null; loadLedger(next); }
+      });
   }
 
   function loadErrors() {
@@ -1092,12 +1129,16 @@
 
   function loadStats() {
     return request('/api/v1/tasks/stats')
-      .then(function (data) { state.stats = data || null; renderFilters(); })
+      .then(function (data) {
+        state.stats = data || null;
+        if (!interactionHeld()) renderFilters();
+      })
       .catch(function () { /* 计数只用于筛选 chip，失败不影响台账 */ });
   }
 
   function loadAll() {
-    return Promise.all([loadTasks(), loadErrors(), loadMeta(), loadLedger(true), loadStats()]);
+    // loadContext 让页头的版本、队列与认证状态跟着刷新走，而不是只在启动时取一次。
+    return Promise.all([loadTasks(), loadErrors(), loadLedger('reset'), loadStats(), loadContext()]);
   }
 
   /* ---------------- rendering ---------------- */
@@ -1121,7 +1162,8 @@
     var total = Number(p.total) || 0;
     var done = Number(p.completed) || 0;
     var failed = Number(p.failed) || 0;
-    var percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : null;
+    // 进度条表示「已处理」比例，失败项也算处理过，否则部分失败的任务永远停在半格。
+    var percent = total > 0 ? Math.min(100, Math.round(((done + failed) / total) * 100)) : null;
     return { total: total, done: done, failed: failed, percent: percent, stage: p.stage || '', current: p.current || '' };
   }
 
@@ -1146,7 +1188,7 @@
     var healthEl = $('#status-health');
     if (state.health && state.health.status) {
       healthEl.setAttribute('data-state', 'ok');
-      healthEl.textContent = t('status.health', { version: state.health.version || '?' });
+      healthEl.textContent = t('status.health', { version: versionLabel(state.health.version) });
     } else {
       healthEl.setAttribute('data-state', 'error');
       healthEl.textContent = t('status.healthFail');
@@ -1338,9 +1380,11 @@
     if (more) {
       if (state.ledger.total > items.length) {
         more.hidden = false;
+        more.disabled = ledgerWindow() >= LEDGER_MAX;
         more.textContent = t('ledger.limited', { shown: items.length, total: state.ledger.total });
       } else {
         more.hidden = true;
+        more.disabled = false;
         more.textContent = t('ledger.more');
       }
     }
@@ -1407,8 +1451,12 @@
         : progress.stage || t('taskStatus.' + status);
     }
     if (progress.failed > 0 && !terminal) progText += ' · ' + t('metric.failed', { n: progress.failed });
-    var percent = progress.percent === null ? (status === 'running' ? 32 : 0) : progress.percent;
+    var unknownTotal = progress.percent === null && status === 'running';
+    var percent = progress.percent === null ? 0 : progress.percent;
     var showBar = progress.total > 0 || status === 'running';
+    var bar = unknownTotal
+      ? '<span class="metabar metabar--indeterminate" data-status="running"><i></i></span>'
+      : '<span class="metabar" data-status="' + esc(status) + '"><i style="width:' + percent + '%"></i></span>';
     var created = task.created_at || task.started_at;
 
     return '<div class="lrow" data-id="' + esc(task.task_id) + '" data-status="' + esc(status) + '">' +
@@ -1420,7 +1468,7 @@
           '<span class="mono">' + esc(shortId(task.task_id)) + '</span></span>' +
       '</span>' +
       '<span class="lrow__prog">' +
-        (showBar ? '<span class="metabar" data-status="' + esc(status) + '"><i style="width:' + percent + '%"></i></span>' : '') +
+        (showBar ? bar : '') +
         '<span class="lrow__progtxt">' + esc(progText) + '</span>' +
       '</span>' +
       '<time class="lrow__time" title="' + esc(fmtTime(created)) + '">' + esc(fmtRelative(created)) + '</time>' +
@@ -1454,6 +1502,15 @@
     }).join('');
   }
 
+  // 只列出非零的来源：0 个账号失败不该占据一行文案。
+  function errorsSummary(users, json) {
+    var en = state.lang === 'en';
+    var parts = [];
+    if (users > 0) parts.push(en ? t(users === 1 ? 'errors.accountsOne' : 'errors.accountsMany', { n: users }) : t('errors.accounts', { n: users }));
+    if (json > 0) parts.push(en ? t(json === 1 ? 'errors.jsonOne' : 'errors.jsonMany', { n: json }) : t('errors.jsonSources', { n: json }));
+    return parts.join(' · ');
+  }
+
   function renderErrors() {
     var regular = Object.keys(state.errors.regular || {});
     var json = state.errors.json || [];
@@ -1464,14 +1521,14 @@
       return;
     }
     host.hidden = false;
-    var summary = t('errors.summary', { users: regular.length, json: json.length });
+    var summary = errorsSummary(regular.length, json.length);
     $('#errors-summary').textContent = summary + ' · ' + t('errors.hint');
   }
 
   function renderFooter() {
     var health = state.health || {};
     var version = $('#footer-version');
-    if (version) version.textContent = t('footer.version', { version: health.version || '—' });
+    if (version) version.textContent = t('footer.version', { version: health.version ? versionLabel(health.version) : '—' });
     var note = $('#footer-note');
     if (note) note.textContent = t('footer.note');
   }
@@ -1629,8 +1686,12 @@
       }, 1400);
     };
     copyValue(text).then(done, function () {
-      if (btn) selectNodeText(btn);
-      toast('error', t('toast.copyManual'));
+      // 复制被拒时把值本身选中，用户直接 Ctrl+C 就能拿到内容；选按钮只会复制按钮文字。
+      var rowEl = btn && btn.closest ? btn.closest('.kv__row') : null;
+      var valueEl = rowEl ? rowEl.querySelector('.kv__val') : null;
+      var target = (valueEl && valueEl.querySelector('.mono')) || valueEl || btn;
+      var selected = selectNodeText(target);
+      toast(selected ? 'info' : 'error', t(selected ? 'toast.copyManual' : 'toast.copyFailed'));
     });
   }
 
@@ -1733,7 +1794,7 @@
       var fail = (data && data.failed) || 0;
       toast(fail ? 'info' : 'success', t('toast.batch', { ok: ok, fail: fail }));
       loadTasks();
-      loadLedger(true);
+      loadLedger('reset');
       return data;
     });
   }
@@ -1756,6 +1817,7 @@
   function batchDeleteVisible() {
     var ids = visibleIDs(['completed', 'failed', 'cancelled']);
     if (!ids.length) { toast('info', t('toast.batchEmpty')); return; }
+    if (!window.confirm(t('confirm.batchDelete', { n: ids.length }))) return;
     batchTasks('delete', ids).catch(function (err) {
       if (err.status !== 401) toast('error', err.message);
     });
@@ -1784,6 +1846,7 @@
   /* ---------------- wiring ---------------- */
 
   function bind() {
+    trackInteraction();
     $('#dispatch-form').addEventListener('submit', submitForm);
 
     var input = $('#target-input');
@@ -1792,7 +1855,7 @@
       updateTargetHint();
     });
     input.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) {
         event.preventDefault();
         submitForm(event);
       }
@@ -1870,7 +1933,7 @@
       if (!chip) return;
       state.filter = chip.getAttribute('data-filter');
       renderFilters();
-      loadLedger(true);
+      loadLedger('reset');
     });
 
     var search = $('#ledger-search');
@@ -1879,13 +1942,12 @@
       clearTimeout(searchTimer);
       searchTimer = setTimeout(function () {
         state.query = search.value.trim();
-        loadLedger(true);
+        loadLedger('reset');
       }, 300);
     });
 
     $('#ledger-more').addEventListener('click', function () {
-      state.ledger.page += 1;
-      loadLedger(false);
+      loadLedger('more');
     });
 
     $('#btn-batch-retry').addEventListener('click', batchRetryVisible);
@@ -1939,7 +2001,7 @@
       var search = $('#ledger-search');
       if (search) search.value = '';
       renderFilters();
-      loadLedger(true);
+      loadLedger('reset');
       return;
     }
     var id = btn.getAttribute('data-id');
@@ -2079,7 +2141,7 @@
         emptyFilter: 'No tasks match this filter',
         clearFilters: 'Clear filters',
         total: '{n} total',
-        duration: '{d}',
+        duration: 'took {d}',
         copyId: 'Copy task id'
       },
       stage: {
