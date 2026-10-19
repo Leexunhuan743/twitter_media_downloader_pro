@@ -46,6 +46,17 @@ func finalizeName(value string, maxLen int) string {
 	return strings.TrimSpace(utils.WinFileNameWithMaxLen(value, maxLen))
 }
 
+// finalizeOrFallback 把已拼接的标题做最后清洗，并在清洗结果为空时
+// 回退到领域默认值（user/list）。UserNaming 与 ListNaming 共用，
+// 避免两处各写一遍「清洗 → 判空 → 兜底 → 截断」。
+func finalizeOrFallback(value, fallback string, maxLen int) string {
+	title := finalizeName(value, maxLen)
+	if title == "" && maxLen > 0 {
+		title = utils.TruncateUTF8(fallback, maxLen)
+	}
+	return title
+}
+
 func fitNameWithSuffix(name, suffix string, maxLen int) string {
 	if maxLen <= 0 {
 		return ""

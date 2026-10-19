@@ -3056,7 +3056,7 @@ GET /api/v1/schedules
 | `lists` | string[] | `mixed` 类型的列表 ID 列表 |
 | `following_names` | string[] | `mixed` 类型的 following 用户名列表 |
 | `name` | string | 调度名称 |
-| `schedule` | string | 调度表达式（如 `daily:08:00`、`interval:6h`） |
+| `schedule` | string | 调度表达式（如 `daily:08:00`、`interval:6h`）。interval 最小 1 分钟、支持到秒（`interval:90s`）；daily 必须 `HH:MM` 24 小时制，重复时间点自动归并 |
 | `enabled` | bool | 是否启用 |
 | `run_on_start` | bool | 系统首次启动时是否立即执行 |
 | `auto_follow` | bool | 自动关注受保护用户 |
@@ -3069,7 +3069,7 @@ GET /api/v1/schedules
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `entry` | object | 调度条目配置 |
-| `schedule_display` | string | 可读调度规则 |
+| `schedule_display` | string | 可读调度规则（如「每天 08:00」「每 1 分钟 30 秒」） |
 | `last_run_at` | string | 上次触发时间，ISO 8601 格式 |
 | `next_run_at` | string | 下次预计触发时间，ISO 8601 格式 |
 | `run_count` | int | 累计触发次数 |

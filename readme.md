@@ -927,7 +927,7 @@ tmdp Server 内置定时任务调度器，支持按时间间隔或每天固定�
 | **interval** | `interval:<duration>` | `interval:2h`       | 每隔指定时间执行一次 |
 | **daily**    | `daily:<times>`       | `daily:07:00,21:00` | 每天在指定时间执行  |
 
-> interval 最小值为 `1m`（1 分钟）。daily 模式时间点最多 **96 个**，必须使用 `HH:MM` 24 小时制，逗号分隔。
+> interval 最小值为 `1m`（1 分钟），支持带秒（如 `interval:90s`，展示为「每 1 分钟 30 秒」）。daily 模式时间点最多 **96 个**，必须使用 `HH:MM` 24 小时制，逗号分隔；重复的时间点会归并为一次。
 
 ### 任务类型
 
@@ -1028,7 +1028,7 @@ schedules:
 | `total`                          | 调度总数                                |
 | `entries[].last_run_at`          | 上次执行时间                              |
 | `entries[].next_run_at`          | 下次执行时间                              |
-| `entries[].schedule_display`     | 调度时间格式化显示（如 "每天 08:00"）             |
+| `entries[].schedule_display`     | 调度时间格式化显示（如 "每天 08:00"、"每 1 分钟 30 秒"） |
 | `entries[].run_count`            | 累计执行次数                              |
 | `entries[].last_task_id`         | 上次执行的任务 ID                          |
 | `entries[].last_error`           | 上次执行的错误信息                           |

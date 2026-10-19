@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-
-	"github.com/unkmonster/tmd/internal/utils"
 )
 
 // ListNamer supplies the identity and display title needed for list naming.
@@ -23,7 +21,7 @@ type ListNaming struct {
 // deterministic fallback when the source title is empty or unavailable.
 func NewListNamingFromBase(lst ListNamer, maxLen int) *ListNaming {
 	if isNilListNamer(lst) {
-		return &ListNaming{sanitized: finalizeName("list", maxLen)}
+		return &ListNaming{sanitized: finalizeOrFallback("list", "list", maxLen)}
 	}
 
 	id := lst.GetId()
@@ -44,17 +42,11 @@ func NewListNamingFromBase(lst ListNamer, maxLen int) *ListNaming {
 			if id != 0 {
 				title = fitNameWithSuffix(title, idSuffix, maxLen)
 			}
-		} else {
-			title = utils.TruncateUTF8(title, maxLen)
 		}
-	}
-	title = finalizeName(title, maxLen)
-	if title == "" && maxLen > 0 {
-		title = utils.TruncateUTF8("list", maxLen)
 	}
 
 	return &ListNaming{
-		sanitized: title,
+		sanitized: finalizeOrFallback(title, "list", maxLen),
 	}
 }
 

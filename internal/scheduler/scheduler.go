@@ -286,9 +286,7 @@ func (sc *Scheduler) isRunningLockedLifecycle() bool {
 func (sc *Scheduler) GetStatuses() []ScheduleStatus {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	result := make([]ScheduleStatus, len(sc.statuses))
-	copy(result, sc.statuses)
-	return result
+	return cloneStatuses(sc.statuses)
 }
 
 func (sc *Scheduler) Trigger(index int) (string, error) {
@@ -343,57 +341,20 @@ func (sc *Scheduler) findEnabledEntryByID(id string) (int, ScheduleEntry, error)
 	return index, entry, nil
 }
 
-func (sc *Scheduler) triggerEntry(index int, entry ScheduleEntry) (taskID string, err error) {
+func (sc *Scheduler) triggerEntry(index int, entry ScheduleEntry) (string, error) {
 	gen, ok := sc.tryAcquireExecution(index, entry, nil)
 	if !ok {
 		return "", fmt.Errorf("%w: schedule %q", ErrScheduleAlreadyTriggering, entry.Name)
 	}
 
-	var released bool
-	defer func() {
-		if r := recover(); r != nil {
-			// 与 execute 一致：panic 时在锁内原子写失败记录并清 Triggering，
-			// 不再先清标志再写记录（避免两次加锁间并发触发趁隙进入），
-			// 也不 re-panic（HTTP 调用方应收到结构化错误而非空连接）。
-			log.Errorf("[scheduler] Manual trigger panic index=%d name=%q error=%q", index, entry.Name, fmt.Sprint(r))
-			now := time.Now()
-			sc.releaseAndUpdateStatus(index, entry, gen, func(status *ScheduleStatus) {
-				status.LastRunAt = &now
-				status.RunCount++
-				status.LastError = fmt.Sprintf("panic: %v", r)
-				status.ConsecutiveFailures++
-			})
-			released = true
-			return
-		}
-		// 正常返回路径的安全网：releaseAndUpdateStatus 可能因 generation 变更
-		// 返回 false 而跳过清理，这里兜底释放 Triggering。
-		if !released {
-			sc.releaseTriggeringLocked(index, gen)
-		}
-	}()
-
-	taskID, taskErr := sc.downloadFunc(entry)
+	taskID, taskErr := sc.executeEntry(index, entry, gen)
 	if taskID == "" {
-		released = sc.releaseAndUpdateStatus(index, entry, gen, func(status *ScheduleStatus) {
-			recordExecutionResult(status, "", taskErr)
-		})
-		if !released {
-			log.Warnf("[scheduler] Status update rejected index=%d name=%q reason=empty_task_id", index, entry.Name)
-		}
 		if taskErr != nil {
 			log.Warnf("[scheduler] Manual trigger failed type=%s target=%s name=%q error=%q", entry.Type, entry.Target, entry.Name, taskErr.Error())
 			return "", taskErr
 		}
 		log.Warnf("[scheduler] Manual trigger failed type=%s target=%s name=%q reason=empty_task_id", entry.Type, entry.Target, entry.Name)
 		return "", fmt.Errorf("download function returned empty task_id")
-	}
-
-	released = sc.releaseAndUpdateStatus(index, entry, gen, func(status *ScheduleStatus) {
-		recordExecutionResult(status, taskID, nil)
-	})
-	if !released {
-		log.Warnf("[scheduler] Status update rejected index=%d name=%q task_id=%s", index, entry.Name, taskID)
 	}
 
 	log.Infof("[scheduler] Manual trigger type=%s target=%s name=%q task_id=%s", entry.Type, entry.Target, entry.Name, taskID)
@@ -528,36 +489,7 @@ func (sc *Scheduler) execute(idx int, entry ScheduleEntry, gen int64) {
 		return
 	}
 
-	var taskID string
-	var released bool
-	defer func() {
-		if r := recover(); r != nil {
-			log.Errorf("[scheduler] Execution panic index=%d name=%q error=%q", idx, entry.Name, fmt.Sprint(r))
-			now := time.Now()
-			sc.releaseAndUpdateStatus(idx, entry, acquiredGen, func(status *ScheduleStatus) {
-				status.LastRunAt = &now
-				status.RunCount++
-				status.LastError = fmt.Sprintf("panic: %v", r)
-				status.ConsecutiveFailures++
-			})
-			released = true
-			return
-		}
-		// 正常返回路径的安全网：releaseAndUpdateStatus 可能因 generation 变更
-		// 返回 false 而跳过清理，这里兜底释放 Triggering。
-		if !released {
-			sc.releaseTriggeringLocked(idx, acquiredGen)
-		}
-	}()
-
-	taskID, taskErr := sc.downloadFunc(entry)
-
-	released = sc.releaseAndUpdateStatus(idx, entry, acquiredGen, func(status *ScheduleStatus) {
-		recordExecutionResult(status, taskID, taskErr)
-	})
-	if !released {
-		log.Warnf("[scheduler] Status update rejected index=%d name=%q task_id=%s reason=status_mismatch", idx, entry.Name, taskID)
-	}
+	taskID, taskErr := sc.executeEntry(idx, entry, acquiredGen)
 
 	if taskID != "" {
 		log.Infof("[scheduler] Scheduled trigger type=%s target=%s name=%q task_id=%s", entry.Type, entry.Target, entry.Name, taskID)
@@ -566,6 +498,40 @@ func (sc *Scheduler) execute(idx int, entry ScheduleEntry, gen int64) {
 	} else {
 		log.Warnf("[scheduler] Scheduled trigger failed type=%s target=%s name=%q reason=empty_task_id", entry.Type, entry.Target, entry.Name)
 	}
+}
+
+// executeEntry 在已取得 Triggering 标志后执行一次下载，并统一负责三种收尾：
+// 记录执行结果、清除 Triggering、把 panic 转成结构化错误。手动触发（triggerEntry）
+// 与定时触发（execute）共用，避免两条路径的恢复逻辑各写一份而分叉。
+// panic 时返回的错误非空，调用方不会拿到「空 taskID 且无错误」的结果。
+func (sc *Scheduler) executeEntry(idx int, entry ScheduleEntry, gen int64) (taskID string, runErr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf("[scheduler] Execution panic index=%d name=%q error=%q", idx, entry.Name, fmt.Sprint(r))
+			now := time.Now()
+			released := sc.releaseAndUpdateStatus(idx, entry, gen, func(status *ScheduleStatus) {
+				status.LastRunAt = &now
+				status.RunCount++
+				status.LastError = fmt.Sprintf("panic: %v", r)
+				status.ConsecutiveFailures++
+			})
+			if !released {
+				sc.releaseTriggeringLocked(idx, gen)
+			}
+			taskID = ""
+			runErr = fmt.Errorf("panic: %v", r)
+		}
+	}()
+
+	taskID, runErr = sc.downloadFunc(entry)
+	released := sc.releaseAndUpdateStatus(idx, entry, gen, func(status *ScheduleStatus) {
+		recordExecutionResult(status, taskID, runErr)
+	})
+	if !released {
+		sc.releaseTriggeringLocked(idx, gen)
+		log.Warnf("[scheduler] Status update rejected index=%d name=%q task_id=%s reason=status_mismatch", idx, entry.Name, taskID)
+	}
+	return taskID, runErr
 }
 
 // recordExecutionResult 记录一次执行结果的状态字段：运行时间、taskID 与连续失败计数。
@@ -685,9 +651,32 @@ func (sc *Scheduler) statusChangeSnapshotLocked() (ScheduleStatusChangeFunc, boo
 		return nil, false, nil
 	}
 
-	statuses := make([]ScheduleStatus, len(sc.statuses))
-	copy(statuses, sc.statuses)
-	return callback, sc.started, statuses
+	return callback, sc.started, cloneStatuses(sc.statuses)
+}
+
+// cloneStatuses 深拷贝状态快照，包括 LastRunAt/NextRunAt 指向的时间值。
+// 调用方（HTTP 处理器、SSE、OnStatusChange 回调）拿到的是独立副本，
+// 修改快照不会污染调度器内部状态。
+func cloneStatuses(statuses []ScheduleStatus) []ScheduleStatus {
+	cloned := make([]ScheduleStatus, len(statuses))
+	for i, status := range statuses {
+		cloned[i] = cloneStatus(status)
+	}
+	return cloned
+}
+
+func cloneStatus(status ScheduleStatus) ScheduleStatus {
+	status.LastRunAt = cloneTimePtr(status.LastRunAt)
+	status.NextRunAt = cloneTimePtr(status.NextRunAt)
+	return status
+}
+
+func cloneTimePtr(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func notifyStatusChange(callback ScheduleStatusChangeFunc, running bool, statuses []ScheduleStatus) {
@@ -758,6 +747,19 @@ func ParseSchedule(raw string) (*ParsedSchedule, error) {
 		if len(times) == 0 {
 			return nil, fmt.Errorf("no daily times specified")
 		}
+		// 重复时间（例如 daily:07:00,07:00）只会在同一天触发一次，
+		// 保留首次出现的顺序并去掉重复项，避免展示与状态里出现两条相同时间。
+		unique := make([]time.Time, 0, len(times))
+		seen := make(map[int]struct{}, len(times))
+		for _, t := range times {
+			key := t.Hour()*60 + t.Minute()
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			unique = append(unique, t)
+		}
+		times = unique
 		sorted := make([]time.Time, len(times))
 		copy(sorted, times)
 		sort.Slice(sorted, func(i, j int) bool { return sorted[i].Before(sorted[j]) })
@@ -767,33 +769,57 @@ func ParseSchedule(raw string) (*ParsedSchedule, error) {
 }
 
 func FormatScheduleDisplay(parsed *ParsedSchedule, raw string) string {
+	if parsed == nil {
+		return raw
+	}
 	switch parsed.Mode {
 	case ScheduleModeInterval:
-		d := int(parsed.Interval.Hours()) / 24
-		h := int(parsed.Interval.Hours()) % 24
-		m := int(parsed.Interval.Minutes()) % 60
-		if d > 0 && h == 0 && m == 0 {
-			if d == 1 {
-				return "每 24 小时"
+		d := int(parsed.Interval / (24 * time.Hour))
+		h := int(parsed.Interval/time.Hour) % 24
+		m := int(parsed.Interval/time.Minute) % 60
+		s := int(parsed.Interval/time.Second) % 60
+		if s == 0 {
+			if d > 0 && h == 0 && m == 0 {
+				if d == 1 {
+					return "每 24 小时"
+				}
+				return fmt.Sprintf("每 %d 天", d)
 			}
-			return fmt.Sprintf("每 %d 天", d)
+			if d > 0 {
+				parts := []string{fmt.Sprintf("%d 天", d)}
+				if h > 0 {
+					parts = append(parts, fmt.Sprintf("%d 小时", h))
+				}
+				if m > 0 {
+					parts = append(parts, fmt.Sprintf("%d 分钟", m))
+				}
+				return "每 " + strings.Join(parts, " ")
+			}
+			if h > 0 && m > 0 {
+				return fmt.Sprintf("每 %d 小时 %d 分钟", h, m)
+			} else if h > 0 {
+				return fmt.Sprintf("每 %d 小时", h)
+			}
+			return fmt.Sprintf("每 %d 分钟", m)
 		}
+		// 秒级间隔（例如 interval:90s）此前会被截断成「每 1 分钟」，
+		// 导致展示周期与实际触发周期不一致。
+		parts := make([]string, 0, 4)
 		if d > 0 {
-			parts := []string{fmt.Sprintf("%d 天", d)}
-			if h > 0 {
-				parts = append(parts, fmt.Sprintf("%d 小时", h))
+			if d == 1 && h == 0 && m == 0 {
+				parts = append(parts, "24 小时")
+			} else {
+				parts = append(parts, fmt.Sprintf("%d 天", d))
 			}
-			if m > 0 {
-				parts = append(parts, fmt.Sprintf("%d 分钟", m))
-			}
-			return "每 " + strings.Join(parts, " ")
 		}
-		if h > 0 && m > 0 {
-			return fmt.Sprintf("每 %d 小时 %d 分钟", h, m)
-		} else if h > 0 {
-			return fmt.Sprintf("每 %d 小时", h)
+		if h > 0 {
+			parts = append(parts, fmt.Sprintf("%d 小时", h))
 		}
-		return fmt.Sprintf("每 %d 分钟", m)
+		if m > 0 {
+			parts = append(parts, fmt.Sprintf("%d 分钟", m))
+		}
+		parts = append(parts, fmt.Sprintf("%d 秒", s))
+		return "每 " + strings.Join(parts, " ")
 	case ScheduleModeDaily:
 		parts := make([]string, len(parsed.Times))
 		for i, t := range parsed.Times {

@@ -262,7 +262,7 @@ tmd/
 
 ### 运行测试
 
-项目包含 **93 个测试文件**、1146 个测试函数，覆盖核心业务逻辑；HTTP 处理器契约测试集中在 `internal/api/contract_gaps_test.go`（日志、Cookie、配置、数据库子资源）：
+项目包含 **100 个测试文件**、1188 个测试函数（含 fuzz 目标），覆盖核心业务逻辑；HTTP 处理器契约测试集中在 `internal/api/contract_gaps_test.go`（日志、Cookie、配置、数据库子资源）：
 
 ```bash
 # 运行所有测试（含竞态检测）

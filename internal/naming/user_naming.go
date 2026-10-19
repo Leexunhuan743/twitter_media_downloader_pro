@@ -1,7 +1,5 @@
 package naming
 
-import "github.com/unkmonster/tmd/internal/utils"
-
 // UserNaming builds a directory title while preserving the stable screen name.
 type UserNaming struct {
 	sanitized string
@@ -16,21 +14,13 @@ func NewUserNaming(name, screenName string, maxLen int) *UserNaming {
 	var title string
 	if screenName == "" {
 		title = name
-		if title == "" {
-			title = "user"
-		}
-		title = utils.TruncateUTF8(title, maxLen)
 	} else {
 		suffix := parenthesizedIdentity(screenName, maxLen)
 		title = fitNameWithSuffix(name, suffix, maxLen)
 	}
-	title = finalizeName(title, maxLen)
-	if title == "" && maxLen > 0 {
-		title = utils.TruncateUTF8("user", maxLen)
-	}
 
 	return &UserNaming{
-		sanitized: title,
+		sanitized: finalizeOrFallback(title, "user", maxLen),
 	}
 }
 
