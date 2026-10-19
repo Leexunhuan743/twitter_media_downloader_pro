@@ -2,9 +2,7 @@ package wechat
 
 import (
 	"context"
-	"fmt"
-	"strconv"
-	"strings"
+	"errors"
 
 	"github.com/SpellingDragon/wechat-robot-go/wechat"
 
@@ -14,130 +12,56 @@ import (
 
 func (b *Bot) cmdDownload(ctx context.Context, msg *wechat.Message, args string) {
 	if args == "" {
-		b.wechatBot.Reply(ctx, msg, "Usage: /dl [user|list|foll] <target> [opt=val ...]\nOptions: auto_follow/af, skip_profile/sp, no_retry/nr, follow_members/fm")
+		b.wechatBot.Reply(ctx, msg, bot.UsageDownload)
 		return
 	}
-	clean, opts := bot.ParseDownloadOptions(args)
-	dlType, target := parseDLArgs(clean)
-	if target == "" {
-		b.wechatBot.Reply(ctx, msg, "Usage: /dl [user|list|foll] <target>")
-		return
-	}
-
-	var task *api.Task
-	switch dlType {
-	case "list":
-		listID, err := strconv.ParseUint(target, 10, 64)
-		if err != nil {
-			b.wechatBot.Reply(ctx, msg, "Invalid list ID. Must be a number.")
+	req, err := bot.ParseDownloadCommand(args)
+	if err != nil {
+		if errors.Is(err, bot.ErrInvalidListID) {
+			b.wechatBot.Reply(ctx, msg, bot.InvalidListIDText)
 			return
 		}
-		task = b.taskManager.CreateTask(api.TaskTypeListDownload, api.NewListDownloadTask(listID, api.DownloadFlags{
-			AutoFollow:    opts.AutoFollow,
-			FollowMembers: opts.FollowMembers,
-			SkipProfile:   opts.SkipProfile,
-			NoRetry:       opts.NoRetry,
-		}))
-	case "foll":
-		task = b.taskManager.CreateTask(api.TaskTypeFollowingDownload, api.NewFollowingDownloadTask(target, api.DownloadFlags{
-			AutoFollow:    opts.AutoFollow,
-			FollowMembers: opts.FollowMembers,
-			SkipProfile:   opts.SkipProfile,
-			NoRetry:       opts.NoRetry,
-		}))
-	default:
-		task = b.taskManager.CreateTask(api.TaskTypeUserDownload, api.NewUserDownloadTask(target, api.DownloadFlags{
-			AutoFollow:    opts.AutoFollow,
-			FollowMembers: opts.FollowMembers,
-			SkipProfile:   opts.SkipProfile,
-			NoRetry:       opts.NoRetry,
-		}))
-	}
-	if b.enqueueTask == nil {
-		b.taskManager.SetTaskError(task.ID, fmt.Errorf("download queue not available"))
-		b.wechatBot.Reply(ctx, msg, "Failed to enqueue download task.")
+		b.wechatBot.Reply(ctx, msg, bot.UsageDownloadShort)
 		return
 	}
-	if err := b.enqueueTask(task); err != nil {
-		b.wechatBot.Reply(ctx, msg, fmt.Sprintf("Failed to enqueue download task: %s", err.Error()))
+	task, failure := api.StartBotDownload(b.taskManager, req, b.enqueueTask)
+	if failure != "" {
+		b.wechatBot.Reply(ctx, msg, failure)
 		return
 	}
-
-	b.mu.Lock()
-	if b.userTasks[msg.FromUserID] == nil {
-		b.userTasks[msg.FromUserID] = make(map[string]struct{})
-	}
-	b.userTasks[msg.FromUserID][task.ID] = struct{}{}
-	b.mu.Unlock()
-	b.wechatBot.Reply(ctx, msg, fmt.Sprintf("📥 Download started for %s\nTask: %s", target, task.ID))
+	b.tracker.Track(msg.FromUserID, task.ID)
+	b.wechatBot.Reply(ctx, msg, bot.DownloadStartedMessage(req.Target, task.ID, false))
 }
 
 func (b *Bot) cmdStatus(ctx context.Context, msg *wechat.Message, args string) {
 	if args == "" {
-		b.wechatBot.Reply(ctx, msg, "Usage: /status <task_id>")
+		b.wechatBot.Reply(ctx, msg, bot.UsageStatus)
 		return
 	}
 	task, ok := b.taskManager.GetTask(args)
 	if !ok {
-		b.wechatBot.Reply(ctx, msg, "Task not found.")
+		b.wechatBot.Reply(ctx, msg, bot.TaskNotFound)
 		return
 	}
-	text := fmt.Sprintf("Task: %s\nType: %s\nStatus: %s", task.ID, task.Type, task.Status)
-	if task.Progress != nil {
-		text += fmt.Sprintf("\nProgress: %d/%d (failed: %d)", task.Progress.Completed, task.Progress.Total, task.Progress.Failed)
-	}
-	if task.Error != "" {
-		text += fmt.Sprintf("\nError: %s", task.Error)
-	}
-	b.wechatBot.Reply(ctx, msg, text)
+	b.wechatBot.Reply(ctx, msg, api.FormatTaskStatus(task, false))
 }
 
 func (b *Bot) cmdCancel(ctx context.Context, msg *wechat.Message, args string) {
 	if args == "" {
-		b.wechatBot.Reply(ctx, msg, "Usage: /cancel <task_id>")
+		b.wechatBot.Reply(ctx, msg, bot.UsageCancel)
 		return
 	}
-	switch b.taskManager.CancelTask(args) {
-	case api.CancelTaskResultCancelled:
-		b.wechatBot.Reply(ctx, msg, fmt.Sprintf("Cancelling %s...", args))
-	case api.CancelTaskResultNotFound:
-		b.wechatBot.Reply(ctx, msg, "Task not found.")
-	case api.CancelTaskResultNotCancellable:
-		b.wechatBot.Reply(ctx, msg, "Task already in terminal state.")
-	}
+	b.wechatBot.Reply(ctx, msg, api.FormatCancelMessage(b.taskManager.CancelTask(args), args, false))
 }
 
 func (b *Bot) cmdTasks(ctx context.Context, msg *wechat.Message) {
-	tasks := b.taskManager.GetAllTasks()
-	if len(tasks) == 0 {
-		b.wechatBot.Reply(ctx, msg, "No tasks.")
-		return
-	}
-	count := min(10, len(tasks))
-	text := "Recent Tasks:\n"
-	for _, t := range tasks[:count] {
-		text += fmt.Sprintf("%s | %s | %s\n", t.ID, t.Type, t.Status)
-		if t.Error != "" {
-			text += fmt.Sprintf("  Error: %s\n", t.Error)
-		}
-	}
-	b.wechatBot.Reply(ctx, msg, text)
+	b.wechatBot.Reply(ctx, msg, api.FormatTaskList(b.taskManager.GetAllTasks(), 10, false))
+}
+
+func (b *Bot) cmdStats(ctx context.Context, msg *wechat.Message) {
+	b.wechatBot.Reply(ctx, msg, api.FormatTaskStats(b.taskManager.GetTaskStats()))
 }
 
 func (b *Bot) cmdHelp(ctx context.Context, msg *wechat.Message) {
-	b.wechatBot.Reply(ctx, msg, "TMD Bot\n/dl [user|list|foll] <target> [opt=val ...] - download\n  Options: af, sp, nr, fm (auto_follow, skip_profile, no_retry, follow_members)\n/status <id> - task status\n/cancel <id> - cancel task\n/tasks - list tasks\n/help - this message")
-}
-
-// parseDLArgs 解析 /dl 参数：支持 "user <name>", "list <id>", "foll <name>", 或裸 <name>
-func parseDLArgs(raw string) (dlType, target string) {
-	parts := strings.SplitN(raw, " ", 2)
-	if len(parts) == 1 {
-		return "user", parts[0]
-	}
-	switch parts[0] {
-	case "user", "list", "foll":
-		return parts[0], strings.TrimSpace(parts[1])
-	default:
-		return "user", raw
-	}
+	b.wechatBot.Reply(ctx, msg, bot.HelpText)
 }

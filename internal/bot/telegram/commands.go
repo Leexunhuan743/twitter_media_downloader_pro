@@ -1,7 +1,7 @@
 package telegram
 
 import (
-	"fmt"
+	"errors"
 	"strconv"
 	"strings"
 
@@ -12,136 +12,64 @@ import (
 )
 
 func (b *Bot) cmdStart(msg *tgbotapi.Message) {
-	b.sendText(msg.Chat.ID, "TMD Bot running.\n/dl [user|list|foll] <target> [opt=val ...] — download\n  Options: af, sp, nr, fm (auto_follow, skip_profile, no_retry, follow_members)\n/status <id> — task status\n/cancel <id> — cancel task\n/tasks — list tasks\n/help — this message")
+	b.sendText(msg.Chat.ID, bot.HelpText)
 }
+
 func (b *Bot) cmdDownload(msg *tgbotapi.Message) {
 	raw := strings.TrimSpace(msg.CommandArguments())
 	if raw == "" {
-		b.sendText(msg.Chat.ID, "Usage: /dl [user|list|foll] <target> [opt=val ...]\nOptions: auto_follow/af, skip_profile/sp, no_retry/nr, follow_members/fm\nDefaults to user if type omitted.\nExamples:\n/dl elonmusk\n/dl list 12345\n/dl foll elonmusk auto_follow=true")
+		b.sendText(msg.Chat.ID, bot.UsageDownload)
 		return
 	}
-	clean, opts := bot.ParseDownloadOptions(raw)
-	dlType, target := parseDLArgs(clean)
-	if target == "" {
-		b.sendText(msg.Chat.ID, "Usage: /dl [user|list|foll] <target>")
-		return
-	}
-	var task *api.Task
-	switch dlType {
-	case "list":
-		listID, err := strconv.ParseUint(target, 10, 64)
-		if err != nil {
-			b.sendText(msg.Chat.ID, "Invalid list ID. Must be a number.")
+	req, err := bot.ParseDownloadCommand(raw)
+	if err != nil {
+		if errors.Is(err, bot.ErrInvalidListID) {
+			b.sendText(msg.Chat.ID, bot.InvalidListIDText)
 			return
 		}
-		task = b.taskManager.CreateTask(api.TaskTypeListDownload, api.NewListDownloadTask(listID, api.DownloadFlags{
-			AutoFollow:    opts.AutoFollow,
-			FollowMembers: opts.FollowMembers,
-			SkipProfile:   opts.SkipProfile,
-			NoRetry:       opts.NoRetry,
-		}))
-	case "foll":
-		task = b.taskManager.CreateTask(api.TaskTypeFollowingDownload, api.NewFollowingDownloadTask(target, api.DownloadFlags{
-			AutoFollow:    opts.AutoFollow,
-			FollowMembers: opts.FollowMembers,
-			SkipProfile:   opts.SkipProfile,
-			NoRetry:       opts.NoRetry,
-		}))
-	default:
-		task = b.taskManager.CreateTask(api.TaskTypeUserDownload, api.NewUserDownloadTask(target, api.DownloadFlags{
-			AutoFollow:    opts.AutoFollow,
-			FollowMembers: opts.FollowMembers,
-			SkipProfile:   opts.SkipProfile,
-			NoRetry:       opts.NoRetry,
-		}))
-	}
-	if b.enqueueTask == nil {
-		b.taskManager.SetTaskError(task.ID, fmt.Errorf("download queue not available"))
-		b.sendText(msg.Chat.ID, "Failed to enqueue download task.")
+		b.sendText(msg.Chat.ID, bot.UsageDownloadShort)
 		return
 	}
-	if err := b.enqueueTask(task); err != nil {
-		b.sendText(msg.Chat.ID, fmt.Sprintf("Failed to enqueue download task: %s", err.Error()))
+	task, failure := api.StartBotDownload(b.taskManager, req, b.enqueueTask)
+	if failure != "" {
+		b.sendText(msg.Chat.ID, failure)
 		return
 	}
-
-	b.mu.Lock()
-	if b.chatTasks[msg.Chat.ID] == nil {
-		b.chatTasks[msg.Chat.ID] = make(map[string]struct{})
-	}
-	b.chatTasks[msg.Chat.ID][task.ID] = struct{}{}
-	b.mu.Unlock()
-	b.sendText(msg.Chat.ID, fmt.Sprintf("📥 Download started for %s\nTask: `%s`", target, task.ID))
+	b.tracker.Track(strconv.FormatInt(msg.Chat.ID, 10), task.ID)
+	b.sendText(msg.Chat.ID, bot.DownloadStartedMessage(req.Target, task.ID, true))
 }
 
 func (b *Bot) cmdStatus(msg *tgbotapi.Message) {
 	taskID := strings.TrimSpace(msg.CommandArguments())
 	if taskID == "" {
-		b.sendText(msg.Chat.ID, "Usage: /status <task_id>")
+		b.sendText(msg.Chat.ID, bot.UsageStatus)
 		return
 	}
 	task, ok := b.taskManager.GetTask(taskID)
 	if !ok {
-		b.sendText(msg.Chat.ID, "Task not found.")
+		b.sendText(msg.Chat.ID, bot.TaskNotFound)
 		return
 	}
-	text := fmt.Sprintf("Task `%s`\nType: %s\nStatus: %s", task.ID, task.Type, task.Status)
-	if task.Progress != nil {
-		text += fmt.Sprintf("\nProgress: %d/%d (failed: %d)", task.Progress.Completed, task.Progress.Total, task.Progress.Failed)
-	}
-	if task.Error != "" {
-		text += fmt.Sprintf("\nError: %s", task.Error)
-	}
-	b.sendText(msg.Chat.ID, text)
+	b.sendText(msg.Chat.ID, api.FormatTaskStatus(task, true))
 }
 
 func (b *Bot) cmdCancel(msg *tgbotapi.Message) {
 	taskID := strings.TrimSpace(msg.CommandArguments())
 	if taskID == "" {
-		b.sendText(msg.Chat.ID, "Usage: /cancel <task_id>")
+		b.sendText(msg.Chat.ID, bot.UsageCancel)
 		return
 	}
-	switch b.taskManager.CancelTask(taskID) {
-	case api.CancelTaskResultCancelled:
-		b.sendText(msg.Chat.ID, fmt.Sprintf("Cancelling `%s`...", taskID))
-	case api.CancelTaskResultNotFound:
-		b.sendText(msg.Chat.ID, "Task not found.")
-	case api.CancelTaskResultNotCancellable:
-		b.sendText(msg.Chat.ID, "Task already in terminal state.")
-	}
+	b.sendText(msg.Chat.ID, api.FormatCancelMessage(b.taskManager.CancelTask(taskID), taskID, true))
 }
 
 func (b *Bot) cmdTasks(msg *tgbotapi.Message) {
-	tasks := b.taskManager.GetAllTasks()
-	if len(tasks) == 0 {
-		b.sendText(msg.Chat.ID, "No tasks.")
-		return
-	}
-	count := min(10, len(tasks))
-	var sb strings.Builder
-	for _, t := range tasks[:count] {
-		sb.WriteString(fmt.Sprintf("`%s` | %s | %s\n", t.ID, t.Type, t.Status))
-		if t.Error != "" {
-			sb.WriteString(fmt.Sprintf("  ❌ %s\n", t.Error))
-		}
-	}
-	b.sendText(msg.Chat.ID, sb.String())
+	b.sendText(msg.Chat.ID, api.FormatTaskList(b.taskManager.GetAllTasks(), 10, true))
+}
+
+func (b *Bot) cmdStats(msg *tgbotapi.Message) {
+	b.sendText(msg.Chat.ID, api.FormatTaskStats(b.taskManager.GetTaskStats()))
 }
 
 func (b *Bot) cmdHelp(msg *tgbotapi.Message) {
 	b.cmdStart(msg)
-}
-
-// parseDLArgs 解析 /dl 参数：支持 "user <name>", "list <id>", "foll <name>", 或裸 <name>
-func parseDLArgs(raw string) (dlType, target string) {
-	parts := strings.SplitN(raw, " ", 2)
-	if len(parts) == 1 {
-		return "user", parts[0]
-	}
-	switch parts[0] {
-	case "user", "list", "foll":
-		return parts[0], strings.TrimSpace(parts[1])
-	default:
-		return "user", raw
-	}
 }

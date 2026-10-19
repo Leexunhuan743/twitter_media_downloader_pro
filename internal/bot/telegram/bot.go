@@ -10,6 +10,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/unkmonster/tmd/internal/api"
+	"github.com/unkmonster/tmd/internal/bot"
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/consolelog"
 )
@@ -27,8 +28,7 @@ type Bot struct {
 	api     *tgbotapi.BotAPI
 	updates tgbotapi.UpdatesChannel
 
-	chatTasks map[int64]map[string]struct{}
-	mu        sync.Mutex
+	tracker *bot.TaskTracker
 
 	stopCh   chan struct{}
 	wg       sync.WaitGroup
@@ -43,7 +43,7 @@ func NewBot(cfg *config.TelegramBotConfig, tm *api.TaskManager, eb *api.EventBus
 		eventBus:    eb,
 		logHub:      lh,
 		enqueueTask: enqueueTask,
-		chatTasks:   make(map[int64]map[string]struct{}),
+		tracker:     bot.NewTaskTracker(),
 		stopCh:      make(chan struct{}),
 	}
 }

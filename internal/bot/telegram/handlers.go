@@ -2,6 +2,8 @@ package telegram
 
 import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+
+	"github.com/unkmonster/tmd/internal/bot"
 )
 
 func (b *Bot) handleUpdates() {
@@ -21,7 +23,7 @@ func (b *Bot) handleUpdates() {
 				continue // 频道匿名发帖或非用户消息，无法鉴权
 			}
 			if !b.isAllowed(update.Message.From.ID) {
-				b.sendText(update.Message.Chat.ID, "⛔ Unauthorized")
+				b.sendText(update.Message.Chat.ID, bot.UnauthorizedText)
 				continue
 			}
 			b.handleCommand(update.Message)
@@ -53,6 +55,8 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message) {
 		b.cmdCancel(msg)
 	case "tasks":
 		b.cmdTasks(msg)
+	case "stats":
+		b.cmdStats(msg)
 	case "help":
 		b.cmdHelp(msg)
 	default:

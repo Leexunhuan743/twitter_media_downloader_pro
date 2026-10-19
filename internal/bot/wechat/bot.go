@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/unkmonster/tmd/internal/api"
+	"github.com/unkmonster/tmd/internal/bot"
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/consolelog"
 	"github.com/unkmonster/tmd/internal/logging"
@@ -25,7 +26,7 @@ type Bot struct {
 	wechatBot *wechat.Bot
 
 	userTokens map[string]string
-	userTasks  map[string]map[string]struct{}
+	tracker    *bot.TaskTracker
 	mu         sync.Mutex
 	stopCh     chan struct{}
 	wg         sync.WaitGroup
@@ -42,24 +43,24 @@ func NewBot(cfg *config.WeChatBotConfig, tm *api.TaskManager, eb *api.EventBus, 
 		logHub:      lh,
 		enqueueTask: enqueueTask,
 		userTokens:  make(map[string]string),
-		userTasks:   make(map[string]map[string]struct{}),
+		tracker:     bot.NewTaskTracker(),
 		stopCh:      make(chan struct{}),
 	}
 }
 
 // Start 启动 bot。扫码登录后订阅消息和事件。
 func (b *Bot) Start() error {
-	bot := wechat.NewBot(
+	wb := wechat.NewBot(
 		wechat.WithTokenFile(b.config.CredentialPath),
 	)
-	b.wechatBot = bot
+	b.wechatBot = wb
 
 	ctx, cancel := context.WithCancel(context.Background())
 	b.cancel = cancel
 
-	bot.OnMessage(func(ctx context.Context, msg *wechat.Message) error {
+	wb.OnMessage(func(ctx context.Context, msg *wechat.Message) error {
 		if !b.isAllowed(msg.FromUserID) {
-			return bot.Reply(ctx, msg, "⛔ Unauthorized")
+			return wb.Reply(ctx, msg, bot.UnauthorizedText)
 		}
 		b.mu.Lock()
 		b.userTokens[msg.FromUserID] = msg.ContextToken
@@ -153,12 +154,9 @@ func (b *Bot) handleMessage(ctx context.Context, msg *wechat.Message) {
 	if text == "" || !strings.HasPrefix(text, "/") {
 		return
 	}
-	parts := strings.SplitN(text, " ", 2)
-	cmd := strings.TrimPrefix(parts[0], "/")
-	args := ""
-	if len(parts) > 1 {
-		args = strings.TrimSpace(parts[1])
-	}
+	fields := strings.Fields(text)
+	cmd := strings.TrimPrefix(fields[0], "/")
+	args := strings.Join(fields[1:], " ")
 	switch cmd {
 	case "dl", "download":
 		b.cmdDownload(ctx, msg, args)
@@ -168,6 +166,8 @@ func (b *Bot) handleMessage(ctx context.Context, msg *wechat.Message) {
 		b.cmdCancel(ctx, msg, args)
 	case "tasks":
 		b.cmdTasks(ctx, msg)
+	case "stats":
+		b.cmdStats(ctx, msg)
 	case "start", "help":
 		b.cmdHelp(ctx, msg)
 	default:

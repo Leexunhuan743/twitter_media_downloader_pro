@@ -251,6 +251,15 @@ tmd/
 
 模块通过 `window.TMD` 协作：`TMD.views.register` 注册视图，`TMD.on('tasks'|'schedules')` 订阅事件，`TMD.t` 取文案，`TMD.api` 发请求。静态文案写在 HTML 的 `data-i18n` 属性里，动态文案走 `I18N` 字典（zh-CN / en）。语言存于 `localStorage.tmd.lang`，主题取 `light|auto|dark` 存于 `localStorage.tmd.theme`，由 `<head>` 内联脚本在首帧前写入 `data-theme` / `data-resolved`。认证启用时（`api_key` 非空）登录换取 JWT，401 先尝试 refresh，SSE 用 `?token=`。
 
+### Bot 命令层
+
+四个可交互平台（Telegram / Discord / Feishu / WeChat）共用一层命令实现，平台包只保留网络与会话细节：
+
+- `internal/bot/commands.go`：`ParseDownloadCommand` 解析 `/dl`（类型词 user/list/foll|following、列表 ID 校验、`key=value` 选项），并集中保存所有命令回复文案；`KindFromString` 与 `NewDownloadRequest` 供 Discord 的结构化选项复用。
+- `internal/bot/tracker.go`：`TaskTracker` 按会话记录已提交任务，终态通知时 `Drain` 一次取出并清理，替代各平台原先各自维护的三层 map。
+- `internal/api/bot_commands.go`：`NewBotDownloadTask` / `StartBotDownload` 负责按 kind 建任务并入队，`FormatTaskStatus` / `FormatTaskList` / `FormatCancelMessage` / `FormatTaskStats` 负责文本渲染（`markdown` 参数控制是否用反引号包裹 ID）。
+- 平台包只做三件事：把平台事件转成命令字符串、调用共享函数、用平台 API 发回文本；`/stats` 等新命令因此只需在各平台分发处加一个 case。
+
 ### 运行测试
 
 项目包含 **93 个测试文件**、1146 个测试函数，覆盖核心业务逻辑；HTTP 处理器契约测试集中在 `internal/api/contract_gaps_test.go`（日志、Cookie、配置、数据库子资源）：

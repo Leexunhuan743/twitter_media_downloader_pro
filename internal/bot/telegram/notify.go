@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"strconv"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -18,24 +19,19 @@ func (b *Bot) notifyTaskChanges(data interface{}) {
 		chatID int64
 		text   string
 	}
-	b.mu.Lock()
 	var notifications []notification
 	for _, task := range tasks {
 		if task.Status != api.TaskStatusCompleted && task.Status != api.TaskStatusFailed {
 			continue
 		}
-		for chatID, taskIDs := range b.chatTasks {
-			if _, ok := taskIDs[task.ID]; !ok {
+		for _, scope := range b.tracker.Drain(task.ID) {
+			chatID, err := strconv.ParseInt(scope, 10, 64)
+			if err != nil {
 				continue
-			}
-			delete(taskIDs, task.ID)
-			if len(taskIDs) == 0 {
-				delete(b.chatTasks, chatID)
 			}
 			notifications = append(notifications, notification{chatID: chatID, text: api.FormatTaskResult(task, true)})
 		}
 	}
-	b.mu.Unlock()
 
 	for _, n := range notifications {
 		msg := tgbotapi.NewMessage(n.chatID, n.text)

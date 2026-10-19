@@ -2,6 +2,8 @@ package discord
 
 import (
 	"github.com/bwmarrin/discordgo"
+
+	"github.com/unkmonster/tmd/internal/bot"
 )
 
 // registerCommands 注册全局 slash commands
@@ -83,6 +85,10 @@ func (b *Bot) registerCommands() error {
 			Description: "List recent tasks",
 		},
 		{
+			Name:        "stats",
+			Description: "Show task statistics",
+		},
+		{
 			Name:        "help",
 			Description: "Show available commands",
 		},
@@ -103,7 +109,7 @@ func (b *Bot) handleInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: "⛔ Unauthorized",
+				Content: bot.UnauthorizedText,
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})
@@ -119,6 +125,8 @@ func (b *Bot) handleInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 		b.cmdCancel(s, i, data)
 	case "tasks":
 		b.cmdTasks(s, i)
+	case "stats":
+		b.cmdStats(s, i)
 	case "help":
 		b.cmdHelp(s, i)
 	}

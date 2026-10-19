@@ -1056,14 +1056,15 @@ tmdp Server 模式支持接入 6 种 Bot 平台，用于远程命令控制、任
 
 ### 命令说明
 
-Telegram / WeChat / Feishu 使用文本命令，Discord 使用 Slash 命令（选项为原生布尔值）；Telegram 额外支持 `/start`，`/dl` 也可写作 `/download`：
+Telegram / WeChat / Feishu 使用文本命令，Discord 使用 Slash 命令（选项为原生布尔值）；Telegram 额外支持 `/start`，`/dl` 也可写作 `/download`。文本命令的类型词与目标之间允许空格、连续空格或制表符：
 
 ```
-/start                                         # 显示欢迎与帮助（Telegram）
-/dl [user|list|foll] <target> [opt=val ...]   # 下载：user 用户 / list 列表ID / foll 关注列表；省略类型时默认 user
+/start                                         # 显示欢迎与帮助
+/dl [user|list|foll] <target> [opt=val ...]   # 下载：user 用户 / list 列表ID / foll|following 关注列表；省略类型时默认 user
 /status <task_id>                              # 查询任务状态
 /cancel <task_id>                              # 取消任务
-/tasks                                         # 列出近期任务
+/tasks                                         # 列出近期任务（最近 10 条）
+/stats                                         # 任务统计（排队/运行/完成/失败/取消/总数）
 /help                                          # 帮助信息
 ```
 
@@ -1074,6 +1075,7 @@ Telegram / WeChat / Feishu 使用文本命令，Discord 使用 Slash 命令（�
 /dl user elonmusk
 /dl list 1234567890123
 /dl foll elonmusk auto_follow=true skip_profile=true
+/dl following elonmusk              # following 是 foll 的别名
 ```
 
 `/dl` 支持的命令选项（可简写）：
@@ -1086,6 +1088,8 @@ Telegram / WeChat / Feishu 使用文本命令，Discord 使用 Slash 命令（�
 | `no_retry`       | `nr` | 不重试失败推文                     | user/list/foll |
 
 > Bot 命令走与 HTTP/调度器相同的任务队列路径：`/dl` 创建任务后必须经 `Server.EnqueueTask` 入队才会执行；`/cancel` 通过 `TaskManager.CancelTask` 取消，保证任务状态、上下文和 SSE 推送一致。
+
+> 四个命令平台共用同一套解析与渲染：`internal/bot/commands.go` 负责 `/dl` 参数解析（类型词、列表 ID 校验、选项）与回复文案，`internal/bot/tracker.go` 记录“哪个聊天提交了哪些任务”，`internal/api/bot_commands.go` 负责建任务、入队与状态/列表/统计的文本渲染。新增命令时先扩展这两个共享文件，再在各平台接线。
 
 ### 通知机制
 

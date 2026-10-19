@@ -15,24 +15,15 @@ func (b *Bot) notifyTaskChanges(data interface{}) {
 		channelID string
 		text      string
 	}
-	b.mu.Lock()
 	var notifications []notification
 	for _, task := range tasks {
 		if task.Status != api.TaskStatusCompleted && task.Status != api.TaskStatusFailed {
 			continue
 		}
-		for channelID, taskIDs := range b.channelTasks {
-			if _, ok := taskIDs[task.ID]; !ok {
-				continue
-			}
-			delete(taskIDs, task.ID)
-			if len(taskIDs) == 0 {
-				delete(b.channelTasks, channelID)
-			}
+		for _, channelID := range b.tracker.Drain(task.ID) {
 			notifications = append(notifications, notification{channelID: channelID, text: api.FormatTaskResult(task, true)})
 		}
 	}
-	b.mu.Unlock()
 
 	for _, n := range notifications {
 		_, err := b.session.ChannelMessageSend(n.channelID, n.text)

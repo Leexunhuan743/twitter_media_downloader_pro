@@ -10,6 +10,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/unkmonster/tmd/internal/api"
+	"github.com/unkmonster/tmd/internal/bot"
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/consolelog"
 )
@@ -25,7 +26,7 @@ type Bot struct {
 	cli *lark.Lark
 
 	userChats map[string]string
-	userTasks map[string]map[string]struct{}
+	tracker   *bot.TaskTracker
 	mu        sync.Mutex
 
 	stopCh   chan struct{}
@@ -42,7 +43,7 @@ func NewBot(cfg *config.FeishuBotConfig, tm *api.TaskManager, eb *api.EventBus, 
 		logHub:      lh,
 		enqueueTask: enqueueTask,
 		userChats:   make(map[string]string),
-		userTasks:   make(map[string]map[string]struct{}),
+		tracker:     bot.NewTaskTracker(),
 		stopCh:      make(chan struct{}),
 	}
 }

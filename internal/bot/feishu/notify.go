@@ -17,27 +17,22 @@ func (b *Bot) notifyTaskChanges(data interface{}) {
 		chatID string
 		text   string
 	}
-	b.mu.Lock()
 	var notifications []notification
 	for _, task := range tasks {
 		if task.Status != api.TaskStatusCompleted && task.Status != api.TaskStatusFailed {
 			continue
 		}
 		text := api.FormatTaskResult(task, false)
-		for openID, taskIDs := range b.userTasks {
-			if _, ok := taskIDs[task.ID]; !ok {
+		for _, openID := range b.tracker.Drain(task.ID) {
+			b.mu.Lock()
+			chatID, ok := b.userChats[openID]
+			b.mu.Unlock()
+			if !ok {
 				continue
 			}
-			delete(taskIDs, task.ID)
-			if len(taskIDs) == 0 {
-				delete(b.userTasks, openID)
-			}
-			if chatID, ok := b.userChats[openID]; ok {
-				notifications = append(notifications, notification{chatID: chatID, text: text})
-			}
+			notifications = append(notifications, notification{chatID: chatID, text: text})
 		}
 	}
-	b.mu.Unlock()
 
 	for _, n := range notifications {
 		b.sendText(n.chatID, n.text)

@@ -11,6 +11,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/unkmonster/tmd/internal/api"
+	"github.com/unkmonster/tmd/internal/bot"
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/consolelog"
 )
@@ -27,8 +28,7 @@ type Bot struct {
 
 	session *discordgo.Session
 
-	channelTasks map[string]map[string]struct{}
-	mu           sync.Mutex
+	tracker *bot.TaskTracker
 
 	stopCh   chan struct{}
 	wg       sync.WaitGroup
@@ -45,7 +45,7 @@ func NewBot(cfg *config.DiscordBotConfig, tm *api.TaskManager, eb *api.EventBus,
 		eventBus:              eb,
 		logHub:                lh,
 		enqueueTask:           enqueueTask,
-		channelTasks:          make(map[string]map[string]struct{}),
+		tracker:               bot.NewTaskTracker(),
 		stopCh:                make(chan struct{}),
 		gatewayStartupTimeout: defaultGatewayStartupTimeout,
 	}

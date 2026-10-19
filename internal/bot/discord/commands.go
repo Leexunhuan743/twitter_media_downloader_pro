@@ -1,18 +1,18 @@
 package discord
 
 import (
-	"fmt"
-	"strconv"
+	"errors"
 
 	"github.com/bwmarrin/discordgo"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/unkmonster/tmd/internal/api"
+	"github.com/unkmonster/tmd/internal/bot"
 )
 
 func (b *Bot) cmdDownload(s *discordgo.Session, i *discordgo.InteractionCreate, data discordgo.ApplicationCommandInteractionData) {
 	var dlType, target string
-	var autoFollow, followMembers, skipProfile, noRetry bool
+	var flags bot.DownloadOptions
 	for _, opt := range data.Options {
 		switch opt.Name {
 		case "type":
@@ -20,135 +20,71 @@ func (b *Bot) cmdDownload(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		case "target":
 			target = opt.StringValue()
 		case "auto_follow":
-			autoFollow = opt.BoolValue()
+			flags.AutoFollow = opt.BoolValue()
 		case "follow_members":
-			followMembers = opt.BoolValue()
+			flags.FollowMembers = opt.BoolValue()
 		case "skip_profile":
-			skipProfile = opt.BoolValue()
+			flags.SkipProfile = opt.BoolValue()
 		case "no_retry":
-			noRetry = opt.BoolValue()
+			flags.NoRetry = opt.BoolValue()
 		}
 	}
-	if target == "" {
-		b.respond(s, i, "Usage: /dl [type:user|list|foll] <target> [options]")
+	kind, ok := bot.KindFromString(dlType)
+	if !ok {
+		b.respond(s, i, bot.UsageDownloadShort)
 		return
 	}
-	if dlType == "" {
-		dlType = "user"
-	}
-
-	var task *api.Task
-	switch dlType {
-	case "list":
-		listID, err := strconv.ParseUint(target, 10, 64)
-		if err != nil {
-			b.respond(s, i, "Invalid list ID. Must be a number.")
+	req, err := bot.NewDownloadRequest(kind, target, flags)
+	if err != nil {
+		if errors.Is(err, bot.ErrInvalidListID) {
+			b.respond(s, i, bot.InvalidListIDText)
 			return
 		}
-		task = b.taskManager.CreateTask(api.TaskTypeListDownload, api.NewListDownloadTask(listID, api.DownloadFlags{
-			AutoFollow:    autoFollow,
-			FollowMembers: followMembers,
-			SkipProfile:   skipProfile,
-			NoRetry:       noRetry,
-		}))
-	case "foll":
-		task = b.taskManager.CreateTask(api.TaskTypeFollowingDownload, api.NewFollowingDownloadTask(target, api.DownloadFlags{
-			AutoFollow:    autoFollow,
-			FollowMembers: followMembers,
-			SkipProfile:   skipProfile,
-			NoRetry:       noRetry,
-		}))
-	default:
-		task = b.taskManager.CreateTask(api.TaskTypeUserDownload, api.NewUserDownloadTask(target, api.DownloadFlags{
-			AutoFollow:    autoFollow,
-			FollowMembers: followMembers,
-			SkipProfile:   skipProfile,
-			NoRetry:       noRetry,
-		}))
-	}
-	if b.enqueueTask == nil {
-		b.taskManager.SetTaskError(task.ID, fmt.Errorf("download queue not available"))
-		b.respond(s, i, "Failed to enqueue download task.")
+		b.respond(s, i, bot.UsageDownloadShort)
 		return
 	}
-	if err := b.enqueueTask(task); err != nil {
-		b.respond(s, i, fmt.Sprintf("Failed to enqueue download task: %s", err.Error()))
+	task, failure := api.StartBotDownload(b.taskManager, req, b.enqueueTask)
+	if failure != "" {
+		b.respond(s, i, failure)
 		return
 	}
-
-	channelID := i.ChannelID
-	b.mu.Lock()
-	if b.channelTasks[channelID] == nil {
-		b.channelTasks[channelID] = make(map[string]struct{})
-	}
-	b.channelTasks[channelID][task.ID] = struct{}{}
-	b.mu.Unlock()
-
-	b.respond(s, i, fmt.Sprintf("📥 Download started for `%s`\nTask: `%s`", target, task.ID))
+	b.tracker.Track(i.ChannelID, task.ID)
+	b.respond(s, i, bot.DownloadStartedMessage(req.Target, task.ID, true))
 }
 
 func (b *Bot) cmdStatus(s *discordgo.Session, i *discordgo.InteractionCreate, data discordgo.ApplicationCommandInteractionData) {
-	options := data.Options
-	if len(options) == 0 {
-		b.respond(s, i, "Usage: /status <task_id>")
+	if len(data.Options) == 0 {
+		b.respond(s, i, bot.UsageStatus)
 		return
 	}
-	taskID := options[0].StringValue()
-
+	taskID := data.Options[0].StringValue()
 	task, ok := b.taskManager.GetTask(taskID)
 	if !ok {
-		b.respond(s, i, "Task not found.")
+		b.respond(s, i, bot.TaskNotFound)
 		return
 	}
-
-	text := fmt.Sprintf("**%s**\nType: `%s`\nStatus: `%s`", task.ID, task.Type, task.Status)
-	if task.Progress != nil {
-		text += fmt.Sprintf("\nProgress: %d/%d (failed: %d)", task.Progress.Completed, task.Progress.Total, task.Progress.Failed)
-	}
-	if task.Error != "" {
-		text += fmt.Sprintf("\nError: %s", task.Error)
-	}
-	b.respond(s, i, text)
+	b.respond(s, i, api.FormatTaskStatus(task, true))
 }
 
 func (b *Bot) cmdCancel(s *discordgo.Session, i *discordgo.InteractionCreate, data discordgo.ApplicationCommandInteractionData) {
-	options := data.Options
-	if len(options) == 0 {
-		b.respond(s, i, "Usage: /cancel <task_id>")
+	if len(data.Options) == 0 {
+		b.respond(s, i, bot.UsageCancel)
 		return
 	}
-	taskID := options[0].StringValue()
-
-	switch b.taskManager.CancelTask(taskID) {
-	case api.CancelTaskResultCancelled:
-		b.respond(s, i, fmt.Sprintf("Cancelling `%s`...", taskID))
-	case api.CancelTaskResultNotFound:
-		b.respond(s, i, "Task not found.")
-	case api.CancelTaskResultNotCancellable:
-		b.respond(s, i, "Task already in terminal state.")
-	}
+	taskID := data.Options[0].StringValue()
+	b.respond(s, i, api.FormatCancelMessage(b.taskManager.CancelTask(taskID), taskID, true))
 }
 
 func (b *Bot) cmdTasks(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	tasks := b.taskManager.GetAllTasks()
-	if len(tasks) == 0 {
-		b.respond(s, i, "No tasks.")
-		return
-	}
+	b.respond(s, i, api.FormatTaskList(b.taskManager.GetAllTasks(), 10, true))
+}
 
-	count := min(10, len(tasks))
-	text := "**Recent Tasks:**\n"
-	for _, t := range tasks[:count] {
-		text += fmt.Sprintf("`%s` | %s | %s\n", t.ID, t.Type, t.Status)
-		if t.Error != "" {
-			text += fmt.Sprintf("  ❌ %s\n", t.Error)
-		}
-	}
-	b.respond(s, i, text)
+func (b *Bot) cmdStats(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	b.respond(s, i, api.FormatTaskStats(b.taskManager.GetTaskStats()))
 }
 
 func (b *Bot) cmdHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	b.respond(s, i, "**TMD Bot**\n/dl [type:user|list|foll] <target> [options]\n  Options: auto_follow, skip_profile, no_retry, follow_members\n/status <id> — task status\n/cancel <id> — cancel task\n/tasks — list recent tasks\n/help — this message")
+	b.respond(s, i, bot.HelpText)
 }
 
 func (b *Bot) respond(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {

@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/unkmonster/tmd/internal/api"
+	"github.com/unkmonster/tmd/internal/bot"
 	"github.com/unkmonster/tmd/internal/config"
 )
 
@@ -44,26 +45,28 @@ func TestBot_FormatTaskResult(t *testing.T) {
 	})
 }
 
-func TestBot_ParseDLArgs(t *testing.T) {
+func TestBot_ParseDownloadCommand(t *testing.T) {
 	t.Run("bare user", func(t *testing.T) {
-		dlType, target := parseDLArgs("elonmusk")
-		assert.Equal(t, "user", dlType)
-		assert.Equal(t, "elonmusk", target)
+		req, err := bot.ParseDownloadCommand("elonmusk")
+		assert.NoError(t, err)
+		assert.Equal(t, bot.KindUser, req.Kind)
+		assert.Equal(t, "elonmusk", req.Target)
 	})
-	t.Run("user type", func(t *testing.T) {
-		dlType, target := parseDLArgs("user elonmusk")
-		assert.Equal(t, "user", dlType)
-		assert.Equal(t, "elonmusk", target)
+	t.Run("explicit list", func(t *testing.T) {
+		req, err := bot.ParseDownloadCommand("list 12345")
+		assert.NoError(t, err)
+		assert.Equal(t, bot.KindList, req.Kind)
+		assert.Equal(t, uint64(12345), req.ListID)
 	})
-	t.Run("list type", func(t *testing.T) {
-		dlType, target := parseDLArgs("list 12345")
-		assert.Equal(t, "list", dlType)
-		assert.Equal(t, "12345", target)
+	t.Run("following alias", func(t *testing.T) {
+		req, err := bot.ParseDownloadCommand("following elonmusk")
+		assert.NoError(t, err)
+		assert.Equal(t, bot.KindFollowing, req.Kind)
+		assert.Equal(t, "elonmusk", req.Target)
 	})
-	t.Run("foll type", func(t *testing.T) {
-		dlType, target := parseDLArgs("foll elonmusk")
-		assert.Equal(t, "foll", dlType)
-		assert.Equal(t, "elonmusk", target)
+	t.Run("invalid list id", func(t *testing.T) {
+		_, err := bot.ParseDownloadCommand("list abc")
+		assert.ErrorIs(t, err, bot.ErrInvalidListID)
 	})
 }
 
