@@ -1,6 +1,6 @@
 # Twitter Media Downloader Pro
 
-> **版本**: 3.8.1 | **状态**: 活跃维护 | **许可证**: GPL-3.0
+> **版本**: 3.8.2 | **状态**: 活跃维护 | **许可证**: GPL-3.0
 
 Twitter Media Downloader Pro（简称 `tmdp`）基于 [unkmonster/tmd](https://github.com/unkmonster/tmd) 修改并扩展，新增功能与版本变更见 [Releases](https://github.com/Leexunhuan743/twitter_media_downloader_pro/releases)。
 
@@ -195,19 +195,19 @@ GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o tmdp-macos .
 
 | 标签 | 例子 | 含义 |
 | --- | --- | --- |
-| 版本号 | `3.8.1` | 精确版本，生产环境推荐固定用它 |
+| 版本号 | `3.8.2` | 精确版本，生产环境推荐固定用它 |
 | 小版本 | `3.8` | 跟随 `3.8.x` 的最新补丁 |
-| tag 同名 | `v3.8.1` | 与 git tag 一致的历史兼容别名 |
+| tag 同名 | `v3.8.2` | 与 git tag 一致的历史兼容别名 |
 | `latest` | `latest` | 最近一个正式版本；预发布 tag（如 `v3.7.3-pre.1`）不会移动它 |
 
 预发布 tag（名称含 `-`）只发布 GitHub pre-release 和对应版本号镜像，不更新 `latest` 与小版本别名：
 
 ```bash
 # Docker Hub
-docker pull leeexx00/tmdp:3.8.1
+docker pull leeexx00/tmdp:3.8.2
 
 # GHCR
-docker pull ghcr.io/leexunhuan743/twitter_media_downloader_pro:3.8.1
+docker pull ghcr.io/leexunhuan743/twitter_media_downloader_pro:3.8.2
 ```
 
 **推荐方式：使用 docker compose**
