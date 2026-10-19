@@ -191,7 +191,30 @@ jobs:
         working-directory: release-artifacts
         run: sha256sum * > checksums.txt
 
+      - name: Pick curated release notes
+        id: notes
+        shell: bash
+        run: |
+          file=".github/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$file" ]; then
+            echo "path=$file" >> "$GITHUB_OUTPUT"
+            echo "using $file"
+          else
+            echo "no curated notes for ${GITHUB_REF_NAME}, relying on generated notes"
+          fi
+
+      - name: Publish release with curated notes
+        if: steps.notes.outputs.path != ''
+        uses: softprops/action-gh-release@v3
+        with:
+          files: release-artifacts/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          body_path: ${{ steps.notes.outputs.path }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
       - name: Publish release
+        if: steps.notes.outputs.path == ''
         uses: softprops/action-gh-release@v3
         with:
           files: release-artifacts/*
