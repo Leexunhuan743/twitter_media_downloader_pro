@@ -138,9 +138,8 @@ func (fw *DefaultFileWriter) writeStream(path string, reader io.Reader, size int
 	return result, nil
 }
 
-// createVersionBackup 在目标文件已存在时创建版本备份（旧文件归档到 .versions）。
-// 与 Write/writeStream 原内联逻辑逐字等价：文件不存在（或 stat 失败）时静默跳过，
-// CreateVersion 失败时原样返回错误；成功时置位 result.Versioned。
+// createVersionBackup 在目标文件已存在时把旧文件归档到版本目录。
+// 目标文件不存在时跳过；备份失败返回错误；成功时置位 result.Versioned。
 func (fw *DefaultFileWriter) createVersionBackup(path string, createVersion bool, result *WriteResult) error {
 	if !createVersion || fw.versionManager == nil {
 		return nil
@@ -156,7 +155,6 @@ func (fw *DefaultFileWriter) createVersionBackup(path string, createVersion bool
 }
 
 // setModTime 设置文件的修改时间；失败仅记录警告，不中断写入流程。
-// 与 Write/writeStream 原内联逻辑逐字等价（含日志格式）。
 func setModTime(path string, modTime *time.Time) {
 	if modTime == nil {
 		return
@@ -216,13 +214,18 @@ func (fw *DefaultFileWriter) fileExists(path string) (bool, os.FileInfo, error) 
 	return true, info, nil
 }
 
-// computeFileHash 计算文件 Hash
+// computeFileHash 以流式方式计算文件 Hash，避免把大文件整块读入内存。
 func (fw *DefaultFileWriter) computeFileHash(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
-	return fw.computeDataHash(data), nil
+	defer file.Close()
+	hash := md5.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 // computeDataHash 计算数据 Hash

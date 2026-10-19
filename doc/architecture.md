@@ -102,7 +102,7 @@ internal/service
 │  internal/downloader (基础设施层 - 通用下载)                   │
 │  - downloader.go: 单文件下载、流式下载、大小校验                 │
 │  - file_writer.go: 原子写入、跳过未变化文件、并发锁管理           │
-│  - version_manager.go: 版本备份管理                           │
+│  - version_manager.go: 版本备份（流式复制、保留最近 20 份）      │
 ├─────────────────────────────────────────────────────────────┤
 │  internal/naming (命名服务)                                  │
 │  - base.go / tweet_naming.go / user_naming.go / list_naming.go │
