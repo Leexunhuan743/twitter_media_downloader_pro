@@ -99,13 +99,17 @@ func (tn *TweetNaming) legacyFileNamesForPlatform(ext string, windows bool) []st
 		return append(names, name)
 	}
 
-	names := make([]string, 0, 3)
+	names := make([]string, 0, 5)
 	// The immediately previous selection may use a different but otherwise
 	// normalized extension (for example .m3u8 instead of the current .mp4).
 	names = appendUnique(names, guardReservedFileName(tn.baseName()+normalizeExtension(ext)))
 	// 14c..d6ef normalized extensions but used the stricter historical text
 	// sanitizer, so a title with leading/trailing characters can differ.
 	names = appendUnique(names, guardReservedFileName(tn.baseNameFor(tn.historicalSanitized)+normalizeExtension(ext)))
+	// Files written under the deprecated deletion rule (".jpg:large" stored as
+	// ".jpglarg") stay readable through these candidates.
+	names = appendUnique(names, guardReservedFileName(tn.baseName()+legacyNormalizeExtension(ext)))
+	names = appendUnique(names, guardReservedFileName(tn.baseNameFor(tn.historicalSanitized)+legacyNormalizeExtension(ext)))
 	// Before extension hardening, POSIX installations could write raw extension
 	// suffixes and control characters. Windows cannot address those filenames.
 	if !windows {

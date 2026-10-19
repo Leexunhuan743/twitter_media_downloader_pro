@@ -612,6 +612,12 @@ func TestGetExtFromUrl(t *testing.T) {
 			expectedExt: ".html",
 			expectError: false,
 		},
+		{
+			name:        "Twitter 变体后缀属于路径扩展名",
+			url:         "https://pbs.twimg.com/media/ABC123.jpg:large",
+			expectedExt: ".jpg:large",
+			expectError: false,
+		},
 	}
 
 	for _, tt := range tests {

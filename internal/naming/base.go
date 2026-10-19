@@ -77,15 +77,26 @@ func parenthesizedIdentity(identity string, maxLen int) string {
 	return "(" + utils.TruncateUTF8(identity, maxLen-2) + ")"
 }
 
-// normalizeExtension normalizes an extension into the reserved byte budget,
-// stripping path separators and characters outside [alnum . - _]. Common media
-// extensions (.jpg/.mp4/.gif/.webp/.m3u8) are unchanged, so already-downloaded
-// files keep their names. Legacy URLs whose path extension contains other
-// characters (for example ".../xyz.jpg:large") normalize differently from the
-// baseline's raw concatenation; on Linux that re-downloads the media once and
-// leaves the old file as an orphan (Windows could never create the old name,
-// so it is unaffected). Interior dots are preserved.
+// normalizeExtension builds a Windows-safe extension that fits the reserved
+// byte budget. Only [alnum . - _] characters are kept and the first
+// unsupported rune ends the extension, so Twitter variant suffixes
+// (".jpg:large", ".mp4:orig") keep their real extension. Path separators are
+// dropped before the scan; interior dots are preserved. Common media
+// extensions (.jpg/.mp4/.gif/.webp/.m3u8) are unchanged, so existing files
+// keep their names.
 func normalizeExtension(ext string) string {
+	return buildExtension(ext, true)
+}
+
+// legacyNormalizeExtension applies the deprecated deletion rule, which
+// removed unsupported characters instead of ending the extension at them
+// (".jpg:large" -> ".jpglarg"). Read-only compatibility lookups use it to find
+// files written under that rule.
+func legacyNormalizeExtension(ext string) string {
+	return buildExtension(ext, false)
+}
+
+func buildExtension(ext string, stopAtUnsupported bool) string {
 	ext = strings.TrimSpace(ext)
 	if index := strings.LastIndexAny(ext, `/\`); index >= 0 {
 		ext = ext[index+1:]
@@ -95,6 +106,10 @@ func normalizeExtension(ext string) string {
 	for _, ch := range ext {
 		if unicode.IsLetter(ch) || unicode.IsNumber(ch) || ch == '.' || ch == '-' || ch == '_' {
 			normalized.WriteRune(ch)
+			continue
+		}
+		if stopAtUnsupported {
+			break
 		}
 	}
 	core := strings.Trim(normalized.String(), " .")

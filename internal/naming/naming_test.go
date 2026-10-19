@@ -197,6 +197,34 @@ func TestTweetNaming_FileName(t *testing.T) {
 			expected: "file_222.tar.gz",
 		},
 		{
+			name:     "twitter size suffix is not part of the extension",
+			text:     "file",
+			tweetID:  888,
+			ext:      ".jpg:large",
+			expected: "file_888.jpg",
+		},
+		{
+			name:     "video variant suffix is not part of the extension",
+			text:     "file",
+			tweetID:  889,
+			ext:      ".mp4:orig",
+			expected: "file_889.mp4",
+		},
+		{
+			name:     "query suffix terminates the extension",
+			text:     "file",
+			tweetID:  890,
+			ext:      ".jpg?tag=12",
+			expected: "file_890.jpg",
+		},
+		{
+			name:     "repeated variant suffixes keep the first extension only",
+			text:     "file",
+			tweetID:  891,
+			ext:      ".jpg:large:orig",
+			expected: "file_891.jpg",
+		},
+		{
 			name:     "text with path separator",
 			text:     "path/to/file",
 			tweetID:  333,
@@ -376,7 +404,10 @@ func TestTweetNaming_LegacyFileNamesCoverSupersededPolicies(t *testing.T) {
 	names := tn.legacyFileNamesForPlatform(".jpg:large", false)
 
 	if !containsString(names, "ab_123.jpglarg") {
-		t.Fatalf("legacy candidates = %q, want normalized historical filename", names)
+		t.Fatalf("legacy candidates = %q, want deprecated collapsed extension", names)
+	}
+	if !containsString(names, "ab_123.jpg") {
+		t.Fatalf("legacy candidates = %q, want current normalized extension", names)
 	}
 	if !containsString(names, "a\x01b_123.jpg:large") {
 		t.Fatalf("legacy candidates = %q, want pre-hardening POSIX filename", names)
@@ -392,6 +423,31 @@ func TestTweetNaming_LegacyFileNamesIncludePreviousVideoExtension(t *testing.T) 
 	tn := NewTweetNaming("video", 456, "creator", testMaxFileNameLen)
 	if !containsString(tn.LegacyFileNames(".m3u8"), "video_456.m3u8") {
 		t.Fatalf("legacy candidates = %q, want previous video extension", tn.LegacyFileNames(".m3u8"))
+	}
+}
+
+func TestNormalizeExtensionTerminatesAtUnsupportedRune(t *testing.T) {
+	tests := []struct {
+		ext    string
+		want   string
+		legacy string
+	}{
+		{ext: ".jpg:large", want: ".jpg", legacy: ".jpglarg"},
+		{ext: ".jpg", want: ".jpg", legacy: ".jpg"},
+		{ext: ".tar.gz", want: ".tar.gz", legacy: ".tar.gz"},
+		{ext: ".jpg?tag=12", want: ".jpg", legacy: ".jpgtag1"},
+		{ext: "../jpg", want: ".jpg", legacy: ".jpg"},
+		{ext: "", want: "", legacy: ""},
+		{ext: ".", want: "", legacy: ""},
+	}
+
+	for _, tt := range tests {
+		if got := normalizeExtension(tt.ext); got != tt.want {
+			t.Errorf("normalizeExtension(%q) = %q, want %q", tt.ext, got, tt.want)
+		}
+		if got := legacyNormalizeExtension(tt.ext); got != tt.legacy {
+			t.Errorf("legacyNormalizeExtension(%q) = %q, want %q", tt.ext, got, tt.legacy)
+		}
 	}
 }
 
