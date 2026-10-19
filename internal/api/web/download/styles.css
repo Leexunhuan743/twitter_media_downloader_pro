@@ -155,7 +155,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .appbar__brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   min-width: 0;
 }
 
@@ -164,12 +164,10 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   place-items: center;
   width: 30px;
   height: 30px;
-  border-radius: 9px;
-  background: linear-gradient(150deg, var(--accent), color-mix(in srgb, var(--accent) 66%, #7c3aed));
-  color: #fff;
-  box-shadow: var(--shadow-sm);
+  color: var(--accent);
+  flex: 0 0 auto;
 }
-.logo svg { width: 18px; height: 18px; stroke-width: 1.8; }
+.logo svg { width: 27px; height: 27px; fill: currentColor; stroke: none; }
 
 .brand {
   display: flex;
@@ -2130,4 +2128,37 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   .filters { gap: 4px; }
   .filters .chip { padding: 5px 8px; gap: 4px; }
   .filters .chip__count { min-width: 16px; padding: 0 4px; }
+}
+
+/* ============================================================
+   滚动条
+   滚动条不常驻显示：无轨道、无箭头，拇指默认透明；滚动进行时
+   才出现细拇指，停止 900ms 后隐去。app.js 的 initScrollReveal 在
+   scroll 事件（捕获阶段）给正在滚动的容器加 .is-scrolling，因此
+   根滚动条与卡片、代码块、弹窗等容器滚动条走同一套规则。
+   滚轮、触控板、键盘与触摸滚动始终可用。已用 scrollbar-width:none
+   隐藏的横向 chip / 导航条由各自的类选择器覆盖，保持不显示。
+   ============================================================ */
+html { scrollbar-gutter: stable; }
+:root { --sb-thumb: transparent; }
+.is-scrolling { --sb-thumb: color-mix(in srgb, var(--muted) 52%, transparent); }
+
+/* Chromium / WebKit：用伪元素自绘，去掉箭头与轨道，只留圆角细拇指。
+   拇指颜色只读 --sb-thumb：根滚动条随 html 的 .is-scrolling 改变量，
+   容器滚动条随容器自身的 .is-scrolling 改变量，两处共用同一组规则。 */
+::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-track-piece,
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-button { display: none; height: 0; }
+::-webkit-scrollbar-thumb {
+  background-color: var(--sb-thumb);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
+
+/* Firefox 不支持伪元素，用标准属性表达同样的“默认隐形、滚动时显形”。 */
+@supports (-moz-appearance: none) {
+  * { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) transparent; }
 }

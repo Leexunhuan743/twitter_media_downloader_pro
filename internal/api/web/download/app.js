@@ -2418,6 +2418,28 @@
     } catch (e) { /* ignore */ }
   }
 
+  /* 滚动条只在滚动过程中显形：滚动时给容器加 .is-scrolling，停止 900ms 后移除。 */
+  function initScrollReveal() {
+    var timer = 0;
+    var active = null;
+    function clear() {
+      timer = 0;
+      if (!active) return;
+      active.classList.remove('is-scrolling');
+      active = null;
+    }
+    document.addEventListener('scroll', function (event) {
+      var el = event.target;
+      if (!el || el === document || el === window) el = document.documentElement;
+      if (!el.classList) return;
+      if (active && active !== el) active.classList.remove('is-scrolling');
+      active = el;
+      el.classList.add('is-scrolling');
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(clear, 900);
+    }, true);
+  }
+
   function boot() {
     restorePrefs();
     applyTheme(state.theme);
@@ -2429,6 +2451,7 @@
     renderLedger();
     renderHead();
     readFlagsPersisted();
+    initScrollReveal();
     startRouter();
 
     bootstrapAuth().then(function (ctx) {
