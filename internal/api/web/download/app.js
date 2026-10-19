@@ -132,7 +132,8 @@
         errorsCleared: '失败记录已清除',
         online: '实时连接已恢复',
         batch: '批量操作：成功 {ok} 条，失败 {fail} 条',
-        batchEmpty: '当前列表里没有可操作的任务'
+        batchEmpty: '当前列表里没有可操作的任务',
+        copyManual: '浏览器拒绝了自动复制，已选中文本，请按 Ctrl+C'
       },
       confirm: {
         delete: '删除任务 {id} 的记录？任务数据不会保留。',
@@ -257,7 +258,8 @@
         errorsCleared: 'failure log cleared',
         online: 'live stream restored',
         batch: 'Batch: {ok} done, {fail} failed',
-        batchEmpty: 'No task in this list can be acted on'
+        batchEmpty: 'No task in this list can be acted on',
+        copyManual: 'Automatic copy was blocked; text selected — press Ctrl+C'
       },
       confirm: {
         delete: 'Delete the record for task {id}?',
@@ -288,6 +290,7 @@
     schedules: null,
     health: null,
     dbStats: null,
+    stats: null,
     queue: null,
     auth: 'unknown',
     connected: false,
@@ -716,13 +719,13 @@
     syncUploadField();
     var def = modeDef(state.mode);
     var group = $('#options-group');
-    var field = $('#options-field');
+    if (!group) return;
     if (!def.opts.length) {
-      group.innerHTML = '<span class="option option--disabled">' + esc(t('opt.none')) + '</span>';
-      field.setAttribute('data-empty', 'true');
+      group.innerHTML = '';
+      group.setAttribute('data-empty', 'true');
       return;
     }
-    field.removeAttribute('data-empty');
+    group.removeAttribute('data-empty');
     group.innerHTML = def.opts.map(function (key) {
       var checked = state.flags[key] ? ' checked' : '';
       var label = t('opt.' + key.replace(/_([a-z])/g, function (m, c) { return c.toUpperCase(); }));
@@ -925,6 +928,8 @@
             state.files = [];
             var input = $('#json-files');
             if (input) input.value = '';
+            var filesLabel = $('#upload-files');
+            if (filesLabel) filesLabel.textContent = '';
             $('#target-input').value = '';
             updateTargetHint();
             resetTextareaHeight();
@@ -1032,7 +1037,7 @@
   // SSE 每次推全量快照都会触发队列重绘；台账查询合并成 300ms 一次，避免每个事件打一次接口。
   function scheduleLedgerRefresh() {
     clearTimeout(ledgerTimer);
-    ledgerTimer = setTimeout(function () { loadLedger(true); }, 300);
+    ledgerTimer = setTimeout(function () { loadLedger(true); loadStats(); }, 300);
   }
 
   function ledgerParams() {
@@ -1055,10 +1060,10 @@
         var items = (data && data.items) || [];
         state.ledger.total = (data && data.total) || 0;
         state.ledger.items = reset ? items : state.ledger.items.concat(items);
-        renderLedger();
       })
       .catch(function () { })
-      .then(function () { state.ledger.loading = false; });
+      // loading 必须在重绘前落下，否则空结果会停在骨架屏上。
+      .then(function () { state.ledger.loading = false; renderLedger(); });
   }
 
   // loadMeta 只取 download/context 没有的字段（根目录、库统计）；
@@ -1085,8 +1090,14 @@
       .catch(function () { });
   }
 
+  function loadStats() {
+    return request('/api/v1/tasks/stats')
+      .then(function (data) { state.stats = data || null; renderFilters(); })
+      .catch(function () { /* 计数只用于筛选 chip，失败不影响台账 */ });
+  }
+
   function loadAll() {
-    return Promise.all([loadTasks(), loadErrors(), loadMeta(), loadLedger(true)]);
+    return Promise.all([loadTasks(), loadErrors(), loadMeta(), loadLedger(true), loadStats()]);
   }
 
   /* ---------------- rendering ---------------- */
@@ -1112,6 +1123,13 @@
     var failed = Number(p.failed) || 0;
     var percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : null;
     return { total: total, done: done, failed: failed, percent: percent, stage: p.stage || '', current: p.current || '' };
+  }
+
+  // 任务 ID 形如 task_47efa400-…，列表里只展示前缀后的第一段，完整值放 title/详情。
+  function shortId(id) {
+    var text = String(id || '');
+    var stripped = text.replace(/^task[_-]/, '').replace(/-.*$/, '');
+    return (stripped || text).slice(0, 8);
   }
 
   function typeLabel(type) {
@@ -1168,16 +1186,45 @@
     if (state.health) healthEl.setAttribute('data-state', state.connected ? 'ok' : 'warn');
   }
 
+  function activeTaskCount() {
+    return state.tasks.filter(function (task) {
+      var status = taskStatus(task);
+      return status === 'queued' || status === 'running';
+    }).length;
+  }
+
+  // renderHead 把「当前有几个在跑」放到页头，空闲时明确写「队列空闲」，避免误以为任务丢了。
+  function renderHead() {
+    var el = $('#head-active');
+    if (!el) return;
+    var active = activeTaskCount();
+    el.setAttribute('data-active', active > 0 ? 'true' : 'false');
+    el.textContent = active > 0 ? t('tasksView.activeN', { n: active }) : t('tasksView.activeZero');
+  }
+
   function renderQueue() {
     var active = state.tasks.filter(function (task) {
-      return taskStatus(task) === 'queued' || taskStatus(task) === 'running';
+      var status = taskStatus(task);
+      return status === 'queued' || status === 'running';
     });
-    $('#queue-count').textContent = String(active.length);
-    $('#queue-empty').hidden = active.length > 0;
+    var section = $('#queue-section');
+    if (section) section.hidden = active.length === 0;
+    var count = $('#queue-count');
+    if (count) count.textContent = String(active.length);
     var host = $('#queue');
-    host.innerHTML = active.map(renderTicket).join('');
-    $('#btn-cancel-queued').disabled = !active.some(function (task) { return taskStatus(task) === 'queued'; });
+    if (host) host.innerHTML = active.map(renderTicket).join('');
+    var cancel = $('#btn-cancel-queued');
+    if (cancel) cancel.disabled = !active.some(function (task) { return taskStatus(task) === 'queued'; });
     updateTaskTabCount(active.length);
+    renderHead();
+  }
+
+  // stageLabel 把后端的英文阶段名翻成界面语言；未知阶段原样显示。
+  function stageLabel(stage) {
+    if (!stage) return '';
+    var key = 'stage.' + stage;
+    var text = t(key);
+    return text === key ? String(stage) : text;
   }
 
   function renderTicket(task) {
@@ -1195,7 +1242,7 @@
       '<div class="progress__bar" style="width:' + (progress.percent === null ? 0 : progress.percent) + '%"></div>' +
       '</div>';
 
-    var stage = progress.stage || (status === 'queued' ? t('ticket.waiting') : '');
+    var stage = status === 'queued' ? t('ticket.waiting') : stageLabel(progress.stage);
     var countText = progress.total > 0 ? t('metric.progress', { done: progress.done, total: progress.total }) : '';
 
     var actions = '';
@@ -1205,7 +1252,7 @@
 
     return '<article class="ticket" data-status="' + esc(status) + '">' +
       '<div class="ticket__head">' +
-      '<span class="ticket__id">' + esc(String(task.task_id || '').slice(0, 12)) + '</span>' +
+      '<span class="ticket__id">' + esc(shortId(task.task_id)) + '</span>' +
       statusPill(status) +
       '</div>' +
       '<div class="ticket__title">' + esc(taskTarget(task)) + '</div>' +
@@ -1222,17 +1269,80 @@
       '</article>';
   }
 
+  // 目标里的长路径只显示文件名，完整值放 title，避免盘符占满一行。
+  function shortTarget(value) {
+    var text = String(value || '');
+    var cut = Math.max(text.lastIndexOf('/'), text.lastIndexOf(String.fromCharCode(92)));
+    if (cut > 0 && cut < text.length - 1 && text.length - cut <= 48) return text.slice(cut + 1);
+    return text;
+  }
+
+  var LEDGER_EXAMPLES = ['@nasa', 'https://x.com/elonmusk', '1234567890'];
+
+  function skeletonRows(count) {
+    var out = '';
+    for (var i = 0; i < count; i++) {
+      out += '<div class="skeleton-row" aria-hidden="true">' +
+        '<span class="skeleton" style="width:64px"></span>' +
+        '<span class="skeleton" style="width:60%"></span>' +
+        '<span class="skeleton" style="width:80%"></span>' +
+        '<span class="skeleton" style="width:48px"></span>' +
+        '<span class="skeleton" style="width:96px"></span>' +
+        '</div>';
+    }
+    return out;
+  }
+
+  // 空态分两种：筛选为空给「清除筛选」，真正没有记录时给可点击的示例目标。
+  function renderLedgerEmpty(filtered) {
+    var title = $('#ledger-empty-text');
+    var actions = $('#ledger-empty-actions');
+    if (!title || !actions) return;
+    if (filtered) {
+      title.textContent = t('ledger.emptyFilter');
+      actions.innerHTML = '<button type="button" class="btn btn--ghost btn--sm" data-action="reset-filters">' +
+        esc(t('ledger.clearFilters')) + '</button>';
+      return;
+    }
+    title.textContent = t('ledger.emptyTitle');
+    actions.innerHTML = '<p class="empty__hint">' + esc(t('ledger.emptyHint')) + '</p>' +
+      LEDGER_EXAMPLES.map(function (value) {
+        return '<button type="button" class="btn btn--ghost btn--sm" data-example="' + esc(value) + '">' +
+          '<span class="mono">' + esc(value) + '</span></button>';
+      }).join('');
+  }
+
   function renderLedger() {
+    var host = $('#ledger');
+    if (!host) return;
     var items = state.ledger.items || [];
-    $('#ledger').innerHTML = items.map(renderRow).join('');
-    $('#ledger-empty').hidden = items.length > 0;
+    if (state.ledger.loading && !items.length) host.innerHTML = skeletonRows(3);
+    else host.innerHTML = items.map(renderRow).join('');
+
+    var totalEl = $('#ledger-total');
+    if (totalEl) {
+      var total = Number(state.ledger.total) || 0;
+      totalEl.hidden = total === 0;
+      totalEl.textContent = String(total);
+      totalEl.title = t('ledger.total', { n: total });
+    }
+
+    var empty = $('#ledger-empty');
+    if (empty) {
+      var filtered = state.filter !== 'all' || !!state.query;
+      empty.hidden = items.length > 0 || (state.ledger.loading && !items.length);
+      if (!empty.hidden) renderLedgerEmpty(filtered);
+    }
+
     var more = $('#ledger-more');
-    if (state.ledger.total > items.length) {
-      more.hidden = false;
-      more.textContent = t('ledger.limited', { shown: items.length, total: state.ledger.total });
-    } else {
-      more.hidden = true;
-      more.textContent = t('ledger.more');
+    if (more) {
+      if (state.ledger.total > items.length) {
+        more.hidden = false;
+        more.textContent = t('ledger.limited', { shown: items.length, total: state.ledger.total });
+      } else {
+        more.hidden = true;
+        more.textContent = t('ledger.more');
+      }
     }
     renderLedgerActions();
   }
@@ -1253,35 +1363,82 @@
     });
   }
 
+  // durationText 给终态任务显示耗时，避免进度列与状态列重复同一个词。
+  function durationText(task) {
+    var start = task.started_at || task.created_at;
+    var end = task.ended_at;
+    if (!start) return '';
+    var ms = (end ? Date.parse(end) : Date.now()) - Date.parse(start);
+    if (!isFinite(ms) || ms < 0) return '';
+    if (ms < 1000) return Math.round(ms) + ' ms';
+    var sec = ms / 1000;
+    if (sec < 60) return (sec < 10 ? sec.toFixed(1) : String(Math.round(sec))) + ' s';
+    var min = Math.floor(sec / 60);
+    var rem = Math.round(sec % 60);
+    return min + ' min' + (rem ? ' ' + rem + ' s' : '');
+  }
+
   function renderRow(task) {
     var status = taskStatus(task);
+    var progress = progressOf(task);
+    var fullTarget = taskTarget(task);
     var canCancel = status === 'queued' || status === 'running';
     var canRetry = status === 'failed' || status === 'cancelled';
-    var actions = '<button type="button" class="btn btn--ghost" data-action="detail" data-id="' + esc(task.task_id) + '">' + esc(t('detail.open')) + '</button>';
-    if (canCancel) actions += '<button type="button" class="btn btn--ghost" data-action="cancel" data-id="' + esc(task.task_id) + '">' + esc(t('ticket.cancel')) + '</button>';
-    if (canRetry) actions += '<button type="button" class="btn btn--ghost" data-action="retry" data-id="' + esc(task.task_id) + '">' + esc(t('ticket.retry')) + '</button>';
-    if (!canCancel) actions += '<button type="button" class="btn btn--ghost btn--danger" data-action="delete" data-id="' + esc(task.task_id) + '">' + esc(t('ticket.delete')) + '</button>';
 
-    var progress = progressOf(task);
-    var sub = [];
-    sub.push(esc(typeLabel(task.type)));
-    if (progress.total > 0) sub.push(esc(t('metric.progress', { done: progress.done, total: progress.total })));
-    if (progress.failed > 0) sub.push(esc(t('metric.failed', { n: progress.failed })));
-    if (task.ended_at) sub.push(esc(fmtRelative(task.ended_at)));
+    var actions = '<button type="button" class="btn" data-action="detail" data-id="' + esc(task.task_id) + '">' + esc(t('detail.open')) + '</button>';
+    if (canCancel) actions += '<button type="button" class="btn" data-action="cancel" data-id="' + esc(task.task_id) + '">' + esc(t('ticket.cancel')) + '</button>';
+    if (canRetry) actions += '<button type="button" class="btn" data-action="retry" data-id="' + esc(task.task_id) + '">' + esc(t('ticket.retry')) + '</button>';
+    if (!canCancel) actions += '<button type="button" class="btn btn--danger" data-action="delete" data-id="' + esc(task.task_id) + '">' + esc(t('ticket.delete')) + '</button>';
 
-    return '<div class="row" data-id="' + esc(task.task_id) + '">' +
-      '<span class="row__time">' + esc(fmtTime(task.created_at || task.started_at)) + '</span>' +
-      '<span class="row__body">' +
-      '<span class="row__target">' + esc(taskTarget(task)) + '</span>' +
-      '<span class="row__sub">' + sub.join('<span>·</span>') + '</span>' +
+    var terminal = status === 'failed' || status === 'completed' || status === 'cancelled';
+    var progText;
+    if (status === 'queued') {
+      progText = t('ticket.waiting');
+    } else if (status === 'running') {
+      progText = progress.total > 0
+        ? t('metric.progress', { done: progress.done, total: progress.total })
+        : (stageLabel(progress.stage) || t('taskStatus.running'));
+    } else if (terminal) {
+      var dur = durationText(task);
+      progText = dur ? t('ledger.duration', { d: dur }) : t('taskStatus.' + status);
+    } else {
+      progText = progress.total > 0
+        ? t('metric.progress', { done: progress.done, total: progress.total })
+        : progress.stage || t('taskStatus.' + status);
+    }
+    if (progress.failed > 0 && !terminal) progText += ' · ' + t('metric.failed', { n: progress.failed });
+    var percent = progress.percent === null ? (status === 'running' ? 32 : 0) : progress.percent;
+    var showBar = progress.total > 0 || status === 'running';
+    var created = task.created_at || task.started_at;
+
+    return '<div class="lrow" data-id="' + esc(task.task_id) + '" data-status="' + esc(status) + '">' +
+      '<span class="lrow__status">' + statusPill(status) + '</span>' +
+      '<span class="lrow__target">' +
+        '<span class="lrow__name" title="' + esc(fullTarget) + '">' + esc(shortTarget(fullTarget)) + '</span>' +
+        '<span class="lrow__sub"><span>' + esc(typeLabel(task.type)) + '</span>' +
+          '<span class="sep" aria-hidden="true">·</span>' +
+          '<span class="mono">' + esc(shortId(task.task_id)) + '</span></span>' +
       '</span>' +
-      '<span class="row__status">' + statusPill(status) +
-      '<span class="row__actions">' + actions + '</span>' +
+      '<span class="lrow__prog">' +
+        (showBar ? '<span class="metabar" data-status="' + esc(status) + '"><i style="width:' + percent + '%"></i></span>' : '') +
+        '<span class="lrow__progtxt">' + esc(progText) + '</span>' +
       '</span>' +
+      '<time class="lrow__time" title="' + esc(fmtTime(created)) + '">' + esc(fmtRelative(created)) + '</time>' +
+      '<span class="lrow__actions">' + actions + '</span>' +
       '</div>';
   }
 
   function renderFilters() {
+    var host = $('#ledger-filters');
+    if (!host) return;
+    var stats = state.stats || {};
+    var counts = {
+      all: Number(stats.total) || 0,
+      active: (Number(stats.queued) || 0) + (Number(stats.running) || 0),
+      completed: Number(stats.completed) || 0,
+      failed: Number(stats.failed) || 0,
+      cancelled: Number(stats.cancelled) || 0
+    };
     var options = [
       { id: 'all', label: t('filter.all') },
       { id: 'active', label: t('filter.active') },
@@ -1289,10 +1446,11 @@
       { id: 'failed', label: t('filter.failed') },
       { id: 'cancelled', label: t('filter.cancelled') }
     ];
-    $('#ledger-filters').innerHTML = options.map(function (option) {
+    host.innerHTML = options.map(function (option) {
       var pressed = state.filter === option.id ? 'true' : 'false';
+      var count = state.stats ? '<span class="chip__count">' + counts[option.id] + '</span>' : '';
       return '<button type="button" class="chip" data-filter="' + option.id + '" aria-pressed="' + pressed + '">' +
-        esc(option.label) + '</button>';
+        esc(option.label) + count + '</button>';
     }).join('');
   }
 
@@ -1300,26 +1458,22 @@
     var regular = Object.keys(state.errors.regular || {});
     var json = state.errors.json || [];
     var host = $('#errors-strip');
+    if (!host) return;
     if (!regular.length && !json.length) {
       host.hidden = true;
       return;
     }
     host.hidden = false;
-    $('#errors-summary').textContent = t('errors.summary', { users: regular.length, json: json.length });
+    var summary = t('errors.summary', { users: regular.length, json: json.length });
+    $('#errors-summary').textContent = summary + ' · ' + t('errors.hint');
   }
 
   function renderFooter() {
-    var config = state.config || {};
-    var db = state.dbStats || {};
     var health = state.health || {};
-    $('#footer-root').textContent = t('footer.root', { path: config.root_path || '—' });
-    $('#footer-db').textContent = t('footer.db', {
-      users: db.users || 0,
-      lists: db.lsts || 0,
-      entities: (db.user_entities || 0) + (db.lst_entities || 0)
-    });
-    $('#footer-version').textContent = t('footer.version', { version: health.version || '—' });
-    $('#footer-note').textContent = t('footer.note');
+    var version = $('#footer-version');
+    if (version) version.textContent = t('footer.version', { version: health.version || '—' });
+    var note = $('#footer-note');
+    if (note) note.textContent = t('footer.note');
   }
 
   /* ---------------- toasts ---------------- */
@@ -1386,7 +1540,7 @@
   function autoGrow() {
     var el = $('#target-input');
     el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+    el.style.height = Math.min(el.scrollHeight, 148) + 'px';
   }
 
   function resetTextareaHeight() {
@@ -1414,6 +1568,76 @@
     request('/api/v1/tasks/' + encodeURIComponent(id), { method: 'DELETE' })
       .then(function () { closeTaskDialog(); toast('success', t('toast.deleted')); loadTasks(); })
       .catch(function (err) { if (err.status !== 401) toast('error', err.message); });
+  }
+
+  /* ---------------- clipboard ---------------- */
+
+  // 复制路径：异步剪贴板 API → 选区 + execCommand → 失败后由调用方选中文本提示手动复制。
+  // 非 HTTPS 页面、权限被拒或没有用户手势时前一步都会失败，所以 execCommand 兜底必须保留。
+  function execCommandCopy(text) {
+    var area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', 'readonly');
+    area.style.position = 'fixed';
+    area.style.top = '-1000px';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    area.setSelectionRange(0, String(text).length);
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(area);
+    if (!ok) throw new Error('execCommand copy rejected');
+  }
+
+  // 复制文本；两条路径都失败时 reject，调用方负责给出可操作反馈。
+  function copyValue(text) {
+    var value = text === undefined || text === null ? '' : String(text);
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      return navigator.clipboard.writeText(value).catch(function () {
+        execCommandCopy(value);
+      });
+    }
+    return new Promise(function (resolve) { execCommandCopy(value); resolve(); });
+  }
+
+  // 选中节点文本，供手动 Ctrl+C。
+  function selectNodeText(node) {
+    if (!node || !window.getSelection || !document.createRange) return false;
+    try {
+      var range = document.createRange();
+      range.selectNodeContents(node);
+      var selection = window.getSelection();
+      if (!selection) return false;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function copyText(text, btn) {
+    var done = function () {
+      if (!btn) return;
+      btn.setAttribute('data-copied', 'true');
+      var label = btn.querySelector('span');
+      if (label) label.textContent = t('detail.copied');
+      setTimeout(function () {
+        btn.removeAttribute('data-copied');
+        if (label) label.textContent = t('detail.copy');
+      }, 1400);
+    };
+    copyValue(text).then(done, function () {
+      if (btn) selectNodeText(btn);
+      toast('error', t('toast.copyManual'));
+    });
+  }
+
+  function copyButton(value) {
+    return '<button type="button" class="copy-btn" data-copy="' + esc(value) + '" title="' + esc(t('detail.copy')) + '">' +
+      '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.2" y="5.2" width="7.6" height="7.6" rx="1.6"/><path d="M10.8 5.2V3.8A1.6 1.6 0 0 0 9.2 2.2H3.8A1.6 1.6 0 0 0 2.2 3.8v5.4A1.6 1.6 0 0 0 3.8 10.8h1.4" stroke-linecap="round"/></svg>' +
+      '<span>' + esc(t('detail.copy')) + '</span></button>';
   }
 
   /* ---------------- task detail dialog ---------------- */
@@ -1460,8 +1684,8 @@
     html += kv(t('detail.status'), statusPill(status));
     html += kv(t('detail.type'), esc(typeLabel(task.type)));
     html += kv(t('detail.target'), esc(taskTarget(task)));
-    html += kv(t('detail.taskId'), '<span class="mono small">' + esc(task.task_id) + '</span>');
-    if (task.entry_id) html += kv(t('detail.entryId'), '<span class="mono small">' + esc(task.entry_id) + '</span>');
+    html += kv(t('detail.taskId'), '<span class="mono small">' + esc(task.task_id) + '</span>' + copyButton(task.task_id));
+    if (task.entry_id) html += kv(t('detail.entryId'), '<span class="mono small">' + esc(task.entry_id) + '</span>' + copyButton(task.entry_id));
     html += kv(t('detail.created'), esc(fmtTime(task.created_at)));
     if (task.started_at) html += kv(t('detail.started'), esc(fmtTime(task.started_at)));
     if (task.ended_at) html += kv(t('detail.ended'), esc(fmtTime(task.ended_at)));
@@ -1588,6 +1812,8 @@
     if (fileInput) {
       fileInput.addEventListener('change', function () {
         state.files = Array.prototype.slice.call(fileInput.files || []);
+        var label = $('#upload-files');
+        if (label) label.textContent = state.files.length ? t('upload.files', { n: state.files.length }) : '';
         clearFormError();
       });
     }
@@ -1665,6 +1891,9 @@
     $('#btn-batch-retry').addEventListener('click', batchRetryVisible);
     $('#btn-batch-delete').addEventListener('click', batchDeleteVisible);
 
+    var emptyActions = $('#ledger-empty-actions');
+    if (emptyActions) emptyActions.addEventListener('click', onListAction);
+
     $('#task-body').addEventListener('click', onListAction);
     $('#task-close').addEventListener('click', closeTaskDialog);
     $('#task-dialog-close').addEventListener('click', closeTaskDialog);
@@ -1687,10 +1916,33 @@
   }
 
   function onListAction(event) {
+    var copy = event.target.closest('[data-copy]');
+    if (copy) { copyText(copy.getAttribute('data-copy'), copy); return; }
+
+    var example = event.target.closest('[data-example]');
+    if (example) {
+      var input = $('#target-input');
+      if (!input) return;
+      input.value = example.getAttribute('data-example');
+      input.focus();
+      autoGrow();
+      updateTargetHint();
+      return;
+    }
+
     var btn = event.target.closest('[data-action]');
     if (!btn) return;
-    var id = btn.getAttribute('data-id');
     var action = btn.getAttribute('data-action');
+    if (action === 'reset-filters') {
+      state.filter = 'all';
+      state.query = '';
+      var search = $('#ledger-search');
+      if (search) search.value = '';
+      renderFilters();
+      loadLedger(true);
+      return;
+    }
+    var id = btn.getAttribute('data-id');
     if (action === 'detail') openTaskDetail(id);
     else if (action === 'cancel') cancelTask(id);
     else if (action === 'retry') retryTask(id);
@@ -1795,6 +2047,52 @@
 
   mergeDict(I18N['zh-CN'], TASKS_I18N['zh-CN']);
   mergeDict(I18N['en'], TASKS_I18N['en']);
+
+  /* 下载页控制台化后的文案（台账列头、空态动作、进行中计数、复制） */
+  var CONSOLE_I18N = {
+    'zh-CN': {
+      tasksView: { activeZero: '队列空闲', activeN: '{n} 个进行中' },
+      ledger: {
+        colStatus: '状态', colTarget: '目标', colProgress: '进度', colTime: '时间', colActions: '操作',
+        emptyTitle: '台账还是空的',
+        emptyHint: '在上方粘贴 @handle、x.com 链接、列表 id 或 JSON 路径，开始第一个下载。',
+        emptyFilter: '当前筛选下没有任务',
+        clearFilters: '清除筛选',
+        total: '共 {n} 条',
+        duration: '耗时 {d}',
+        copyId: '复制任务 ID'
+      },
+      stage: {
+        syncing: '同步媒体', downloading: '下载中', retrying: '重试中', resolving: '解析目标',
+        profile: '获取资料', profile_warning: '资料警告', marking: '标记已下载', completed: '已完成'
+      },
+      detail: { copy: '复制', copied: '已复制' },
+      upload: { files: '已选择 {n} 个文件' },
+      errors: { hint: '失败项可重试或清除，失败会持续累积。' }
+    },
+    en: {
+      tasksView: { activeZero: 'queue idle', activeN: '{n} in flight' },
+      ledger: {
+        colStatus: 'Status', colTarget: 'Target', colProgress: 'Progress', colTime: 'When', colActions: 'Actions',
+        emptyTitle: 'The ledger is empty',
+        emptyHint: 'Paste a handle, an x.com link, a list id or a JSON path above to start the first download.',
+        emptyFilter: 'No tasks match this filter',
+        clearFilters: 'Clear filters',
+        total: '{n} total',
+        duration: '{d}',
+        copyId: 'Copy task id'
+      },
+      stage: {
+        syncing: 'syncing media', downloading: 'downloading', retrying: 'retrying', resolving: 'resolving',
+        profile: 'fetching profile', profile_warning: 'profile warning', marking: 'marking downloaded', completed: 'done'
+      },
+      detail: { copy: 'Copy', copied: 'Copied' },
+      upload: { files: '{n} file(s) selected' },
+      errors: { hint: 'Retry or clear failures; the log keeps growing until you do.' }
+    }
+  };
+  mergeDict(I18N['zh-CN'], CONSOLE_I18N['zh-CN']);
+  mergeDict(I18N['en'], CONSOLE_I18N['en']);
 
   function i18nAdd(dict) {
     if (!dict) return;
@@ -1920,6 +2218,15 @@
       if (link.getAttribute('data-nav') === id) link.setAttribute('aria-current', 'page');
       else link.removeAttribute('aria-current');
     });
+    var activeTab = document.querySelector('#nav [data-nav="' + id + '"]');
+    if (activeTab && activeTab.parentNode) {
+      var nav = activeTab.parentNode;
+      var left = activeTab.offsetLeft - (nav.clientWidth - activeTab.offsetWidth) / 2;
+      if (Math.abs(nav.scrollLeft - left) > 4) {
+        if (nav.scrollTo) nav.scrollTo({ left: left, behavior: 'smooth' });
+        else nav.scrollLeft = left;
+      }
+    }
     document.title = 'TMD · ' + t('nav.' + id);
     if (viewDefs[id]) {
       if (!viewInstances[id]) mountView(id);
@@ -2071,6 +2378,8 @@
       return path + query;
     },
     token: function () { return state.token; },
+    copyText: copyValue,
+    selectText: selectNodeText,
     reload: function () { return loadAll(); }
   };
 
@@ -2118,6 +2427,7 @@
     updateTargetHint();
     renderFilters();
     renderLedger();
+    renderHead();
     readFlagsPersisted();
     startRouter();
 

@@ -40,7 +40,7 @@
   </div>
 
   <div class="appbar__controls">
-    <button type="button" class="btn btn--ghost btn--sm" id="btn-auth" hidden data-i18n="status.changeKey">切换密钥</button>
+    <button type="button" class="btn btn--ghost btn--sm btn--icon-text" id="btn-auth" hidden data-i18n="status.changeKey">切换密钥</button>
 
     <div class="seg" id="theme-seg" role="group" data-i18n-aria="theme.group" aria-label="外观">
       <button type="button" class="seg__btn" data-theme-set="light" data-i18n-aria="theme.light" aria-label="浅色" title="浅色">
@@ -82,118 +82,119 @@
 
   <section class="view" id="view-tasks" data-view="tasks">
     <div class="view-head">
-      <div>
+      <div class="view-head__text">
         <h1 class="view-title" data-i18n="tasksView.title">下载</h1>
         <p class="view-sub" data-i18n="tasksView.sub">提交下载、标记已下载与 JSON 上传；进行中与历史任务都在这一页。</p>
       </div>
+      <div class="view-head__actions">
+        <span class="view-head__stat" id="head-active" data-i18n="tasksView.activeZero">队列空闲</span>
+        <button type="button" class="btn btn--ghost btn--sm" id="btn-refresh" data-i18n="common.refresh">刷新</button>
+      </div>
     </div>
 
-    <div class="layout">
-      <section class="card card--composer" aria-labelledby="composer-title">
-        <header class="card__head">
-          <h2 class="card__title" id="composer-title" data-i18n="composer.title">新建下载</h2>
-        </header>
+    <form class="cmdbar" id="dispatch-form" novalidate autocomplete="off">
+      <div class="cmdbar__target">
+        <label class="visually-hidden" for="target-input" data-i18n="step.target">目标</label>
+        <textarea id="target-input" rows="2" spellcheck="false" autocapitalize="off" aria-describedby="parse-hint"
+          data-i18n-placeholder="target.placeholder" placeholder="@handle、x.com 链接、list id、JSON 路径，可多行"></textarea>
+        <span class="tag" id="target-tag" hidden></span>
+      </div>
+      <p class="cmdbar__hint" id="parse-hint" aria-live="polite" data-i18n="target.hint">支持 @screen_name、x.com/twitter.com 链接、数字 list id、JSON 文件路径</p>
 
-        <form id="dispatch-form" novalidate autocomplete="off">
-          <div class="field">
-            <div class="field__head">
-              <label class="visually-hidden" for="target-input" data-i18n="step.target">目标</label>
-              <span class="tag" id="target-tag" hidden></span>
-            </div>
-            <div class="target">
-              <textarea id="target-input" rows="2" spellcheck="false" autocapitalize="off" aria-describedby="parse-hint"
-                data-i18n-placeholder="target.placeholder" placeholder="@handle、x.com 链接、list id、JSON 路径，可多行"></textarea>
-            </div>
-            <p class="field__help" id="parse-hint" aria-live="polite" data-i18n="target.hint">支持 @screen_name、x.com/twitter.com 链接、数字 list id、JSON 文件路径</p>
-          </div>
+      <div class="cmdbar__row">
+        <div class="segmented segmented--scroll" id="mode-group" role="radiogroup" data-i18n-aria="mode.group" aria-label="下载方式"></div>
+        <div class="opts" id="options-group"></div>
+        <span class="cmdbar__grow"></span>
+        <span class="kbd-hint" data-i18n="submit.note">⌘/Ctrl + Enter</span>
+        <button type="submit" class="btn btn--primary" id="submit-btn">
+          <span class="btn__text" data-i18n="submit.go">开始下载</span>
+        </button>
+      </div>
 
-          <div class="field">
-            <span class="field__label" data-i18n="step.mode">方式</span>
-            <div class="segmented" id="mode-group" role="radiogroup" data-i18n-aria="mode.group" aria-label="下载方式"></div>
-          </div>
-
-          <div class="field" id="options-field">
-            <span class="field__label" data-i18n="step.options">选项</span>
-            <div class="options" id="options-group"></div>
-          </div>
-
-          <div class="field" id="upload-field" hidden>
-            <span class="field__label" data-i18n="upload.label">或上传 .json 文件</span>
-            <input type="file" id="json-files" accept=".json,application/json" multiple>
-            <p class="field-box__help" data-i18n="upload.help">单文件 ≤400MB，仅 .json；上传生成的任务不可重试。</p>
-          </div>
-
-          <div class="field" id="mark-field">
-            <span class="field__label" data-i18n="mark.label">动作</span>
-            <label class="option" title="mark">
-              <input type="checkbox" id="mark-toggle">
-              <span class="option__box" aria-hidden="true"></span>
-              <span data-i18n="mark.toggle">仅标记为已下载（不下载媒体）</span>
-            </label>
-            <div class="mark-time" id="mark-time-wrap" hidden>
-              <label class="field-box__label" for="mark-time" data-i18n="mark.timeLabel">标记时间（可选）</label>
-              <input class="input" type="datetime-local" id="mark-time">
-              <p class="field-box__help" data-i18n="mark.timeHelp">留空表示标记到此刻；接口不支持「全量标记」。</p>
-            </div>
-          </div>
-
-          <div class="composer__foot">
-            <p class="form-error" id="form-error" role="alert" hidden></p>
-            <span class="kbd-hint" data-i18n="submit.note">⌘/Ctrl + Enter</span>
-            <button type="submit" class="btn btn--primary btn--lg" id="submit-btn">
-              <span class="btn__text" data-i18n="submit.go">开始下载</span>
-            </button>
-          </div>
-        </form>
-      </section>
-
-      <section class="card card--ledger" aria-labelledby="ledger-title">
-        <header class="card__head">
-          <h2 class="card__title" id="ledger-title" data-i18n="ledger.title">台账</h2>
-          <label class="search">
-            <svg class="search__icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7.2" cy="7.2" r="4.2"/><path d="M10.4 10.4L14 14" stroke-linecap="round"/></svg>
-            <span class="visually-hidden" data-i18n="ledger.searchLabel">搜索台账</span>
-            <input type="search" id="ledger-search" data-i18n-placeholder="ledger.search" placeholder="搜索目标 / 任务 ID" autocomplete="off">
+      <div class="cmdbar__extras">
+        <label class="option option--compact" title="mark">
+          <input type="checkbox" id="mark-toggle">
+          <span class="option__box" aria-hidden="true"></span>
+          <span data-i18n="mark.toggle">仅标记为已下载（不下载媒体）</span>
+        </label>
+        <div class="cmdbar__marktime" id="mark-time-wrap" hidden>
+          <label class="visually-hidden" for="mark-time" data-i18n="mark.timeLabel">标记时间（可选）</label>
+          <input class="input input--compact" type="datetime-local" id="mark-time">
+          <span class="field__help" data-i18n="mark.timeHelp">留空表示标记到此刻。</span>
+        </div>
+        <div class="cmdbar__upload" id="upload-field" hidden>
+          <label class="btn btn--ghost btn--sm" for="json-files">
+            <span data-i18n="upload.label">或上传 .json 文件</span>
           </label>
-        </header>
-        <div class="filters" id="ledger-filters" role="group" data-i18n-aria="ledger.filterGroup" aria-label="按状态过滤"></div>
-        <div class="ledger-actions">
+          <input type="file" id="json-files" accept=".json,application/json" multiple class="visually-hidden">
+          <span class="field__help" data-i18n="upload.help">单文件 ≤400MB，仅 .json；上传生成的任务不可重试。</span>
+          <span class="field__help" id="upload-files"></span>
+        </div>
+      </div>
+
+      <p class="form-error" id="form-error" role="alert" hidden></p>
+    </form>
+
+    <section class="live" id="queue-section" aria-labelledby="queue-title" hidden>
+      <header class="live__head">
+        <h2 class="live__title" id="queue-title">
+          <span data-i18n="queue.title">进行中</span>
+          <span class="count" id="queue-count">0</span>
+        </h2>
+        <div class="live__actions">
+          <button type="button" class="btn btn--ghost btn--sm" id="btn-cancel-queued" disabled data-i18n="queue.cancelQueued">取消排队</button>
+        </div>
+      </header>
+      <div class="queue" id="queue" aria-live="polite" aria-relevant="additions text"></div>
+    </section>
+
+    <div class="errorsbar" id="errors-strip" hidden>
+      <span class="errorsbar__icon" aria-hidden="true">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M8 2.2 14.2 13H1.8Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 6.4v3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.3" r=".85" fill="currentColor"/></svg>
+      </span>
+      <span class="errorsbar__text" id="errors-summary"></span>
+      <div class="errorsbar__actions">
+        <button type="button" class="btn btn--ghost btn--sm" id="btn-retry-all" data-i18n="errors.retryAll">全部重试</button>
+        <button type="button" class="btn btn--ghost btn--sm btn--danger" id="btn-clear-errors" data-i18n="errors.clear">清除记录</button>
+      </div>
+    </div>
+
+    <section class="card card--ledger" aria-labelledby="ledger-title">
+      <header class="card__head card__head--ledger">
+        <h2 class="card__title" id="ledger-title">
+          <span data-i18n="ledger.title">台账</span>
+          <span class="count" id="ledger-total" hidden></span>
+        </h2>
+        <label class="search">
+          <svg class="search__icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7.2" cy="7.2" r="4.2"/><path d="M10.4 10.4L14 14" stroke-linecap="round"/></svg>
+          <span class="visually-hidden" data-i18n="ledger.searchLabel">搜索台账</span>
+          <input type="search" id="ledger-search" data-i18n-placeholder="ledger.search" placeholder="搜索目标 / 任务 ID" autocomplete="off">
+        </label>
+      </header>
+
+      <div class="ledger__bar">
+        <div class="filters filters--chips" id="ledger-filters" role="group" data-i18n-aria="ledger.filterGroup" aria-label="按状态过滤"></div>
+        <div class="ledger__bulk">
           <button type="button" class="btn btn--ghost btn--sm" id="btn-batch-retry" disabled data-i18n="ledger.batchRetry">重试失败</button>
           <button type="button" class="btn btn--ghost btn--sm btn--danger" id="btn-batch-delete" disabled data-i18n="ledger.batchDelete">清理终态</button>
         </div>
-        <div class="ledger" id="ledger"></div>
-        <p class="empty" id="ledger-empty" hidden data-i18n="ledger.empty">没有符合条件的任务记录。</p>
-        <button type="button" class="btn btn--ghost btn--wide" id="ledger-more" hidden data-i18n="ledger.more">显示更多记录</button>
-      </section>
+      </div>
 
-      <aside class="rail">
-        <section class="card card--queue" aria-labelledby="queue-title">
-          <header class="card__head">
-            <h2 class="card__title" id="queue-title">
-              <span data-i18n="queue.title">进行中</span>
-              <span class="count" id="queue-count">0</span>
-            </h2>
-            <div class="card__actions">
-              <button type="button" class="btn btn--ghost btn--sm" id="btn-cancel-queued" disabled data-i18n="queue.cancelQueued">取消排队</button>
-              <button type="button" class="btn btn--ghost btn--sm" id="btn-refresh" data-i18n="queue.refresh">刷新</button>
-            </div>
-          </header>
-          <div class="queue" id="queue" aria-live="polite" aria-relevant="additions text"></div>
-          <p class="empty" id="queue-empty" data-i18n="queue.empty">还没有任务。在上面贴一个目标，按 Enter 开始。</p>
-        </section>
+      <div class="ledger__head" aria-hidden="true">
+        <span data-i18n="ledger.colStatus">状态</span>
+        <span data-i18n="ledger.colTarget">目标</span>
+        <span data-i18n="ledger.colProgress">进度</span>
+        <span data-i18n="ledger.colTime">时间</span>
+        <span data-i18n="ledger.colActions">操作</span>
+      </div>
 
-        <section class="card card--errors" id="errors-strip" aria-labelledby="errors-title" hidden>
-          <header class="card__head">
-            <h2 class="card__title" id="errors-title" data-i18n="errors.title">失败记录</h2>
-            <span class="card__meta" id="errors-summary"></span>
-          </header>
-          <div class="card__actions">
-            <button type="button" class="btn btn--ghost btn--sm" id="btn-retry-all" data-i18n="errors.retryAll">全部重试</button>
-            <button type="button" class="btn btn--ghost btn--sm btn--danger" id="btn-clear-errors" data-i18n="errors.clear">清除记录</button>
-          </div>
-        </section>
-      </aside>
-    </div>
+      <div class="ledger" id="ledger"></div>
+      <div class="empty empty--ledger" id="ledger-empty" hidden>
+        <p class="empty__title" id="ledger-empty-text"></p>
+        <div class="empty__actions" id="ledger-empty-actions"></div>
+      </div>
+      <button type="button" class="btn btn--ghost btn--wide" id="ledger-more" hidden data-i18n="ledger.more">显示更多记录</button>
+    </section>
   </section>
 
   <section class="view" id="view-data" data-view="data" hidden></section>
@@ -202,10 +203,8 @@
   <section class="view" id="view-system" data-view="system" hidden></section>
 
   <footer class="footer">
-    <span id="footer-root" data-i18n="footer.root">根目录 —</span>
-    <span id="footer-db" data-i18n="footer.db">数据库 —</span>
-    <span id="footer-version" data-i18n="footer.version">版本 —</span>
     <span id="footer-note" data-i18n="footer.note">TMD 下载台 · 单页零构建</span>
+    <span id="footer-version" data-i18n="footer.version">版本 —</span>
   </footer>
 </main>
 

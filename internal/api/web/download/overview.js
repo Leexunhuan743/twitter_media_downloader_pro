@@ -1,4 +1,4 @@
-/* TMD · 总览视图 */
+/* TMD · 总览视图：状态条 + 快捷动作 + 最近任务 + 系统概况 */
 (function () {
   'use strict';
 
@@ -7,32 +7,94 @@
 
   T.i18n.add({
     'zh-CN': {
-      overview: {
-        title: '总览', sub: '服务健康、队列与最近活动的集中视图',
-        queue: '队列', tasks: '任务', errors: '失败记录', db: '数据库',
-        queueSub: '运行 {active} · 待处理 {pending}', tasksSub: '完成 {done} · 失败 {failed}',
-        errorsSub: '用户 {users} · JSON 源 {json}', dbSub: '列表 {lists} · 实体 {entities}',
-        recent: '最近任务', recentEmpty: '还没有任务记录', viewAll: '查看全部',
-        system: '系统概况', health: '服务健康', version: '版本', root: '根目录',
-        routines: '下载并发', fetchConcurrent: '取用户并发', schedules: '计划任务',
-        schedulesSub: '启用 {enabled} / 共 {total}', logs: '日志', logsSub: '错误 {error} · 警告 {warn}',
-        queueNote: '队列深度 = 待处理 + 运行中 + 已分离'
+      ov: {
+        title: '总览',
+        sub: '服务状态、队列压力与最近活动；需要操作时直接跳到对应页面。',
+        quickDownload: '新建下载',
+        quickSchedules: '计划任务',
+        quickLogs: '查看日志',
+        queue: '队列',
+        queueSub: '运行 {active} · 等待 {pending}',
+        tasks: '任务',
+        tasksSub: '完成 {done} · 失败 {failed}',
+        errors: '失败记录',
+        errorsSub: '账号 {users} · JSON 源 {json}',
+        db: '库',
+        dbSub: '列表 {lists} · 媒体 {media}',
+        recent: '最近任务',
+        recentHint: '点击任意一行进入下载页处理',
+        recentEmpty: '还没有任务记录',
+        recentEmptyHint: '从下载页粘贴 @handle 或 x.com 链接开始。',
+        goDownload: '去下载',
+        viewAll: '查看全部',
+        system: '系统概况',
+        health: '服务',
+        version: '版本',
+        root: '根目录',
+        routines: '下载并发',
+        fetchConcurrent: '取用户并发',
+        schedules: '计划任务',
+        schedulesSub: '{enabled} / {total} 启用',
+        logs: '日志',
+        logsSub: '错误 {error} · 警告 {warn}',
+        uptime: '队列深度',
+        queueNote: '待处理 + 运行中 + 已分离'
       }
     },
     'en': {
-      overview: {
-        title: 'Overview', sub: 'Service health, queue pressure and recent activity in one place',
-        queue: 'Queue', tasks: 'Tasks', errors: 'Failures', db: 'Database',
-        queueSub: '{active} running · {pending} pending', tasksSub: '{done} done · {failed} failed',
-        errorsSub: '{users} users · {json} JSON sources', dbSub: '{lists} lists · {entities} entities',
-        recent: 'Recent tasks', recentEmpty: 'No tasks recorded yet', viewAll: 'View all',
-        system: 'System', health: 'Health', version: 'Version', root: 'Root path',
-        routines: 'Download concurrency', fetchConcurrent: 'User fetch concurrency', schedules: 'Schedules',
-        schedulesSub: '{enabled} enabled / {total} total', logs: 'Logs', logsSub: '{error} errors · {warn} warnings',
-        queueNote: 'Queue depth = pending + active + detached'
+      ov: {
+        title: 'Overview',
+        sub: 'Service state, queue pressure and recent activity; jump straight to the page you need.',
+        quickDownload: 'New download',
+        quickSchedules: 'Schedules',
+        quickLogs: 'Logs',
+        queue: 'Queue',
+        queueSub: '{active} running · {pending} waiting',
+        tasks: 'Tasks',
+        tasksSub: '{done} done · {failed} failed',
+        errors: 'Failures',
+        errorsSub: '{users} account(s) · {json} JSON source(s)',
+        db: 'Library',
+        dbSub: '{lists} lists · {media} media',
+        recent: 'Recent tasks',
+        recentHint: 'Open any row on the download page to act on it',
+        recentEmpty: 'No tasks recorded yet',
+        recentEmptyHint: 'Paste a handle or an x.com link on the download page to start.',
+        goDownload: 'Go to download',
+        viewAll: 'View all',
+        system: 'System',
+        health: 'Service',
+        version: 'Version',
+        root: 'Root path',
+        routines: 'Download concurrency',
+        fetchConcurrent: 'User fetch concurrency',
+        schedules: 'Schedules',
+        schedulesSub: '{enabled} / {total} enabled',
+        logs: 'Logs',
+        logsSub: '{error} errors · {warn} warnings',
+        uptime: 'Queue depth',
+        queueNote: 'pending + running + detached'
       }
     }
   });
+
+  var STYLE_ID = 'view-overview-style';
+  T.injectStyle(STYLE_ID, [
+    '.ov-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }',
+    '.ov-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 16px; align-items: start; }',
+    '.ov-row { cursor: pointer; }',
+    '.ov-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }',
+    '.ov-row.lrow { grid-template-columns: 92px minmax(0, 1fr) 96px; }',
+    '.ov-stats { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }',
+    '.ov-sys .kv__row { padding: 8px 12px; }',
+    '.ov-sys .kv__val { max-width: 62%; }',
+    '.ov-truncate { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }',
+    '.ov-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 26px 16px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); text-align: center; }',
+    '.ov-empty p { margin: 0; }',
+    '.ov-empty__title { color: var(--text-soft); font-size: 13.5px; font-weight: 600; }',
+    '@media (max-width: 900px) { .ov-grid { grid-template-columns: minmax(0, 1fr); } }',
+    '@media (max-width: 720px) { .ov-row.lrow { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "status time" "target target"; } .ov-row .lrow__status { grid-area: status; } .ov-row .lrow__time { grid-area: time; text-align: right; } .ov-row .lrow__target { grid-area: target; } }'
+  ].join('\n'));
 
   var host = null;
   var timer = null;
@@ -42,9 +104,17 @@
     queue: null, logs: null, schedules: null, errors: null
   };
 
-  function t(key, vars) { return T.t('overview.' + key, vars); }
+  function t(key, vars) { return T.t('ov.' + key, vars); }
 
   var esc = T.esc;
+
+  function stat(key, value, sub, tone) {
+    return '<div class="stat"' + (tone ? ' data-tone="' + tone + '"' : '') + '>' +
+      '<span class="stat__label">' + esc(t(key)) + '</span>' +
+      '<span class="stat__value" data-stat="' + key + '">' + esc(value) + '</span>' +
+      '<span class="stat__sub" data-stat-sub="' + key + '">' + esc(sub || '') + '</span>' +
+      '</div>';
+  }
 
   function markup() {
     return '' +
@@ -53,15 +123,18 @@
           '<h1 class="view-title">' + esc(t('title')) + '</h1>' +
           '<p class="view-sub">' + esc(t('sub')) + '</p>' +
         '</div>' +
-        '<div class="view-head__actions">' +
+        '<div class="view-head__actions ov-actions">' +
+          '<button type="button" class="btn btn--primary btn--sm" data-go="/tasks">' + esc(t('quickDownload')) + '</button>' +
+          '<button type="button" class="btn btn--ghost btn--sm" data-go="/schedules">' + esc(t('quickSchedules')) + '</button>' +
+          '<button type="button" class="btn btn--ghost btn--sm" data-go="/logs">' + esc(t('quickLogs')) + '</button>' +
           '<button type="button" class="btn btn--ghost btn--sm" data-role="refresh">' + esc(T.t('common.refresh')) + '</button>' +
         '</div>' +
       '</div>' +
-      '<div class="grid-4" data-role="kpis">' +
-        kpi('queue', '—', '—') + kpi('tasks', '—', '—') +
-        kpi('errors', '—', '—') + kpi('db', '—', '—') +
+      '<div class="statstrip" data-role="stats">' +
+        stat('queue', '—', '') + stat('tasks', '—', '') +
+        stat('errors', '—', '') + stat('db', '—', '') +
       '</div>' +
-      '<div class="grid-2 mt-16">' +
+      '<div class="ov-grid">' +
         '<section class="card">' +
           '<header class="card__head">' +
             '<h3 class="card__title">' + esc(t('recent')) + '</h3>' +
@@ -71,24 +144,21 @@
         '</section>' +
         '<section class="card">' +
           '<header class="card__head"><h3 class="card__title">' + esc(t('system')) + '</h3></header>' +
-          '<div class="stack" data-role="system"></div>' +
+          '<div class="kv ov-sys" data-role="system"></div>' +
         '</section>' +
       '</div>';
   }
 
-  function kpi(key, value, sub) {
-    return '<div class="kpi">' +
-      '<div class="kpi__label">' + esc(t(key)) + '</div>' +
-      '<div class="kpi__value" data-kpi="' + key + '">' + esc(value) + '</div>' +
-      '<div class="kpi__sub" data-kpi-sub="' + key + '">' + esc(sub) + '</div>' +
-      '</div>';
-  }
-
-  function setKpi(key, value, sub) {
-    var valueEl = host.querySelector('[data-kpi="' + key + '"]');
-    var subEl = host.querySelector('[data-kpi-sub="' + key + '"]');
+  function setStat(key, value, sub, tone) {
+    var valueEl = host.querySelector('[data-stat="' + key + '"]');
+    var subEl = host.querySelector('[data-stat-sub="' + key + '"]');
+    var box = valueEl ? valueEl.parentNode : null;
     if (valueEl) valueEl.textContent = value;
     if (subEl) subEl.textContent = sub || '';
+    if (box) {
+      if (tone) box.setAttribute('data-tone', tone);
+      else box.removeAttribute('data-tone');
+    }
   }
 
   var fmtNum = T.fmtNum;
@@ -111,25 +181,28 @@
     if (!host) return;
 
     var q = data.queue || {};
-    var depth = Number(q.queue_depth) || 0;
-    setKpi('queue', fmtNum(depth), t('queueSub', {
+    setStat('queue', fmtNum(q.queue_depth), t('queueSub', {
       active: fmtNum(q.active_jobs), pending: fmtNum(q.pending_jobs)
     }));
 
     var ts = data.taskStats || {};
-    setKpi('tasks', fmtNum(ts.total), t('tasksSub', {
+    var failed = Number(ts.failed) || 0;
+    setStat('tasks', fmtNum(ts.total), t('tasksSub', {
       done: fmtNum(ts.completed), failed: fmtNum(ts.failed)
     }));
 
     var errors = data.errors || { regular: {}, json: [] };
     var regularIds = errors.regular ? Object.keys(errors.regular).length : 0;
     var jsonSources = errors.json ? errors.json.length : 0;
-    setKpi('errors', String(regularIds + jsonSources), t('errorsSub', {
+    setStat('errors', String(regularIds + jsonSources), t('errorsSub', {
       users: fmtNum(regularIds), json: fmtNum(jsonSources)
-    }));
+    }), regularIds + jsonSources > 0 ? 'danger' : '');
 
     var db = data.db || {};
-    setKpi('db', fmtNum(db.users), t('dbSub', { lists: fmtNum(db.lsts), entities: fmtNum(db.user_entities) }));
+    setStat('db', fmtNum(db.users), t('dbSub', {
+      lists: fmtNum(db.lsts),
+      media: fmtNum((db.user_entities || 0) + (db.lst_entities || 0))
+    }));
 
     renderSystem();
     renderRecent();
@@ -142,28 +215,26 @@
     var config = data.config || {};
     var logs = data.logs || {};
     var sched = data.schedules || {};
+    var q = data.queue || {};
     var rows = [
       [t('health'), health.status ? String(health.status) : '—'],
       [t('version'), health.version ? String(health.version) : '—'],
-      [t('root'), config.root_path ? String(config.root_path) : '—'],
+      [t('root'), config.root_path ? String(config.root_path) : '—', true],
       [t('routines'), fmtNum(config.max_download_routine)],
       [t('fetchConcurrent'), fmtNum(config.max_user_fetch_concurrent)],
       [t('schedules'), t('schedulesSub', { enabled: fmtNum(sched.enabled), total: fmtNum(sched.total) })],
-      [t('logs'), t('logsSub', { error: fmtNum(logs.error), warn: fmtNum(logs.warn) })],
-      [t('queue'), t('queueNote')]
+      [t('logs'), t('logsSub', { error: fmtNum(logs.error), warn: fmtNum(logs.warn) })]
     ];
     box.innerHTML = rows.map(function (row) {
-      return '<div class="row-flex" style="justify-content:space-between;gap:16px">' +
-        '<span class="muted small">' + esc(row[0]) + '</span>' +
-        '<span class="mono small" style="text-align:right;word-break:break-all">' + esc(row[1]) + '</span>' +
+      return '<div class="kv__row">' +
+        '<span class="kv__key">' + esc(row[0]) + '</span>' +
+        '<span class="kv__val mono small' + (row[2] ? ' ov-truncate' : '') + '" title="' + esc(row[1]) + '">' + esc(row[1]) + '</span>' +
         '</div>';
     }).join('');
   }
 
-  function statusBadge(status) {
-    var map = { queued: 'badge', running: 'badge badge--info', completed: 'badge badge--ok', failed: 'badge badge--danger', cancelled: 'badge badge--warn' };
-    var text = T.statusLabel ? T.statusLabel(status) : status;
-    return '<span class="' + (map[status] || 'badge') + '">' + esc(text) + '</span>';
+  function statusPill(status) {
+    return '<span class="pill" data-status="' + esc(status) + '">' + esc(T.statusLabel ? T.statusLabel(status) : status) + '</span>';
   }
 
   function taskLabel(task) {
@@ -172,26 +243,46 @@
     return d.screen_name || d.list_id || d.screen_names || d.source_path || task.type || '—';
   }
 
+  function shortTarget(value) {
+    var text = String(value || '');
+    var cut = Math.max(text.lastIndexOf('/'), text.lastIndexOf(String.fromCharCode(92)));
+    if (cut > 0 && cut < text.length - 1 && text.length - cut <= 48) return text.slice(cut + 1);
+    return text;
+  }
+
+  function shortId(id) {
+    var text = String(id || '');
+    var stripped = text.replace(/^task[_-]/, '').replace(/-.*$/, '');
+    return (stripped || text).slice(0, 8);
+  }
+
   function renderRecent() {
     var box = host.querySelector('[data-role="recent"]');
     if (!box) return;
-    var tasks = (T.state.tasks || []).slice(0, 8);
+    var tasks = (T.state.tasks || []).slice(0, 7);
     if (!tasks.length) {
-      box.innerHTML = '<p class="empty">' + esc(t('recentEmpty')) + '</p>';
+      box.innerHTML = '<div class="ov-empty">' +
+        '<p class="ov-empty__title">' + esc(t('recentEmpty')) + '</p>' +
+        '<p class="muted small">' + esc(t('recentEmptyHint')) + '</p>' +
+        '<button type="button" class="btn btn--ghost btn--sm mt-8" data-go="/tasks">' + esc(t('goDownload')) + '</button>' +
+        '</div>';
       return;
     }
-    var rows = tasks.map(function (task) {
+    box.innerHTML = tasks.map(function (task) {
+      var status = task.status || 'queued';
       var label = taskLabel(task);
-      return '<tr>' +
-        '<td>' + statusBadge(task.status || 'queued') + '</td>' +
-        '<td class="table__num small muted">' + esc(T.typeLabel ? T.typeLabel(task.type) : (task.type || '')) + '</td>' +
-        '<td class="table__cell-wrap mono small">' + esc(label) + '</td>' +
-        '<td class="table__num small muted">' + esc(T.fmtTime(task.created_at)) + '</td>' +
-        '</tr>';
+      var created = task.created_at || task.started_at;
+      return '<div class="lrow ov-row" tabindex="0" role="link" data-go="/tasks" data-status="' + esc(status) + '" title="' + esc(t('recentHint')) + '">' +
+        '<span class="lrow__status">' + statusPill(status) + '</span>' +
+        '<span class="lrow__target">' +
+          '<span class="lrow__name" title="' + esc(label) + '">' + esc(shortTarget(label)) + '</span>' +
+          '<span class="lrow__sub"><span>' + esc(T.typeLabel ? T.typeLabel(task.type) : (task.type || '')) + '</span>' +
+            '<span class="sep" aria-hidden="true">·</span>' +
+            '<span class="mono">' + esc(shortId(task.task_id)) + '</span></span>' +
+        '</span>' +
+        '<time class="lrow__time" title="' + esc(T.fmtTime(created)) + '">' + esc(T.fmtTime(created)) + '</time>' +
+        '</div>';
     }).join('');
-    box.innerHTML = '<div class="tablewrap"><table class="table">' +
-      '<thead><tr><th>Status</th><th>Type</th><th>Target</th><th>Created</th></tr></thead>' +
-      '<tbody>' + rows + '</tbody></table></div>';
   }
 
   function refresh() {
@@ -208,6 +299,13 @@
         refreshBtn.disabled = true;
         refresh().then(function () { refreshBtn.disabled = false; });
       }
+    });
+    host.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      var row = event.target.closest('.ov-row');
+      if (!row) return;
+      event.preventDefault();
+      T.navigate('/tasks');
     });
   }
 
