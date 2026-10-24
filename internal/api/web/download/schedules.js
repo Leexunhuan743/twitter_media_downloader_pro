@@ -110,10 +110,20 @@
         disabledToast: '计划已停用',
         deleteConfirm: '确定删除计划「{name}」？该操作会立即改写 schedules.yaml。',
         deleteFailed: '删除失败',
+        notRunningHint: '调度器未运行，定时任务不会自动执行。检查配置后重载配置（或重启 TMD）。',
+        triggerAllConfirm: '确定立即触发全部 {n} 个已启用的计划？',
+        triggerAllNone: '没有已启用的计划可触发。',
+        deleteUndo: '已删除「{name}」',
+        undoDelete: '撤销删除',
+        undone: '计划已恢复（新记录）',
+        rawDirty: 'schedules.yaml 有未保存的修改。',
+        rawDiscard: '放弃 schedules.yaml 的未保存修改？',
+        discardEdit: '计划表单有未保存的修改，确定关闭？',
         rawTitle: '高级：直接编辑 schedules.yaml',
         rawHint: '直接编辑 YAML；保存前会校验 YAML 与每条计划，写入前自动备份。',
         rawMissing: '（文件不存在，保存后创建）',
         rawConfirm: '确定用编辑器内容覆盖 schedules.yaml？写入前会自动备份。',
+        rawOverwritesForm: '编辑器中仍有未保存的计划修改，保存原始 YAML 会覆盖它们。继续？',
         rawSaved: 'YAML 已保存并重载',
         rawSaveFailed: '保存 YAML 失败',
         rawLoadFailed: '读取 YAML 失败',
@@ -141,6 +151,15 @@
         schedulerRunning: 'Scheduler running',
         schedulerStopped: 'Scheduler stopped',
         schedulerUnknown: 'Scheduler state unknown',
+        notRunningHint: 'The scheduler is not running, so schedules will not fire. Reload the config (or restart TMD) after fixing it.',
+        triggerAllConfirm: 'Trigger all {n} enabled schedules now?',
+        triggerAllNone: 'No enabled schedules to trigger.',
+        deleteUndo: 'Deleted "{name}"',
+        undoDelete: 'Undo',
+        undone: 'Schedule restored (as a new record)',
+        rawDirty: 'schedules.yaml has unsaved changes.',
+        rawDiscard: 'Discard the unsaved schedules.yaml edits?',
+        discardEdit: 'The schedule form has unsaved changes. Close anyway?',
         statTotal: 'Total',
         statEnabled: 'Enabled',
         statDisabled: 'Disabled',
@@ -242,6 +261,7 @@
         rawHint: 'Edit the YAML directly. YAML and every entry are validated before saving; a backup is created first.',
         rawMissing: '(file missing, will be created on save)',
         rawConfirm: 'Overwrite schedules.yaml with the editor content? A backup is created first.',
+        rawOverwritesForm: 'The editor still has unsaved schedule changes; saving the raw YAML discards them. Continue?',
         rawSaved: 'YAML saved and reloaded',
         rawSaveFailed: 'Could not save YAML',
         rawLoadFailed: 'Could not read YAML',
@@ -323,6 +343,11 @@
       '#view-schedules .view-head__actions .btn{min-height:40px;min-width:40px}',
       '#view-schedules .sch-preset{min-height:40px}',
       '#view-schedules .sch-raw>summary{min-height:44px}',
+      '#view-schedules .sch-runbanner{display:flex;align-items:center;gap:10px;flex-wrap:wrap}',
+      '#view-schedules .sch-runbanner[hidden]{display:none}',
+      '#view-schedules .sch-undo{display:flex;align-items:center;gap:10px;justify-content:flex-end;border-top:1px solid var(--border);padding:10px 18px}',
+      '#view-schedules .sch-undo[hidden]{display:none}',
+      '#view-schedules .sch-undo [data-role="undo-text"]{margin-right:auto;font-size:11.5px;color:var(--muted)}',
       '}'
     ].join(''));
   }
@@ -345,8 +370,13 @@
     submitting: false,
     rawLoaded: false,
     raw: null,
-    lastTriggerTaskId: ''
+    lastTriggerTaskId: '',
+    undo: null,
+    editorSnapshot: ''
   };
+
+  var undoTimer = null;
+  var fieldValidateTimer = null;
 
   function t(key, vars) { return T.t('schedules.' + key, vars); }
   function esc(value) { return T.esc(value); }
@@ -547,6 +577,10 @@
       '</div>' +
       '<div class="notice notice--danger" data-role="error" hidden></div>' +
       '<div class="notice" data-role="note" hidden></div>' +
+      '<div class="notice notice--warn sch-runbanner" data-role="run-banner" hidden>' +
+        '<span data-role="run-banner-text"></span> ' +
+        '<button type="button" class="btn btn--ghost btn--sm" data-action="reload">' + esc(t('reload')) + '</button>' +
+      '</div>' +
       '<div class="statstrip">' +
         stat(t('statTotal'), 'total') +
         stat(t('statEnabled'), 'enabled') +
@@ -559,6 +593,10 @@
           '<span class="card__meta small" data-role="list-meta"></span>' +
         '</header>' +
         '<div data-role="list"></div>' +
+        '<div class="sch-undo" data-role="undo" hidden>' +
+          '<span data-role="undo-text"></span>' +
+          '<button type="button" class="btn btn--ghost btn--sm" data-action="undo-delete">' + esc(t('undoDelete')) + '</button>' +
+        '</div>' +
       '</section>' +
       '<details class="card sch-raw mt-16" data-role="raw-details">' +
         '<summary>' +
@@ -583,11 +621,17 @@
   function renderRunState() {
     if (!host) return;
     var badge = host.querySelector('[data-role="run-badge"]');
-    if (!badge) return;
+    var banner = host.querySelector('[data-role="run-banner"]');
+    var bannerText = host.querySelector('[data-role="run-banner-text"]');
     var running = state.running;
-    var text = running === true ? t('schedulerRunning') : (running === false ? t('schedulerStopped') : t('schedulerUnknown'));
-    badge.className = 'badge' + (running === true ? ' badge--ok' : (running === false ? ' badge--danger' : ''));
-    badge.textContent = text;
+    if (badge) {
+      var text = running === true ? t('schedulerRunning') : (running === false ? t('schedulerStopped') : t('schedulerUnknown'));
+      badge.className = 'badge' + (running === true ? ' badge--ok' : (running === false ? ' badge--danger' : ''));
+      badge.textContent = text;
+    }
+    // 未运行不等于「一切正常」：明确告诉用户计划不会自动触发，并给重载入口。
+    if (banner) banner.hidden = running !== false;
+    if (bannerText) bannerText.textContent = t('notRunningHint');
   }
 
   function renderStats() {
@@ -725,12 +769,17 @@
       t('colPlan'), t('colTypeTarget'), t('colSchedule'), t('colNext'),
       t('colLast'), t('colFailures'), t('colEnabled'), t('colActions')
     ];
+    var wrap = box.querySelector('.tablewrap');
+    var top = wrap ? wrap.scrollTop : 0;
     box.innerHTML = '<div class="tablewrap"><table class="table sch-table">' +
       '<thead><tr>' + headers.map(function (label) {
         return '<th>' + esc(label) + '</th>';
       }).join('') + '</tr></thead>' +
       '<tbody>' + state.entries.map(renderRow).join('') + '</tbody>' +
       '</table></div>';
+    // SSE 快照与 30s 轮询都会整表重绘；保住用户的滚动位置。
+    var fresh = box.querySelector('.tablewrap');
+    if (fresh && top > 0) fresh.scrollTop = top;
   }
 
   function renderAll() {
@@ -854,6 +903,8 @@
       var message = t('triggerQueued', { id: taskId || '—' });
       showNote(message, 'ok');
       T.toast('success', message);
+      // 立即回读 last_run / 触发状态，不等 30s 轮询或 SSE。
+      refresh();
     }).catch(function (err) {
       var message = (err && err.message) || t('triggerFailed');
       showNote(message, 'danger');
@@ -864,6 +915,11 @@
   }
 
   function triggerAll(btn) {
+    var enabled = state.entries.filter(function (item) {
+      return item && item.entry && item.entry.enabled;
+    }).length;
+    if (!enabled) { showNote(t('triggerAllNone'), 'info'); return; }
+    if (!T.confirm(t('triggerAllConfirm', { n: enabled }))) return;
     setBusy(btn, true);
     state.lastTriggerTaskId = '';
     return T.api.post('/api/v1/schedules/trigger-all').then(function (data) {
@@ -909,14 +965,48 @@
     });
   }
 
+  function renderUndo() {
+    if (!host) return;
+    var bar = host.querySelector('[data-role="undo"]');
+    var text = host.querySelector('[data-role="undo-text"]');
+    if (!bar || !text) return;
+    if (!state.undo) { bar.hidden = true; text.textContent = ''; return; }
+    bar.hidden = false;
+    text.textContent = t('deleteUndo', { name: state.undo.name || state.undo.entry.id || '' });
+  }
+
   function deleteSchedule(id, name) {
+    var found = findStatus(id);
+    var entry = found && found.entry ? found.entry : null;
     if (!T.confirm(t('deleteConfirm', { name: name || id }))) return;
     T.api.del('/api/v1/schedules/' + encodeURIComponent(id)).then(function () {
       T.toast('success', T.t('common.deleted'));
+      if (entry) {
+        state.undo = { entry: entry, name: name || entry.name || id };
+        renderUndo();
+        if (undoTimer) clearTimeout(undoTimer);
+        undoTimer = setTimeout(function () { state.undo = null; renderUndo(); }, 20000);
+      }
       return refresh();
     }).catch(function (err) {
       T.toast('error', (err && err.message) || t('deleteFailed'));
     });
+  }
+
+  function undoDelete(btn) {
+    if (!state.undo) return;
+    var payload = JSON.parse(JSON.stringify(state.undo.entry));
+    delete payload.id;
+    setBusy(btn, true);
+    T.api.post('/api/v1/schedules', payload).then(function () {
+      T.toast('success', t('undone'));
+      state.undo = null;
+      if (undoTimer) { clearTimeout(undoTimer); undoTimer = null; }
+      renderUndo();
+      return refresh();
+    }).catch(function (err) {
+      T.toast('error', (err && err.message) || t('saveFailed'));
+    }).then(function () { setBusy(btn, false); });
   }
 
   /* ---------------- editor ---------------- */
@@ -1048,6 +1138,7 @@
     var dialog = host.querySelector('[data-role="editor"]');
     if (!dialog) return;
     state.editing = status && status.entry && status.entry.id ? status.entry.id : null;
+    state.editingOriginal = status && status.entry ? status.entry : null;
     state.submitting = false;
     fillForm(status && status.entry ? status.entry : defaultEntry());
     clearAllFieldErrors();
@@ -1056,15 +1147,33 @@
     var descEl = host.querySelector('[data-role="editor-desc"]');
     if (descEl) descEl.textContent = state.editing ? t('editDesc', { id: state.editing }) : t('createDesc');
     showEditorError('');
+    state.editorSnapshot = JSON.stringify(collectEntry());
     if (typeof dialog.showModal === 'function') dialog.showModal();
     else dialog.setAttribute('open', '');
   }
 
-  function closeEditor() {
-    if (!host) return;
+  function editorDirty() {
+    if (!host) return false;
+    var dialog = host.querySelector('[data-role="editor"]');
+    if (!dialog || !dialog.open || !formEl()) return false;
+    if (!state.editorSnapshot) return false;
+    try {
+      return JSON.stringify(collectEntry()) !== state.editorSnapshot;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // force=true 用于保存成功后的关闭；其它入口（取消/Esc/遮罩）在脏状态下先确认。
+  function closeEditor(force) {
+    if (!host) return false;
+    if (!force && editorDirty() && !T.confirm(t('discardEdit'))) return false;
     state.editing = null;
+    state.editingOriginal = null;
+    state.editorSnapshot = '';
     var dialog = host.querySelector('[data-role="editor"]');
     if (dialog && dialog.open && typeof dialog.close === 'function') dialog.close();
+    return true;
   }
 
   function splitValues(raw) {
@@ -1107,7 +1216,9 @@
   function validateEntry(entry) {
     clearAllFieldErrors();
     var errors = [];
-    if (!entry.name) {
+    // 服务端不要求名称（renderRow 回退显示 id）；仅当原条目有名称却被清空时拦截，
+    // 避免历史无名条目无法原样保存。
+    if (!entry.name && state.editingOriginal && state.editingOriginal.name) {
       markFieldError('name', t('errName'));
       errors.push(t('errName'));
     }
@@ -1169,7 +1280,7 @@
     }).then(function () {
       T.toast('success', t('saved'));
       state.editing = null;
-      closeEditor();
+      closeEditor(true);
       return refresh();
     }).catch(function (err) {
       if (err && err.handled) return;
@@ -1201,6 +1312,12 @@
     });
   }
 
+  function rawDirty() {
+    if (!host || !state.rawLoaded) return false;
+    var editor = host.querySelector('[data-role="raw-editor"]');
+    return !!(editor && editor.value !== ((state.raw && state.raw.content) || ''));
+  }
+
   function saveRaw() {
     if (!host) return;
     var editor = host.querySelector('[data-role="raw-editor"]');
@@ -1210,6 +1327,8 @@
       T.toast('error', t('rawEmpty'));
       return;
     }
+    // raw 覆盖整个 schedules.yaml：编辑器里有未保存修改时先说清楚后果。
+    if (editorDirty() && !T.confirm(t('rawOverwritesForm'))) return;
     if (!T.confirm(t('rawConfirm'))) return;
     var btn = host.querySelector('[data-action="raw-save"]');
     setBusy(btn, true);
@@ -1251,7 +1370,12 @@
       return;
     }
     if (action === 'close-editor') { closeEditor(); return; }
-    if (action === 'raw-load') { loadRaw(); return; }
+    if (action === 'raw-load') {
+      if (rawDirty() && !T.confirm(t('rawDiscard'))) return;
+      loadRaw();
+      return;
+    }
+    if (action === 'undo-delete') { undoDelete(btn); return; }
     if (action === 'raw-save') { saveRaw(); return; }
     if (action === 'preset') {
       var expr = btn.getAttribute('data-preset') || '';
@@ -1278,12 +1402,24 @@
     }
   }
 
+  function validateEditorField() {
+    if (!host || !formEl() || state.submitting) return;
+    var entry = collectEntry();
+    if (!validSchedule(entry.schedule)) return;
+    T.api.post('/api/v1/schedules/validate', { entry: entry }).then(function (res) {
+      if (!formEl()) return;
+      if (res && res.valid === false) applyServerErrors(res.errors || []);
+    }).catch(function () { /* 输入过程中的校验失败不打扰用户，保存时仍会拦截 */ });
+  }
+
   function onInput(event) {
     var input = event.target;
     if (!input || !input.getAttribute) return;
     if (input.getAttribute('data-field') === 'schedule') {
       clearFieldError('schedule');
       updatePresetState();
+      if (fieldValidateTimer) clearTimeout(fieldValidateTimer);
+      fieldValidateTimer = setTimeout(validateEditorField, 600);
     }
   }
 
@@ -1297,7 +1433,12 @@
   function onDetailToggle(event) {
     var details = event.target;
     if (!details || details.getAttribute('data-role') !== 'raw-details') return;
-    if (details.open && !state.rawLoaded) loadRaw();
+    if (details.open) {
+      if (!state.rawLoaded) loadRaw();
+      return;
+    }
+    // 收起面板等于离开 raw 编辑器：有未保存内容时先确认，取消则重新展开。
+    if (rawDirty() && !T.confirm(t('rawDiscard'))) details.open = true;
   }
 
   function onEditorClose() {
@@ -1338,7 +1479,12 @@
     host.addEventListener('submit', onSubmit);
     host.addEventListener('toggle', onDetailToggle, true);
     var dialog = host.querySelector('[data-role="editor"]');
-    if (dialog) dialog.addEventListener('close', onEditorClose);
+    if (dialog) {
+      dialog.addEventListener('close', onEditorClose);
+      dialog.addEventListener('cancel', function (event) {
+        if (editorDirty() && !T.confirm(t('discardEdit'))) event.preventDefault();
+      });
+    }
   }
 
   function unbind() {
@@ -1380,9 +1526,15 @@
       }, 30000);
       return {
         refresh: refresh,
+        canLeave: function () {
+          if (editorDirty() && !T.confirm(t('discardEdit'))) return false;
+          return !rawDirty() || T.confirm(t('rawDiscard'));
+        },
         destroy: function () {
           if (timer) clearInterval(timer);
           timer = null;
+          if (undoTimer) { clearTimeout(undoTimer); undoTimer = null; }
+          if (fieldValidateTimer) { clearTimeout(fieldValidateTimer); fieldValidateTimer = null; }
           if (offSchedules) offSchedules();
           offSchedules = null;
           if (offTasks) offTasks();

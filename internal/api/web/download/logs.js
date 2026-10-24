@@ -32,12 +32,20 @@
         liveStartTip: '开启后按当前筛选条件跟随最新日志',
         liveOff: '实时未开启', liveConnecting: '实时连接中', liveOn: '实时已连接', liveReconnecting: '实时重连中',
         followLabel: '自动跟随', followTip: '有新日志时保持在最新一行',
-        streamError: '实时连接中断，浏览器正在自动重连…',
+        streamError: '实时连接中断，正在重连…',
+        streamLost: '实时连接已停止（连续重试失败）',
+        reconnect: '重新连接',
+        streamAttempt: '实时连接中断，{n} 秒后重试…',
         needAuth: '需要登录后才能订阅实时日志',
         noSse: '当前浏览器不支持实时推送',
-        export: '导出', exportTip: '导出完整日志文件 tmd2.log', exportStarted: '已开始导出日志文件',
+        export: '导出', exportTip: '导出完整日志文件（不受当前筛选影响）', exportStarted: '已开始导出日志文件',
+        exportDone: '日志文件已导出',
+        exportEmpty: '日志文件为空',
+        exportFailed: '导出失败',
         copyLine: '复制此行', copied: '已复制日志行', copyFailed: '复制失败',
         copyManual: '浏览器拒绝了自动复制，已选中此行，请按 Ctrl+C',
+        openTweet: '在 X 打开推文',
+        newArrived: '{n} 条新日志',
         latest: '跳到最新', prev: '上一页', next: '下一页',
         levelTitle: '级别 {level}'
       }
@@ -68,12 +76,20 @@
         liveStartTip: 'Follow new logs with the current filters',
         liveOff: 'Live off', liveConnecting: 'Live connecting', liveOn: 'Live on', liveReconnecting: 'Live reconnecting',
         followLabel: 'Auto-follow', followTip: 'Stay on the newest line as logs arrive',
-        streamError: 'Live stream disconnected, the browser is reconnecting…',
+        streamError: 'Live stream disconnected, reconnecting…',
+        streamLost: 'Live stream stopped after repeated failures',
+        reconnect: 'Reconnect',
+        streamAttempt: 'Live stream disconnected; retrying in {n}s…',
         needAuth: 'Sign in before subscribing to the live log stream',
         noSse: 'This browser does not support live streaming',
-        export: 'Export', exportTip: 'Download the full tmd2.log file', exportStarted: 'Log download started',
+        export: 'Export', exportTip: 'Download the full log file (filters do not apply)', exportStarted: 'Log download started',
+        exportDone: 'Log file downloaded',
+        exportEmpty: 'The log file is empty',
+        exportFailed: 'Export failed',
         copyLine: 'Copy line', copied: 'Log line copied', copyFailed: 'Copy failed',
         copyManual: 'Automatic copy was blocked; this line is selected — press Ctrl+C',
+        openTweet: 'Open tweet on X',
+        newArrived: '{n} new lines',
         latest: 'Jump to latest', prev: 'Previous', next: 'Next',
         levelTitle: 'Level {level}'
       }
@@ -98,6 +114,11 @@
   var liveLines = 0;
   var follow = true;
   var es = null;
+  var reconnectTimer = null;
+  var reconnectAttempt = 0;
+  var pending = [];
+  var pendingCount = 0;
+  var exporting = false;
 
   function t(key, vars) { return T.t('logs.' + key, vars); }
   var esc = T.esc;
@@ -118,11 +139,13 @@
       '#view-logs .logfilters__domain{flex:0 1 150px;min-width:120px}',
       '#view-logs .logfilters__custom{display:flex;align-items:center;gap:6px;flex-wrap:wrap}',
       '#view-logs .logbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px;color:var(--muted);font-size:12px}',
+      '#view-logs .lognew{position:sticky;top:8px;z-index:3;display:flex;justify-content:center;margin:0 0 8px;pointer-events:none}',
+      '#view-logs .lognew .btn{pointer-events:auto;box-shadow:var(--shadow-md,0 6px 18px rgba(0,0,0,.18))}',
       '#view-logs .logbar__spacer{flex:1 1 auto}',
       '#view-logs .logbar .switch{min-height:32px}',
       '#view-logs .logbox{padding:6px 8px;max-height:64vh;overscroll-behavior:contain}',
       '#view-logs .logbox[data-busy="true"]{opacity:.55}',
-      '#view-logs .logline{display:grid;grid-template-columns:74px 48px minmax(0,1fr) 26px;grid-template-areas:"t l b c";gap:8px;align-items:start;padding:2px 6px;border-radius:6px}',
+      '#view-logs .logline{display:grid;grid-template-columns:74px 48px minmax(0,1fr) auto;grid-template-areas:"t l b c";gap:8px;align-items:start;padding:2px 6px;border-radius:6px}',
       '#view-logs .logline:hover{background:var(--surface-3)}',
       '#view-logs .logline__time{grid-area:t;color:var(--muted);font-size:11.5px;line-height:1.75;font-variant-numeric:tabular-nums;white-space:nowrap}',
       '#view-logs .logline__lv{grid-area:l;justify-self:start;padding:0 6px;font-size:10.5px;font-weight:700;letter-spacing:.03em;line-height:1.7;border-radius:5px;font-family:inherit}',
@@ -135,8 +158,11 @@
       '#view-logs .logline[data-level="warn"] .logline__lv{background:var(--warn-soft);color:var(--warn)}',
       '#view-logs .logline[data-level="info"] .logline__lv{background:var(--info-soft);color:var(--info)}',
       '#view-logs .logline[data-level="debug"] .logline__lv{background:var(--surface-3);color:var(--muted)}',
-      '#view-logs .logline__copy{grid-area:c;align-self:start;padding:2px;opacity:0;transition:opacity .12s ease}',
+      '#view-logs .logline__actions{grid-area:c;display:flex;gap:2px;justify-content:flex-end;align-self:start}',
+      '#view-logs .logline__copy{padding:2px;opacity:0;transition:opacity .12s ease}',
+      '#view-logs .logline__copyid{font-size:10px;font-weight:700;letter-spacing:.2px;color:var(--muted);border:1px solid var(--border);border-radius:5px;padding:1px 4px}',
       '#view-logs .logline:hover .logline__copy,#view-logs .logline:focus-within .logline__copy{opacity:1}',
+      '#view-logs .logline:hover .logline__actions,#view-logs .logline:focus-within .logline__actions{opacity:1}',
       '#view-logs .logline__copy svg{width:12px;height:12px}',
       '#view-logs .empty__actions .btn{min-height:36px}',
       '#view-logs .notice .log-inline-btn{margin-left:10px;vertical-align:middle}',
@@ -153,8 +179,9 @@
       '#view-logs .logfilters .select{flex:1 1 auto;min-width:0}',
       '#view-logs .logfilters__custom{flex:1 1 100%}',
       '#view-logs .logfilters__custom .input{flex:1 1 100%;min-width:0}',
-      '#view-logs .logline{grid-template-columns:auto auto minmax(0,1fr) 40px;grid-template-areas:"t l . c" "b b b b";row-gap:1px;padding:5px 6px}',
+      '#view-logs .logline{grid-template-columns:auto auto minmax(0,1fr) auto;grid-template-areas:"t l . c" "b b b b";row-gap:1px;padding:5px 6px}',
       '#view-logs .logline__body{grid-area:b}',
+      '#view-logs .logline__actions{align-self:center}',
       '#view-logs .logline__copy{width:40px;height:40px;padding:11px}',
       '#view-logs .logline__copy svg{width:14px;height:14px}',
       '#view-logs .logbox{padding:4px;max-height:58vh}',
@@ -225,8 +252,20 @@
       row.msg = prefix ? body.slice(prefix[0].length) : text;
     }
 
-    var domainMatch = /^\[([a-zA-Z0-9_-]+)\]/.exec(row.msg.trim());
+    // 来源域在消息开头；纯时间前缀（无 msg= 的旧格式）先把时间与级别剥掉再认。
+    var head = row.msg.trim();
+    var domainMatch = /^\[([a-zA-Z0-9_-]+)\]/.exec(head);
+    if (!domainMatch) {
+      var legacy = /^(?:\d{4}-\d{2}-\d{2}[T ]\S+\s+)?(?:DEBU|INFO|WARN|ERRO|FATA)?\s*\[([a-zA-Z0-9_-]+)\]/.exec(head);
+      if (legacy) domainMatch = legacy;
+    }
     if (domainMatch) row.domain = domainMatch[1].toLowerCase();
+
+    // 下载行常带 16-20 位推文 ID（路径或 ID 字段），供「复制 ID」直达浏览器打开。
+    if (row.domain === 'download') {
+      var idMatch = /(?:^|[\s\\/=])_(\d{16,20})(?=$|[\s\\.]|"|\))/.exec(row.msg) || /(?:^|[\s"=(])?(\d{16,20})(?=$|[\s".,)\]])/.exec(row.fields || '');
+      if (idMatch) row.tweetId = idMatch[1];
+    }
     if (!row.level) row.level = 'info';
     return row;
   }
@@ -336,12 +375,26 @@
     return true;
   }
 
-  // 每个级别一个 pageSize=1 的请求，用 total 得到当前关键词 / 来源 / 时间范围下的条数。
+  // 无筛选时一次 /logs/stats 拿全量计数；有筛选时按四个级别各查一次 total，
+  // 级别覆盖全部日志（error/warn/info/debug），all 由四者相加，不再额外发第五个请求。
   function loadCounts(seq, base) {
-    var targets = [['all', ''], ['debug', 'debug'], ['info', 'info'], ['warn', 'warn'], ['error', 'error']];
-    return Promise.all(targets.map(function (pair) {
-      var params = mergeParams(base, { page: 1, pageSize: 1 });
-      if (pair[1]) params.level = pair[1];
+    var filtered = !!(filters.q || filters.domain || filters.range);
+    if (!filtered) {
+      return T.api.get('/api/v1/logs/stats').then(function (res) {
+        if (seq !== reqSeq || !host) return;
+        view.stats = {
+          all: num(res && res.total, 0),
+          debug: num(res && res.debug, 0),
+          info: num(res && res.info, 0),
+          warn: num(res && res.warn, 0),
+          error: num(res && res.error, 0)
+        };
+        renderStats();
+      }, function () { /* 计数失败不影响日志本身 */ });
+    }
+    var levels = ['debug', 'info', 'warn', 'error'];
+    return Promise.all(levels.map(function (level) {
+      var params = mergeParams(base, { page: 1, pageSize: 1, level: level });
       return T.api.get('/api/v1/logs', params).then(function (res) {
         return num(res && res.total, 0);
       }, function () {
@@ -349,7 +402,10 @@
       });
     })).then(function (totals) {
       if (seq !== reqSeq || !host) return;
-      view.stats = { all: totals[0], debug: totals[1], info: totals[2], warn: totals[3], error: totals[4] };
+      view.stats = {
+        all: totals[0] + totals[1] + totals[2] + totals[3],
+        debug: totals[0], info: totals[1], warn: totals[2], error: totals[3]
+      };
       renderStats();
     });
   }
@@ -438,6 +494,9 @@
         '</div>' +
         '<div class="notice notice--danger" data-role="error" hidden></div>' +
         '<div class="notice notice--warn" data-role="stream" hidden></div>' +
+        '<div class="lognew" data-role="newbar" hidden>' +
+          '<button type="button" class="btn btn--primary btn--sm" data-role="show-new" data-i18n-aria="logs.newArrived" aria-label=""></button>' +
+        '</div>' +
         '<div class="empty" data-role="empty" hidden></div>' +
         '<div class="logbox" data-role="logbox" hidden></div>' +
         '<div class="skeleton" data-role="loading" style="height:220px" hidden></div>' +
@@ -515,13 +574,17 @@
     if (countEl) countEl.textContent = live ? t('liveCount', { n: String(liveLines) }) : '';
   }
 
-  function setStreamNotice(message) {
+  function setStreamNotice(message, terminal) {
     if (!host) return;
     var box = host.querySelector('[data-role="stream"]');
     if (!box) return;
     if (!message) { box.hidden = true; box.textContent = ''; return; }
     box.hidden = false;
-    box.textContent = message;
+    if (terminal) {
+      box.innerHTML = esc(message) + ' <button type="button" class="btn btn--ghost btn--sm" data-role="stream-retry">' + esc(t('reconnect')) + '</button>';
+    } else {
+      box.textContent = message;
+    }
   }
 
   function emptyMarkup() {
@@ -597,10 +660,28 @@
     copy.setAttribute('aria-label', t('copyLine'));
     copy.innerHTML = ICONS.copy;
 
+    // 操作区固定占网格 c 列：ID 按钮与复制按钮并排，避免两个 grid-area:c 元素重叠。
+    var actions = document.createElement('span');
+    actions.className = 'logline__actions';
+    if (row.tweetId) {
+      // 直接给出推文链接比复制 ID 更贴近「去浏览器打开」的场景；中键/Ctrl+点击可自行取 URL。
+      var idLink = document.createElement('a');
+      idLink.className = 'copy-btn logline__copy logline__copyid';
+      idLink.href = 'https://x.com/i/web/status/' + encodeURIComponent(row.tweetId);
+      idLink.target = '_blank';
+      idLink.rel = 'noopener noreferrer';
+      idLink.setAttribute('data-tweet-id', row.tweetId);
+      idLink.textContent = 'ID';
+      idLink.title = t('openTweet') + ' · ' + row.tweetId;
+      idLink.setAttribute('aria-label', t('openTweet') + ' · ' + row.tweetId);
+      actions.appendChild(idLink);
+    }
+    actions.appendChild(copy);
+
     el.appendChild(time);
     el.appendChild(badge);
     el.appendChild(body);
-    el.appendChild(copy);
+    el.appendChild(actions);
     return el;
   }
 
@@ -643,6 +724,7 @@
     renderMeta();
     renderPager();
     renderLive();
+    renderPending();
     if (!cache.loaded) {
       setStatus('loading');
       return;
@@ -654,6 +736,38 @@
     setStatus('ok');
     renderLines();
     renderDomains();
+  }
+
+  // 关闭跟随后新日志留在缓冲区，用户继续读旧内容；只有点「N 条新日志」才合并。
+  function renderPending() {
+    if (!host) return;
+    var bar = host.querySelector('[data-role="newbar"]');
+    var btn = host.querySelector('[data-role="show-new"]');
+    if (!bar || !btn) return;
+    if (pendingCount <= 0) {
+      bar.hidden = true;
+      btn.textContent = '';
+      return;
+    }
+    bar.hidden = false;
+    btn.textContent = t('newArrived', { n: String(pendingCount) });
+  }
+
+  function flushPending() {
+    if (!pending.length) return;
+    // 新行属于第 1 页；从第 2 页点「N 条新日志」时先回到第 1 页。
+    if (view.page !== 1) {
+      view.page = 1;
+      renderPager();
+    }
+    view.rows = pending.concat(view.rows).slice(0, Math.max(1, filters.pageSize));
+    pending = [];
+    pendingCount = 0;
+    renderPending();
+    renderLines();
+    renderMeta();
+    var box = host && host.querySelector('[data-role="logbox"]');
+    if (box) box.scrollTop = 0;
   }
 
   /* ---------------- data ---------------- */
@@ -729,9 +843,14 @@
 
   function stopLive(silent) {
     closeStream();
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    reconnectAttempt = 0;
     live = false;
     liveState = 'off';
     liveLines = 0;
+    pending = [];
+    pendingCount = 0;
+    renderPending();
     setStreamNotice(null);
     if (!silent) {
       renderLive();
@@ -764,9 +883,15 @@
       parsed.forEach(function (row) {
         view.stats[row.level] = num(view.stats[row.level], 0) + 1;
       });
-      if (view.page === 1) {
+      if (follow && view.page === 1) {
         view.rows = parsed.concat(view.rows).slice(0, MAX_CACHE);
         view.rows = view.rows.slice(0, filters.pageSize);
+      } else {
+        // 关闭跟随或正在看第 2 页以后：新行只进缓冲区，不打断当前阅读位置。
+        pending = parsed.concat(pending);
+        if (pending.length > 500) pending = pending.slice(0, 500);
+        pendingCount += parsed.length;
+        renderPending();
       }
     }
     scheduleRender();
@@ -783,12 +908,21 @@
       return;
     }
     closeStream();
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    reconnectAttempt = 0;
     live = true;
     liveState = 'connecting';
     liveLines = 0;
+    pending = [];
+    pendingCount = 0;
     setStreamNotice(null);
+    renderPending();
     renderLive();
     renderMeta();
+    openStream();
+  }
+
+  function openStream() {
     try {
       var params = streamParams();
       cache.streamKey = JSON.stringify(params);
@@ -796,6 +930,7 @@
       es.addEventListener('log', onLogEvent);
       es.addEventListener('open', function () {
         if (!live || !host) return;
+        reconnectAttempt = 0;
         liveState = 'on';
         setStreamNotice(null);
         renderLive();
@@ -803,8 +938,8 @@
       es.onerror = function () {
         if (!live || !host) return;
         liveState = 'reconnecting';
-        setStreamNotice(t('streamError'));
         renderLive();
+        scheduleReconnect();
       };
     } catch (err) {
       live = false;
@@ -815,26 +950,82 @@
     }
   }
 
+  // 断线后按指数退避重建 EventSource：EventSource 自身的自动重连不会带上续期后的
+  // token，会话过期时它只会反复 401，所以这里主动 close 再带新 token 重开。
+  function scheduleReconnect() {
+    if (reconnectTimer) return;
+    reconnectAttempt += 1;
+    if (reconnectAttempt > 8) {
+      liveState = 'lost';
+      closeStream();
+      setStreamNotice(t('streamLost'), true);
+      renderLive();
+      return;
+    }
+    var delay = Math.min(2000 * Math.pow(1.6, reconnectAttempt - 1), 30000);
+    setStreamNotice(t('streamAttempt', { n: String(Math.round(delay / 1000)) }));
+    reconnectTimer = setTimeout(function () {
+      reconnectTimer = null;
+      if (!live || !host) return;
+      closeStream();
+      var retry = (T.state && T.state.auth === 'required' && T.token())
+        ? T.api.post('/api/v1/auth/refresh').catch(function () { return null; })
+        : Promise.resolve(null);
+      retry.then(function () { if (live && host) openStream(); });
+    }, delay);
+  }
+
   function toggleLive() {
     if (live) stopLive(false);
     else startLive();
   }
 
-  function exportLogs() {
-    if (!host) return;
+  // 导出走带 Authorization 的 fetch：把 JWT 拼进 URL 会留在历史记录与代理日志里。
+  function exportLogs(btn) {
+    if (!host || exporting) return;
     if (T.state && T.state.auth === 'required' && !T.token()) {
       T.toast('error', t('needAuth'));
       return;
     }
-    var link = document.createElement('a');
-    link.href = T.streamUrl('/api/v1/logs/export', {});
-    link.setAttribute('download', '');
-    link.rel = 'noopener';
-    link.style.display = 'none';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    T.toast('info', t('exportStarted'));
+    exporting = true;
+    if (btn) btn.disabled = true;
+
+    function download(attempt) {
+      var headers = {};
+      var token = T.token();
+      if (token) headers.Authorization = 'Bearer ' + token;
+      return fetch('/api/v1/logs/export', { headers: headers }).then(function (res) {
+        if (res.status === 401 && attempt === 0) {
+          return T.api.post('/api/v1/auth/refresh').then(function () { return download(1); });
+        }
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        var disposition = res.headers.get('Content-Disposition') || '';
+        return res.blob().then(function (blob) {
+          if (!blob.size) { T.toast('info', t('exportEmpty')); return; }
+          var match = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(disposition);
+          var name = match ? decodeURIComponent(match[1].replace(/"/g, '')) : 'tmd.log';
+          var url = URL.createObjectURL(blob);
+          var link = document.createElement('a');
+          link.href = url;
+          link.download = name;
+          link.rel = 'noopener';
+          link.style.display = 'none';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+          T.toast('success', t('exportDone'));
+        });
+      });
+    }
+
+    download(0).catch(function (err) {
+      if (err && err.status === 401) return;
+      T.toast('error', t('exportFailed') + (err && err.message ? ' · ' + err.message : ''));
+    }).then(function () {
+      exporting = false;
+      if (btn) btn.disabled = false;
+    });
   }
 
   /* ---------------- copy ---------------- */
@@ -908,9 +1099,12 @@
       reload();
     } else if (role === 'follow') {
       follow = !!target.checked;
-      if (follow && view.page === 1) {
-        var box = host.querySelector('[data-role="logbox"]');
-        if (box) box.scrollTop = 0;
+      if (follow) {
+        flushPending();
+        if (view.page === 1) {
+          var box = host.querySelector('[data-role="logbox"]');
+          if (box) box.scrollTop = 0;
+        }
       }
     }
   }
@@ -946,6 +1140,11 @@
       setLevel(chipEl.getAttribute('data-level'));
       return;
     }
+    var copyIdEl = target.closest('[data-copy-id]');
+    if (copyIdEl && host.contains(copyIdEl)) {
+      copyTweetId(num(copyIdEl.getAttribute('data-copy-id'), -1), copyIdEl);
+      return;
+    }
     var copyEl = target.closest('[data-copy]');
     if (copyEl && host.contains(copyEl)) {
       copyLine(num(copyEl.getAttribute('data-copy'), -1), copyEl);
@@ -961,7 +1160,12 @@
       if (!live) startLive();
       else if (role === 'live') stopLive(false);
     } else if (role === 'export') {
-      exportLogs();
+      exportLogs(btn);
+    } else if (role === 'show-new') {
+      flushPending();
+    } else if (role === 'stream-retry') {
+      reconnectAttempt = 0;
+      startLive();
     } else if (role === 'prev') {
       if (num(view.page, 1) <= 1) return;
       filters.page = num(view.page, 1) - 1;

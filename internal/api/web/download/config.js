@@ -20,8 +20,34 @@
         },
         nav: {
           aria: '设置分区',
+          session: '当前会话',
           runtime: '运行信息',
           danger: '危险操作'
+        },
+        session: {
+          title: '当前会话',
+          desc: 'Web 控制台的登录状态。密钥来自 conf.yaml 的 api_key；会话在过期前可以主动续期。',
+          off: '认证未启用',
+          offDesc: 'conf.yaml 未设置 api_key，本机请求直接放行。设置 api_key 后这里会要求登录。',
+          on: '已登录',
+          required: '需要登录',
+          expired: '会话已过期',
+          expiresIn: '剩余 {n}',
+          noExpiry: '无到期时间',
+          keyPlaceholder: '输入 API Key（api_key）',
+          login: '登录并保存',
+          loginOk: '已登录',
+          loginRequired: '先输入 API Key',
+          loginFailed: '登录失败：{msg}',
+          test: '测试连接',
+          testing: '测试中…',
+          testOk: '连接正常，会话有效',
+          refresh: '刷新会话',
+          refreshOk: '会话已续期',
+          refreshFailed: '续期失败：{msg}',
+          clear: '清除会话',
+          clearWarn: '清除本机会话？之后需要重新输入 API Key。',
+          cleared: '会话已清除'
         },
         group: {
           basic: { title: '基础', desc: '存储位置；重启后生效。' },
@@ -44,6 +70,7 @@
           defaultValue: '默认 {value}',
           maskedPlaceholder: '已设置 · 留空则保留',
           invalidNumber: '请填 {min}–{max} 之间的整数',
+          maskedInput: '检测到脱敏占位文本，请留空以保留原值',
           save: '保存配置',
           saving: '保存中…',
           discard: '放弃修改',
@@ -116,6 +143,7 @@
           summary: '高级：直接编辑 conf.yaml',
           title: 'conf.yaml 原始内容',
           secret: '原始内容包含明文密钥（api_key、Cookie），请勿分享或截图外传。',
+        overwriteHint: '保存原始配置会覆盖上方表单里未保存的修改，以这里的内容为准。',
           save: '保存 YAML',
           reload: '重新加载',
           loaded: '已加载 {path}',
@@ -200,8 +228,34 @@
         },
         nav: {
           aria: 'Settings sections',
+          session: 'Session',
           runtime: 'Runtime',
           danger: 'Danger zone'
+        },
+        session: {
+          title: 'Session',
+          desc: 'Web console sign-in state. The key is conf.yaml api_key; sessions can be renewed before they expire.',
+          off: 'Auth disabled',
+          offDesc: 'No api_key in conf.yaml, so local requests are allowed. Set api_key and this card asks for a sign-in.',
+          on: 'Signed in',
+          required: 'Sign-in required',
+          expired: 'Session expired',
+          expiresIn: '{n} left',
+          noExpiry: 'No expiry',
+          keyPlaceholder: 'API Key (api_key)',
+          login: 'Sign in and save',
+          loginOk: 'Signed in',
+          loginRequired: 'Enter the API key first',
+          loginFailed: 'Sign-in failed: {msg}',
+          test: 'Test connection',
+          testing: 'Testing…',
+          testOk: 'Connection OK, session valid',
+          refresh: 'Renew session',
+          refreshOk: 'Session renewed',
+          refreshFailed: 'Renewal failed: {msg}',
+          clear: 'Clear session',
+          clearWarn: 'Clear the local session? You will need the API key again.',
+          cleared: 'Session cleared'
         },
         group: {
           basic: { title: 'Basic', desc: 'Storage location; applies after a restart.' },
@@ -224,6 +278,7 @@
           defaultValue: 'default {value}',
           maskedPlaceholder: 'set · leave empty to keep',
           invalidNumber: 'Enter an integer between {min} and {max}',
+          maskedInput: 'Masked placeholder detected — leave empty to keep the current value',
           save: 'Save config',
           saving: 'Saving…',
           discard: 'Discard',
@@ -296,6 +351,7 @@
           summary: 'Advanced: edit conf.yaml directly',
           title: 'Raw conf.yaml',
           secret: 'The raw file contains plain-text secrets (api_key, cookies). Do not share it.',
+        overwriteHint: 'Saving the raw config overwrites unsaved edits in the form above; the raw content wins.',
           save: 'Save YAML',
           reload: 'Reload',
           loaded: 'loaded {path}',
@@ -534,6 +590,29 @@
       '</nav>';
   }
 
+  function sessionCardMarkup() {
+    return '<section class="card" id="sys-session" data-section="session" aria-labelledby="sys-session-title">' +
+        '<header class="card__head">' +
+          '<h2 class="card__title" id="sys-session-title">' + esc(t('session.title')) + '</h2>' +
+          '<span class="badge" data-role="session-badge"></span>' +
+        '</header>' +
+        '<p class="small muted" data-role="session-desc"></p>' +
+        '<div class="row-flex mt-12" data-role="session-form">' +
+          '<input class="input" type="password" id="sys-session-key" data-role="session-key"' +
+            ' autocomplete="current-password" spellcheck="false"' +
+            ' placeholder="' + esc(t('session.keyPlaceholder')) + '"' +
+            ' aria-label="' + esc(t('session.keyPlaceholder')) + '">' +
+          '<button type="button" class="btn btn--primary" data-action="session-login">' + esc(t('session.login')) + '</button>' +
+        '</div>' +
+        '<div class="row-flex mt-12">' +
+          '<button type="button" class="btn btn--ghost btn--sm" data-action="session-test">' + esc(t('session.test')) + '</button>' +
+          '<button type="button" class="btn btn--ghost btn--sm" data-action="session-refresh">' + esc(t('session.refresh')) + '</button>' +
+          '<button type="button" class="btn btn--ghost btn--sm btn--danger" data-action="session-clear">' + esc(t('session.clear')) + '</button>' +
+        '</div>' +
+        '<div class="mt-12" data-role="session-msg"></div>' +
+      '</section>';
+  }
+
   function runtimeCardMarkup() {
     return '<section class="card" id="sys-runtime" data-section="runtime" aria-labelledby="sys-runtime-title">' +
         '<header class="card__head">' +
@@ -608,6 +687,7 @@
           '<div data-role="groups"></div>' +
           '<div class="mt-12" data-role="fields-msg"></div>' +
         '</section>' +
+        sessionCardMarkup() +
         runtimeCardMarkup() +
         dangerCardMarkup() +
       '</div>' +
@@ -826,7 +906,7 @@
     if (!holder) return;
     var groups = groupFields(S.fields).map(function (group) { return group.id; });
     if (!groups.length && !S.fieldsError) groups = GROUPS.slice();
-    var items = groups.concat(['runtime', 'danger']);
+    var items = groups.concat(['session', 'runtime', 'danger']);
     holder.innerHTML = items.map(function (id) {
       return '<a class="sys-nav__item" href="#sys-' + esc(id) + '" data-nav-target="' + esc(id) + '">' +
         esc(navLabel(id)) + '</a>';
@@ -865,6 +945,10 @@
         if (sensitive) return;
         payload[field.name] = '__CLEAR__';
         count += 1;
+        return;
+      }
+      if (sensitive && isMasked(value)) {
+        errors.push({ name: field.name, message: t('fields.maskedInput') });
         return;
       }
       var range = NUM_RANGE[field.name];
@@ -1025,13 +1109,26 @@
       var apiKeyChanged = Object.prototype.hasOwnProperty.call(res.payload, 'api_key');
       setMsg('fields-msg', t(apiKeyChanged ? 'fields.savedApiKey' : 'fields.savedRestart'), apiKeyChanged ? 'ok' : 'warn');
       T.toast('success', t('fields.saved'));
+      // api_key 已轮换，浏览器里存的旧 JWT 不再可信：清掉本地会话，登录框接管下一步。
+      if (apiKeyChanged && typeof T.logout === 'function') T.logout();
       loadRuntime();
       T.reload();
     }, function (err) {
       busy.fields = false;
       updateDirtyState();
-      setMsg('fields-msg', t('fields.saveFailed', { msg: errText(err) }), 'danger');
-      if (!err || err.status !== 401) T.toast('error', errText(err));
+      var message = errText(err);
+      setMsg('fields-msg', t('fields.saveFailed', { msg: message }), 'danger');
+      // 服务端错误若点名了字段，就地标红并滚动过去；没有匹配时不猜字段，只保留消息条。
+      var lower = message.toLowerCase();
+      var hit = null;
+      S.fields.forEach(function (field) {
+        if (!hit && lower.indexOf(String(field.name).toLowerCase()) !== -1) hit = field.name;
+      });
+      if (hit) {
+        setFieldError(hit, message);
+        scrollToField(hit);
+      }
+      if (!err || err.status !== 401) T.toast('error', message);
     });
   }
 
@@ -1059,6 +1156,7 @@
       '<div class="sys-details__body">' +
         '<p class="small muted mono" data-role="raw-meta"></p>' +
         '<p class="small muted mt-8">' + esc(t('raw.secret')) + '</p>' +
+        '<p class="small muted">' + esc(t('raw.overwriteHint')) + '</p>' +
         '<textarea class="textarea textarea--code mt-8" rows="14" spellcheck="false" autocomplete="off" data-role="raw-editor" aria-label="' + esc(t('raw.title')) + '" disabled></textarea>' +
         '<div class="mt-12" data-role="raw-msg"></div>' +
         '<div class="form-actions">' +
@@ -1147,12 +1245,12 @@
       (existing ? ' data-source-index="' + esc(row.index) + '"' : '') + '>' +
       '<td class="sys-cookie-idx" data-label="' + esc(t('cookies.headerIndex')) + '">' + (index + 1) + '</td>' +
       '<td data-label="' + esc(t('cookies.headerToken')) + '">' +
-        '<input class="input mono" type="text" data-cookie="auth_token" value="' + esc(row.token || '') + '"' +
+        '<input class="input mono" type="password" autocomplete="off" data-cookie="auth_token" value="' + esc(row.token || '') + '"' +
           ' placeholder="' + esc(tokenPlaceholder) + '" autocomplete="off" spellcheck="false"' +
           ' aria-label="' + esc(t('cookies.headerToken') + ' #' + (index + 1)) + '">' +
       '</td>' +
       '<td data-label="' + esc(t('cookies.headerCt0')) + '">' +
-        '<input class="input mono" type="text" data-cookie="ct0" value="' + esc(row.ct0 || '') + '"' +
+        '<input class="input mono" type="password" autocomplete="off" data-cookie="ct0" value="' + esc(row.ct0 || '') + '"' +
           ' placeholder="' + esc(ct0Placeholder) + '" autocomplete="off" spellcheck="false"' +
           ' aria-label="' + esc(t('cookies.headerCt0') + ' #' + (index + 1)) + '">' +
       '</td>' +
@@ -1435,6 +1533,102 @@
     });
   }
 
+  /* ---------------- session ---------------- */
+
+  function sessionExpiryText(exp) {
+    if (!exp) return t('session.noExpiry');
+    var left = exp - Date.now();
+    if (left <= 0) return t('session.expired');
+    var mins = Math.ceil(left / 60000);
+    var text = mins >= 60
+      ? Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm'
+      : mins + 'm';
+    return t('session.expiresIn', { n: text });
+  }
+
+  function renderSession() {
+    if (!host) return;
+    var badge = host.querySelector('[data-role="session-badge"]');
+    var desc = host.querySelector('[data-role="session-desc"]');
+    var form = host.querySelector('[data-role="session-form"]');
+    var st = T.state || {};
+    var exp = Number(st.tokenExp) || 0;
+    var expired = exp > 0 && exp <= Date.now();
+    var auth = st.auth || 'off';
+    var label;
+    var kind;
+    if (auth === 'off') { label = t('session.off'); kind = 'ok'; }
+    else if (expired) { label = t('session.expired'); kind = 'warn'; }
+    else if (auth === 'on') { label = t('session.on'); kind = 'ok'; }
+    else { label = t('session.required'); kind = 'warn'; }
+    if (badge) {
+      badge.textContent = label;
+      badge.className = 'badge badge--' + kind;
+    }
+    if (desc) {
+      var base = auth === 'off' ? t('session.offDesc') : t('session.desc');
+      desc.textContent = auth === 'off' ? base : base + ' · ' + sessionExpiryText(exp);
+    }
+    if (form) form.hidden = auth === 'on' && !expired;
+  }
+
+  function sessionLogin(button) {
+    if (!host || button.disabled) return;
+    var input = host.querySelector('[data-role="session-key"]');
+    var key = input ? String(input.value).trim() : '';
+    if (!key) { setMsg('session-msg', t('session.loginRequired'), 'warn'); if (input) input.focus(); return; }
+    button.disabled = true;
+    T.login(key).then(function () {
+      if (input) input.value = '';
+      setMsg('session-msg', t('session.loginOk'), 'ok');
+      T.toast('success', t('session.loginOk'));
+      renderSession();
+    }, function (err) {
+      setMsg('session-msg', t('session.loginFailed', { msg: errText(err) }), 'danger');
+    }).then(function () { button.disabled = false; });
+  }
+
+  function sessionTest(button) {
+    if (!host || button.disabled) return;
+    var label = button.textContent;
+    button.disabled = true;
+    button.textContent = t('session.testing');
+    T.api.get('/api/v1/tasks', { page_size: 1 }).then(function () {
+      setMsg('session-msg', t('session.testOk'), 'ok');
+      renderSession();
+    }, function (err) {
+      setMsg('session-msg', t('session.loginFailed', { msg: errText(err) }), 'danger');
+    }).then(function () {
+      button.disabled = false;
+      button.textContent = label;
+    });
+  }
+
+  function sessionRefresh(button) {
+    if (!host || button.disabled) return;
+    button.disabled = true;
+    T.refreshToken().then(function (ok) {
+      if (ok) {
+        setMsg('session-msg', t('session.refreshOk'), 'ok');
+        T.toast('success', t('session.refreshOk'));
+      } else {
+        setMsg('session-msg', t('session.refreshFailed', { msg: t('session.expired') }), 'danger');
+      }
+      renderSession();
+    }, function (err) {
+      setMsg('session-msg', t('session.refreshFailed', { msg: errText(err) }), 'danger');
+    }).then(function () { button.disabled = false; });
+  }
+
+  function sessionClear(button) {
+    if (!host || button.disabled) return;
+    if (!T.confirm(t('session.clearWarn'))) return;
+    T.logout();
+    setMsg('session-msg', t('session.cleared'), 'warn');
+    T.toast('info', t('session.cleared'));
+    renderSession();
+  }
+
   /* ---------------- runtime info ---------------- */
 
   function statItem(key, label, value, sub) {
@@ -1565,6 +1759,8 @@
         var buttons = host.querySelectorAll('[data-action="clear-errors"], [data-action="shutdown"]');
         Array.prototype.forEach.call(buttons, function (item) { item.disabled = true; });
       }
+      // 服务端进程已退出：整页进入停机态，停止轮询与 SSE，避免继续打已关闭的端口。
+      if (typeof T.markServerStopped === 'function') T.markServerStopped();
     }, function (err) {
       if (button) button.disabled = false;
       if (!timer) timer = setInterval(loadRuntime, 30000);
@@ -1586,7 +1782,9 @@
       loadCookies(),
       loadCookiesRaw(),
       loadRuntime()
-    ]);
+    ]).then(function () {
+      renderSession();
+    });
   }
 
   /* ---------------- scroll spy ---------------- */
@@ -1662,6 +1860,10 @@
       return;
     }
     if (action === 'cookies-raw-save') { saveCookiesRaw(); return; }
+    if (action === 'session-login') { sessionLogin(button); return; }
+    if (action === 'session-test') { sessionTest(button); return; }
+    if (action === 'session-refresh') { sessionRefresh(button); return; }
+    if (action === 'session-clear') { sessionClear(button); return; }
     if (action === 'clear-errors') { clearErrors(button); return; }
     if (action === 'shutdown') { shutdownServer(button); return; }
   }
@@ -1736,6 +1938,7 @@
 
       return {
         refresh: function () { return refresh(); },
+        canLeave: function () { return !isDirty() || T.confirm(t('discard')); },
         destroy: function () {
           if (timer) { clearInterval(timer); timer = null; }
           window.removeEventListener('scroll', onScroll);

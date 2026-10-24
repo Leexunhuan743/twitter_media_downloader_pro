@@ -11,12 +11,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	log "github.com/sirupsen/logrus"
 
+	"github.com/unkmonster/tmd/internal/database"
 	"github.com/unkmonster/tmd/internal/downloading"
 	"github.com/unkmonster/tmd/internal/logging"
 	"github.com/unkmonster/tmd/internal/path"
@@ -1176,6 +1178,7 @@ func (s *Server) handleErrors(w http.ResponseWriter, r *http.Request) {
 	regDumper := downloading.NewDumper()
 	_ = regDumper.Load(storePath.ErrorsPath)
 	resp.Regular = regDumper.Summary()
+	resp.RegularDetails = s.errorEntityDetails(resp.Regular)
 
 	// JSON 文件下载错误
 	jsonDumper := downloading.NewJsonDumper()
@@ -1183,6 +1186,36 @@ func (s *Server) handleErrors(w http.ResponseWriter, r *http.Request) {
 	resp.JSON = jsonDumper.Summary()
 
 	s.writeJSON(w, http.StatusOK, NewSuccessResponse(resp))
+}
+
+// errorEntityDetails 把失败计数映射成带实体名的明细：先按 user_entities 查，
+// 未命中再按 lst_entities 查。查不到的实体保留 ID 和计数，界面仍能显示裸 ID。
+func (s *Server) errorEntityDetails(regular map[int]int) []ErrorEntityDetail {
+	if len(regular) == 0 {
+		return nil
+	}
+	details := make([]ErrorEntityDetail, 0, len(regular))
+	for id, failed := range regular {
+		detail := ErrorEntityDetail{EntityID: id, Failed: failed}
+		if s.db != nil {
+			if ue, err := database.GetUserEntity(s.db, id); err == nil && ue != nil {
+				detail.Kind = "user"
+				detail.Name = ue.Name
+				detail.UserID = ue.UserId
+				if usr, err := database.GetUserById(s.db, ue.UserId); err == nil && usr != nil {
+					detail.ScreenName = usr.ScreenName
+				}
+			}
+		}
+		details = append(details, detail)
+	}
+	sort.Slice(details, func(i, j int) bool {
+		if details[i].Failed != details[j].Failed {
+			return details[i].Failed > details[j].Failed
+		}
+		return details[i].EntityID < details[j].EntityID
+	})
+	return details
 }
 
 func (s *Server) handleQueueStatus(w http.ResponseWriter, _ *http.Request) {

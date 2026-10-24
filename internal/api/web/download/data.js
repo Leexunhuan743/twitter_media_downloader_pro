@@ -68,7 +68,11 @@
         relatedLinks: '用户链接',
         relatedNames: '改名历史',
         relatedListEntities: '列表媒体',
+        relatedMembers: '列表成员',
+        relatedUserEntity: '用户媒体记录',
+        relatedParentList: '所属列表实体',
         relatedEmpty: '没有关联记录',
+        readonlyTitle: '只读字段',
         relatedError: '关联记录加载失败',
         viewAll: '查看全部 {n} 条',
         metaMedia: '{n} 个媒体',
@@ -79,8 +83,10 @@
         copyError: '复制错误信息',
         editTitle: '编辑记录',
         editDesc: '{type} · ID {id} · 只提交改动过的字段',
+        discardEdit: '放弃未保存的修改？',
         noChanges: '没有改动',
         invalidNumber: '请输入有效数字',
+        sortHint: '点击排序',
         invalidEmpty: '不能为空',
         invalidDigits: '只能填数字',
         invalidScreenName: '用户名为 1-15 位字母、数字或下划线',
@@ -101,7 +107,16 @@
         emptyFilteredTitle: '没有匹配的记录',
         emptyFilteredDesc: '换个关键词或清除筛选条件再试。',
         clearFilters: '清除筛选',
-        goDownload: '去下载'
+        goDownload: '去下载',
+        filterSummary: '筛选：{text}',
+        filterCount: '命中 {n} 条',
+        editLoading: '正在读取最新记录…',
+        editStale: '记录已更新，表单已同步最新值',
+        detailStale: '记录已更新',
+        jump: '跳至',
+        jumpPage: '页码',
+        firstPage: '首页',
+        lastPage: '末页'
       }
     },
     'en': {
@@ -164,7 +179,11 @@
         relatedLinks: 'User links',
         relatedNames: 'Rename history',
         relatedListEntities: 'List media',
+        relatedMembers: 'List members',
+        relatedUserEntity: 'User media record',
+        relatedParentList: 'Parent list entity',
         relatedEmpty: 'No related records',
+        readonlyTitle: 'Read-only',
         relatedError: 'Could not load related records',
         viewAll: 'View all {n}',
         metaMedia: '{n} media',
@@ -175,8 +194,10 @@
         copyError: 'Copy error',
         editTitle: 'Edit record',
         editDesc: '{type} · ID {id} · only changed fields are submitted',
+        discardEdit: 'Discard unsaved changes?',
         noChanges: 'No changes',
         invalidNumber: 'Enter a valid number',
+        sortHint: 'click to sort',
         invalidEmpty: 'Required',
         invalidDigits: 'Digits only',
         invalidScreenName: '1-15 letters, digits or underscores',
@@ -197,7 +218,16 @@
         emptyFilteredTitle: 'No matching records',
         emptyFilteredDesc: 'Try another keyword or clear the filters.',
         clearFilters: 'Clear filters',
-        goDownload: 'Go to downloads'
+        goDownload: 'Go to downloads',
+        filterSummary: 'Filtered: {text}',
+        filterCount: '{n} matches',
+        editLoading: 'Loading the latest record…',
+        editStale: 'The record changed; the form shows the latest values',
+        detailStale: 'Record updated',
+        jump: 'Go to',
+        jumpPage: 'Page number',
+        firstPage: 'First',
+        lastPage: 'Last'
       }
     }
   });
@@ -229,6 +259,8 @@
 .data-table{table-layout:fixed}
 .data-table th,.data-table td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .data-table th{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.35}
+.data-table th[data-sortable]{cursor:pointer}
+.data-table th[data-sortable]:not([aria-sort])::after{content:"↕";margin-left:4px;color:var(--muted);opacity:.55;font-size:11px}
 .data-table .data-th-actions{text-align:right}
 .data-ell{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .data-id{display:inline-flex;align-items:center;gap:4px;margin:-2px -6px;padding:2px 6px;border:0;border-radius:6px;background:transparent;color:var(--text-soft);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;font-variant-numeric:tabular-nums;cursor:pointer}
@@ -296,6 +328,8 @@
   .data-table td > .badge{justify-self:start}
   .data-table td.data-cell--actions{grid-column:1 / -1;margin-top:4px;padding:8px 0 0;border-top:1px solid var(--border)}
   .data-table td.data-cell--actions::before{display:none}
+  .data-table td[data-primary="true"]{grid-column:1 / -1;font-size:14px;font-weight:650}
+  .data-table td[data-primary="true"]::before{margin-bottom:2px}
   .data-actions{justify-content:flex-start;gap:8px}
   .data-iconbtn{width:auto;min-width:44px;height:40px;padding:0 12px;border-color:var(--border)}
   .data-iconbtn__label{display:inline}
@@ -305,6 +339,22 @@
   .data-actions-sticky{margin-top:14px;padding:10px 0}
   .modal__actions{flex-wrap:wrap}
 }
+.data-ctx{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px;padding:8px 10px;border:1px solid var(--accent-soft-border,var(--border));border-radius:var(--radius-sm);background:var(--accent-soft);color:var(--text-soft);font-size:12.5px}
+.data-ctx__text{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+.data-ctx__count{color:var(--muted);font-variant-numeric:tabular-nums}
+.data-ctx .btn{flex:0 0 auto}
+.pager__jump{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:12.5px}
+.pager__jump input{width:72px;text-align:center}
+.pager__pages{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap}
+.pager__page{min-width:32px;padding:5px 8px;justify-content:center;font-variant-numeric:tabular-nums}
+.pager__page.is-active{border-color:var(--accent);color:var(--accent);font-weight:600}
+.pager__gap{color:var(--muted);padding:0 2px;user-select:none}
+.data-readonly{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 14px;margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2,#f6f7f9)}
+.data-readonly__title{grid-column:1/-1;margin:0 0 2px;font-size:11.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.data-readonly__item{display:flex;flex-direction:column;gap:2px;min-width:0}
+.data-readonly__key{font-size:11.5px;color:var(--muted)}
+.data-readonly__val{font-size:13px;overflow-wrap:anywhere}
+.data-modal-note{margin:0 0 10px}
 `);
 
   /* ---------------- 数据表定义 ---------------- */
@@ -345,7 +395,7 @@
         { key: 'name', kind: 'text', label: 'colName', required: true, max: 250 },
         { key: 'protected', kind: 'checkbox', label: 'colProtected' },
         { key: 'is_accessible', kind: 'checkbox', label: 'colAccessible' },
-        { key: 'friends_count', kind: 'number', label: 'colFriends', min: 0 }
+        { key: 'friends_count', kind: 'number', label: 'colFriends', min: 0, max: 999999999 }
       ]
     },
     lists: {
@@ -371,7 +421,7 @@
       api: '/api/v1/db/user-entities',
       label: 'tabUserEntities',
       editable: true,
-      related: '',
+      related: 'auto',
       columns: [
         { key: 'id', label: 'colId', sort: 'id', w: 84, render: idCell },
         { key: 'user_id', label: 'colUserId', sort: 'user_id', w: 116, render: monoCellOf('user_id') },
@@ -393,7 +443,7 @@
       api: '/api/v1/db/list-entities',
       label: 'tabListEntities',
       editable: true,
-      related: '',
+      related: 'auto',
       columns: [
         { key: 'id', label: 'colId', sort: 'id', w: 84, render: idCell },
         { key: 'lst_id', label: 'colListId', sort: 'lst_id', w: 108, render: monoCellOf('lst_id') },
@@ -412,7 +462,7 @@
       api: '/api/v1/db/user-links',
       label: 'tabUserLinks',
       editable: true,
-      related: '',
+      related: 'auto',
       columns: [
         { key: 'id', label: 'colId', sort: 'id', w: 84, render: idCell },
         { key: 'user_id', label: 'colUserId', sort: 'user_id', w: 116, render: monoCellOf('user_id') },
@@ -433,7 +483,7 @@
       api: '/api/v1/db/user-previous-names',
       label: 'tabPreviousNames',
       editable: false,
-      related: '',
+      related: 'auto',
       columns: [
         { key: 'id', label: 'colId', sort: 'id', w: 84, render: idCell },
         { key: 'user_id', label: 'colUserId', sort: 'user_id', w: 108, render: monoCellOf('user_id') },
@@ -474,12 +524,13 @@
 
   function pad2(n) { return n < 10 ? '0' + n : String(n); }
 
+  // 带入秒：只保留到分钟会让「未改动的秒」在保存时被归零。
   function toLocalInput(iso) {
     if (!iso) return '';
     var date = new Date(iso);
     if (isNaN(date.getTime())) return '';
     return date.getFullYear() + '-' + pad2(date.getMonth() + 1) + '-' + pad2(date.getDate()) +
-      'T' + pad2(date.getHours()) + ':' + pad2(date.getMinutes());
+      'T' + pad2(date.getHours()) + ':' + pad2(date.getMinutes()) + ':' + pad2(date.getSeconds());
   }
 
   function fmtDate(value) {
@@ -499,8 +550,8 @@
     if (ea !== eb) return false;
     var ta = Date.parse(a), tb = Date.parse(b);
     if (isNaN(ta) || isNaN(tb)) return String(a) === String(b);
-    // datetime-local 只到分钟精度：按分钟比较，避免未改动的秒被误判为变更
-    return Math.floor(ta / 60000) === Math.floor(tb / 60000);
+    // 表单带秒（step=1），按秒比较即可；毫秒差异不算改动。
+    return Math.floor(ta / 1000) === Math.floor(tb / 1000);
   }
 
   function sameValue(kind, oldValue, next) {
@@ -590,6 +641,7 @@
 
   var host = null;
   var detailSeq = 0;
+  var editSeq = 0;
   var st = {
     tab: 'users',
     stats: null,
@@ -660,6 +712,7 @@
       '<p class="notice notice--danger data-stats-error" data-role="stats-error" hidden></p>' +
       '<section class="card mt-16 data-card">' +
         '<div class="data-toolbar" data-role="toolbar"></div>' +
+        '<div class="data-ctx" data-role="ctx" hidden></div>' +
         '<div class="data-result" data-role="table"></div>' +
         '<div class="pager" data-role="pager"></div>' +
       '</section>' +
@@ -703,6 +756,7 @@
           '<button type="button" class="modal__close" data-act="edit-close" aria-label="' + esc(T.t('common.close')) + '">×</button>' +
         '</div>' +
         '<p class="notice notice--danger" data-role="modal-error" hidden></p>' +
+        '<div class="data-readonly" data-role="modal-readonly" hidden></div>' +
         '<div class="form-grid" data-role="modal-fields"></div>' +
         '<div class="modal__actions">' +
           '<button type="button" class="btn btn--ghost" data-act="edit-close">' + esc(T.t('common.cancel')) + '</button>' +
@@ -855,7 +909,8 @@
     var aria = s.sortBy === col.sort
       ? ' aria-sort="' + (s.sortOrder === 'asc' ? 'ascending' : 'descending') + '"'
       : '';
-    return '<th scope="col" data-sortable="true" data-sort="' + esc(col.sort) + '" tabindex="0"' + aria + '>' + label + '</th>';
+    var hint = s.sortBy === col.sort ? '' : ' aria-label="' + esc(label + ' · ' + t('sortHint')) + '"';
+    return '<th scope="col" data-sortable="true" data-sort="' + esc(col.sort) + '" tabindex="0"' + aria + hint + '>' + label + '</th>';
   }
 
   function iconAction(act, id, label, icon, danger) {
@@ -879,7 +934,8 @@
       if (col.actions) {
         return '<td class="table__actions data-cell--actions" data-label="">' + actionsHtml(def, row) + '</td>';
       }
-      return '<td' + tdClass(col) + ' data-label="' + esc(labelOf(col.label)) + '">' + cellHtml(col, row) + '</td>';
+      var primary = col === cols[0] ? ' data-primary="true"' : '';
+      return '<td' + tdClass(col) + primary + ' data-label="' + esc(labelOf(col.label)) + '">' + cellHtml(col, row) + '</td>';
     }).join('');
     return '<tr data-id="' + esc(row.id) + '">' + cells + '</tr>';
   }
@@ -944,10 +1000,51 @@
     '</div>';
   }
 
+  // 过滤上下文条：把当前生效的筛选与命中数固定显示在表格上方，
+  // 从关联记录跳进来或工具栏换行时用户仍能看清自己处在什么筛选里。
+  function filterSummaryText(tab) {
+    var def = TABS[tab];
+    var s = tabState(tab);
+    var parts = [];
+    def.filters.forEach(function (field) {
+      var value = s.filters[field.key];
+      if (value === undefined || value === null || String(value) === '') return;
+      var label = field.type === 'search' ? t('searchLabel') : labelOf(field.label);
+      var text = String(value);
+      if (field.type === 'select') {
+        var match = null;
+        (field.options || []).forEach(function (option) {
+          if (String(option.value) === String(value)) match = option;
+        });
+        if (match) text = labelOf(match.label);
+      }
+      parts.push(label + ' ' + text);
+    });
+    return parts.join(' · ');
+  }
+
+  function renderCtx() {
+    if (!host) return;
+    var box = host.querySelector('[data-role="ctx"]');
+    if (!box) return;
+    var text = filterSummaryText(st.tab);
+    if (!text) {
+      box.hidden = true;
+      box.innerHTML = '';
+      return;
+    }
+    var total = tabState(st.tab).total;
+    box.hidden = false;
+    box.innerHTML = '<span class="data-ctx__text">' + esc(t('filterSummary', { text: text })) + '</span>' +
+      '<span class="data-ctx__count">' + esc(t('filterCount', { n: fmtNum(total) })) + '</span>' +
+      '<button type="button" class="btn btn--ghost btn--sm" data-act="reset-filters">' + esc(t('clearFilters')) + '</button>';
+  }
+
   function renderTable() {
     if (!host) return;
     var box = host.querySelector('[data-role="table"]');
     if (!box) return;
+    renderCtx();
     var def = TABS[st.tab];
     var s = tabState(st.tab);
     var cols = visibleColumns(st.tab);
@@ -966,20 +1063,53 @@
 
   /* ---------------- 分页 ---------------- */
 
+  // 页码序列：总页数少时全列，多时首尾固定、当前页左右各一页，其余折叠成省略号。
+  function pageNumbers(current, total) {
+    if (total <= 7) {
+      var all = [];
+      for (var i = 1; i <= total; i++) all.push(i);
+      return all;
+    }
+    var pages = [1];
+    var start = Math.max(2, current - 1);
+    var end = Math.min(total - 1, current + 1);
+    if (start > 2) pages.push('…');
+    for (var p = start; p <= end; p++) pages.push(p);
+    if (end < total - 1) pages.push('…');
+    pages.push(total);
+    return pages;
+  }
+
   function renderPager() {
     if (!host) return;
     var box = host.querySelector('[data-role="pager"]');
     if (!box) return;
     var s = tabState(st.tab);
-    box.style.display = (s.loading || s.error) ? 'none' : '';
+    box.style.display = s.error ? 'none' : '';
+    box.setAttribute('aria-busy', s.loading ? 'true' : 'false');
     var info = T.t('common.total', { n: fmtNum(s.total) }) + ' · ' +
       T.t('common.page', { page: s.page, pages: s.totalPages });
+    var pages = pageNumbers(s.page, s.totalPages).map(function (n) {
+      if (n === '…') return '<span class="pager__gap" aria-hidden="true">…</span>';
+      var current = n === s.page;
+      return '<button type="button" class="btn btn--ghost btn--sm pager__page"' +
+        (current ? ' is-active" aria-current="page"' : '"') +
+        ' data-act="page" data-page="' + n + '"' + (s.loading ? ' disabled' : '') + '>' + n + '</button>';
+    }).join('');
+    var jump = '<span class="pager__jump">' +
+      '<label for="data-page-jump">' + esc(t('jump')) + '</label>' +
+      '<input class="input" id="data-page-jump" type="number" min="1" max="' + Math.max(1, s.totalPages) + '"' +
+        ' step="1" inputmode="numeric" value="' + s.page + '" data-role="page-jump"' +
+        ' aria-label="' + esc(t('jumpPage')) + '">' +
+      '<span aria-hidden="true">/ ' + fmtNum(s.totalPages) + '</span></span>';
     box.innerHTML =
-      '<button type="button" class="btn btn--ghost btn--sm" data-act="prev"' + (s.page <= 1 ? ' disabled' : '') + '>' +
+      '<button type="button" class="btn btn--ghost btn--sm" data-act="prev"' + ((s.loading || s.page <= 1) ? ' disabled' : '') + '>' +
         esc(T.t('common.previous')) + '</button>' +
+      '<span class="pager__pages">' + pages + '</span>' +
+      '<button type="button" class="btn btn--ghost btn--sm" data-act="next"' + ((s.loading || s.page >= s.totalPages) ? ' disabled' : '') + '>' +
+        esc(T.t('common.next')) + '</button>' +
       '<span class="pager__grow">' + esc(info) + '</span>' +
-      '<button type="button" class="btn btn--ghost btn--sm" data-act="next"' + (s.page >= s.totalPages ? ' disabled' : '') + '>' +
-        esc(T.t('common.next')) + '</button>';
+      jump;
   }
 
   /* ---------------- 数据加载 ---------------- */
@@ -994,15 +1124,24 @@
     return params;
   }
 
+  // 每个标签只保留最后一次请求：翻页/搜索会取消上一个请求，弱网下不堆积。
+  // 15s 未返回按超时处理，避免表格一直停在骨架态。
   function loadTab(tab) {
     var s = tabState(tab);
     s.loading = true;
     s.error = '';
     s.seq += 1;
     var seq = s.seq;
+    if (s.abort) { try { s.abort.abort(); } catch (e) { /* ignore */ } }
+    var controller = typeof AbortController === 'function' ? new AbortController() : null;
+    s.abort = controller;
+    var timedOut = false;
+    var timer = controller ? setTimeout(function () { timedOut = true; controller.abort(); }, 15000) : 0;
+    var clearTimer = function () { if (timer) { clearTimeout(timer); timer = 0; } };
     if (host && st.tab === tab) { renderTable(); renderPager(); }
 
-    return T.api.get(TABS[tab].api, buildParams(s)).then(function (res) {
+    return T.api.get(TABS[tab].api, buildParams(s), controller ? { signal: controller.signal } : undefined).then(function (res) {
+      clearTimer();
       if (s.seq !== seq) return;
       var rows = (res && res.data) || [];
       if (!Array.isArray(rows)) rows = [];
@@ -1018,21 +1157,46 @@
       }
       if (host && st.tab === tab) { renderTable(); renderPager(); }
     }).catch(function (err) {
+      clearTimer();
       if (s.seq !== seq) return;
+      if (err && err.name === 'AbortError' && !timedOut) return;
       s.loading = false;
       if (err && err.status === 401) return;
-      s.error = (err && err.message) || T.t('common.fetchFailed');
+      s.error = timedOut ? T.t('common.timeout') : ((err && err.message) || T.t('common.fetchFailed'));
       if (host && st.tab === tab) { renderTable(); renderPager(); }
     });
   }
 
-  function switchTab(id, filters) {
+  var HASH_OF = { userEntities: 'user-entities', listEntities: 'list-entities', userLinks: 'user-links', previousNames: 'previous-names' };
+  var TAB_OF = { 'user-entities': 'userEntities', 'list-entities': 'listEntities', 'user-links': 'userLinks', 'previous-names': 'previousNames' };
+
+  function tabFromHash() {
+    try {
+      var raw = decodeURIComponent(String(window.location.hash || '').replace(/^#/, ''));
+      if (TABS[raw]) return raw;
+      return TAB_OF[raw] || '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  // 子标签写入 /data#<tab>：刷新、复制链接、浏览器后退都能回到同一张表。
+  function writeTabHash(id) {
+    try {
+      var hash = '#' + (HASH_OF[id] || id);
+      var next = window.location.pathname + window.location.search + hash;
+      if (window.location.hash !== hash) window.history.replaceState({ view: 'data' }, '', next);
+    } catch (e) { /* ignore */ }
+  }
+
+  function switchTab(id, filters, options) {
     if (!TABS[id]) return;
     st.tab = id;
     if (filters) {
       tabState(id).filters = filters;
       tabState(id).page = 1;
     }
+    if (!(options && options.fromHash)) writeTabHash(id);
     renderToolbar();
     renderTable();
     renderPager();
@@ -1045,6 +1209,16 @@
     var next = s.page + delta;
     if (next < 1 || next > s.totalPages || next === s.page) return;
     s.page = next;
+    loadTab(st.tab);
+  }
+
+  function goPage(raw) {
+    var s = tabState(st.tab);
+    var n = Math.trunc(Number(raw));
+    if (!isFinite(n)) return;
+    n = Math.max(1, Math.min(s.totalPages || 1, n));
+    if (n === s.page) return;
+    s.page = n;
     loadTab(st.tab);
   }
 
@@ -1176,7 +1350,7 @@
     '</div>';
   }
 
-  function renderDetail() {
+  function renderDetail(skipRelated) {
     if (!host || !st.detail) return;
     var d = st.detail;
     var def = TABS[d.tab];
@@ -1204,7 +1378,7 @@
 
     var related = dialog.querySelector('[data-role="detail-related"]');
     var relatedBody = dialog.querySelector('[data-role="detail-related-body"]');
-    if (related && relatedBody) {
+    if (related && relatedBody && !skipRelated) {
       if (!def.related) {
         related.hidden = true;
         relatedBody.innerHTML = '';
@@ -1223,13 +1397,13 @@
     '</li>';
   }
 
-  function relatedSection(title, rows, total, renderRow, moreTab, moreKey) {
+  function relatedSection(title, rows, total, renderRow, moreTab, moreKey, moreValue) {
     var head = '<div class="data-subhead">' +
       '<span class="data-subhead__title">' + esc(title) + '</span>' +
       '<span class="count">' + esc(fmtNum(total)) + '</span>';
     if (total > rows.length && moreTab) {
       head += '<button type="button" class="btn btn--ghost btn--sm data-more" data-act="related-more"' +
-        ' data-tab="' + moreTab + '" data-filter-key="' + moreKey + '" data-filter-value="' + esc(st.detail ? st.detail.id : '') + '">' +
+        ' data-tab="' + moreTab + '" data-filter-key="' + moreKey + '" data-filter-value="' + esc(moreValue === undefined ? (st.detail ? st.detail.id : '') : moreValue) + '">' +
         esc(t('viewAll', { n: fmtNum(total) })) + '</button>';
     }
     head += '</div>';
@@ -1255,7 +1429,9 @@
     }
     function fail(err) {
       paint('<p class="notice notice--danger">' + esc(t('relatedError')) + ' · ' +
-        esc((err && err.message) || T.t('common.fetchFailed')) + '</p>');
+        esc((err && err.message) || T.t('common.fetchFailed')) + ' ' +
+        '<button type="button" class="btn btn--ghost btn--sm" data-act="retry-related">' +
+        esc(T.t('common.retry')) + '</button></p>');
     }
 
     if (d.tab === 'users') {
@@ -1290,6 +1466,71 @@
           return relatedRow(row.name || ('#' + row.id), row.list_name || '');
         }, 'listEntities', 'listId'));
       }).catch(fail);
+      return;
+    }
+
+    // 列表实体的成员关系存在 user-links.parent_lst_entity_id，media 之外还要能看到成员。
+    if (d.tab === 'listEntities') {
+      T.api.get('/api/v1/db/user-links', { listEntityId: id, page: 1, pageSize: 5 }).then(function (res) {
+        var rows = unwrap(res);
+        paint(relatedSection(t('relatedMembers'), rows, totalOf(res), function (row) {
+          return relatedRow(row.name || ('#' + row.id), row.user_id ? 'user ' + row.user_id : '');
+        }, 'userLinks', 'listEntityId'));
+      }).catch(fail);
+      return;
+    }
+
+    if (d.tab === 'userEntities') {
+      Promise.all([
+        T.api.get('/api/v1/db/user-links', { userId: d.row.user_id, page: 1, pageSize: 5 }),
+        T.api.get('/api/v1/db/user-previous-names', { userId: d.row.user_id, page: 1, pageSize: 5 })
+      ]).then(function (res) {
+        var links = unwrap(res[0]), names = unwrap(res[1]);
+        var html = relatedSection(t('relatedLinks'), links, totalOf(res[0]), function (row) {
+          return relatedRow(row.name || ('#' + row.id), row.parent_lst_entity_name || '');
+        }, 'userLinks', 'userId', d.row.user_id);
+        html += relatedSection(t('relatedNames'), names, totalOf(res[1]), function (row) {
+          return relatedRow(row.screen_name || ('#' + row.id), fmtDate(row.record_date));
+        }, 'previousNames', 'userId', d.row.user_id);
+        paint(html);
+      }).catch(fail);
+      return;
+    }
+
+    if (d.tab === 'userLinks') {
+      Promise.all([
+        T.api.get('/api/v1/db/user-entities', { userId: d.row.user_id, page: 1, pageSize: 5 }),
+        T.api.get('/api/v1/db/list-entities/' + encodeURIComponent(d.row.parent_lst_entity_id)).catch(function () { return null; })
+      ]).then(function (res) {
+        var entities = unwrap(res[0]);
+        var parent = res[1] && res[1].data;
+        var html = relatedSection(t('relatedEntities'), entities, totalOf(res[0]), function (row) {
+          return relatedRow(row.name || ('#' + row.id), t('metaMedia', { n: numText(row.media_count) }));
+        }, 'userEntities', 'userId', d.row.user_id);
+        if (parent) {
+          html += relatedSection(t('relatedParentList'), [parent], 1, function (row) {
+            return relatedRow(row.name || ('#' + row.id), t('colListId') + ' ' + (row.lst_id === undefined ? '—' : row.lst_id));
+          }, 'listEntities', 'listId', parent.lst_id);
+        }
+        paint(html);
+      }).catch(fail);
+      return;
+    }
+
+    if (d.tab === 'previousNames') {
+      Promise.all([
+        T.api.get('/api/v1/db/user-links', { userId: d.row.user_id, page: 1, pageSize: 5 }),
+        T.api.get('/api/v1/db/user-entities', { userId: d.row.user_id, page: 1, pageSize: 5 })
+      ]).then(function (res) {
+        var links = unwrap(res[0]), entities = unwrap(res[1]);
+        var html = relatedSection(t('relatedEntities'), entities, totalOf(res[1]), function (row) {
+          return relatedRow(row.name || ('#' + row.id), t('metaMedia', { n: numText(row.media_count) }));
+        }, 'userEntities', 'userId', d.row.user_id);
+        html += relatedSection(t('relatedLinks'), links, totalOf(res[0]), function (row) {
+          return relatedRow(row.name || ('#' + row.id), row.parent_lst_entity_name || '');
+        }, 'userLinks', 'userId', d.row.user_id);
+        paint(html);
+      }).catch(fail);
     }
   }
 
@@ -1303,18 +1544,35 @@
     return unwrap(res).length;
   }
 
+  // openDetail 先用列表快照立即上屏，再拉单条记录校正：
+  // 列表可能是几分钟前的分页结果，详情/编辑必须以服务端当前值为准。
   function openDetail(tab, id) {
     if (!host) return;
     var row = findRow(tab, String(id));
     if (!row) return;
-    st.detail = { tab: tab, id: String(id), row: row };
+    st.detail = { tab: tab, id: String(id), row: row, loading: true };
     detailSeq += 1;
+    var seq = detailSeq;
     renderDetail();
     var dialog = host.querySelector('[data-role="detail-modal"]');
     if (dialog && !dialog.open) {
       dialog.showModal();
       dialog.focus();
     }
+    T.api.get(TABS[tab].api + '/' + encodeURIComponent(id)).then(function (res) {
+      if (seq !== detailSeq || !st.detail || st.detail.id !== String(id)) return;
+      var fresh = res && res.data;
+      if (!fresh) return;
+      var changed = JSON.stringify(st.detail.row) !== JSON.stringify(fresh);
+      st.detail.row = fresh;
+      st.detail.loading = false;
+      renderDetail(true);
+      if (changed) T.toast('info', t('detailStale'));
+    }).catch(function (err) {
+      if (seq !== detailSeq) return;
+      if (err && err.status === 401) { closeDetail(); return; }
+      T.toast('error', (err && err.message) || T.t('common.fetchFailed'));
+    });
   }
 
   function closeDetail() {
@@ -1347,7 +1605,8 @@
         (field.required ? ' <span class="data-required">*</span>' : '') + '</label>' +
       '<input class="input" id="' + id + '" type="' + type + '" data-field="' + esc(field.key) + '"' +
         ' value="' + esc(value) + '" autocomplete="off" spellcheck="false"' +
-        (type === 'number' ? ' step="1" min="0"' : '') + '>' +
+        (type === 'number' ? ' step="1" min="0"' + (field.max !== undefined ? ' max="' + Number(field.max) + '"' : '') : '') +
+        (type === 'datetime-local' ? ' step="1"' : '') + '>' +
       (field.hint ? '<p class="data-rename-hint">' + esc(t(field.hint)) + '</p>' : '') +
     '</div>';
   }
@@ -1371,6 +1630,7 @@
     if (field.kind === 'number') {
       if (value === '' || !/^-?\d+$/.test(value)) return t('invalidNumber');
       if (field.min !== undefined && Number(value) < field.min) return t('invalidNumber');
+      if (field.max !== undefined && Number(value) > field.max) return t('invalidNumber');
       return '';
     }
     if (field.kind === 'datetime') {
@@ -1391,6 +1651,67 @@
     return '';
   }
 
+  function fieldsValue(def, row) {
+    return JSON.stringify(def.fields.map(function (field) {
+      var value = row ? row[field.key] : undefined;
+      return value === undefined ? null : value;
+    }));
+  }
+
+  // 只读字段固定展示 id 与关联键，避免「同名实体属于哪个用户/列表」只能靠猜。
+  var READONLY = {
+    users: [['id', 'ID']],
+    lists: [['id', 'ID'], ['owner_user_id', 'colOwner']],
+    userEntities: [['id', 'ID'], ['user_id', 'colUserId'], ['parent_dir', 'colParentDir']],
+    listEntities: [['id', 'ID'], ['lst_id', 'colListId'], ['parent_dir', 'colParentDir']],
+    userLinks: [['id', 'ID'], ['user_id', 'colUserId'], ['parent_lst_entity_id', 'colParentEntity'], ['parent_lst_entity_name', 'colParentEntityName']]
+  };
+
+  function readonlyHtml(tab, row) {
+    var keys = READONLY[tab] || [];
+    if (!keys.length || !row) return '';
+    return '<p class="data-readonly__title">' + esc(t('readonlyTitle')) + '</p>' +
+      keys.map(function (pair) {
+        var value = row[pair[0]];
+        var text = (value === undefined || value === null || String(value) === '') ? '—' : String(value);
+        var label = pair[1] === 'ID' ? 'ID' : t(pair[1]);
+        return '<div class="data-readonly__item">' +
+          '<span class="data-readonly__key">' + esc(label) + '</span>' +
+          '<span class="data-readonly__val mono">' + esc(text) + '</span>' +
+        '</div>';
+      }).join('');
+  }
+
+  function fillEditFields(form, def, row) {
+    var tab = Object.keys(TABS).filter(function (key) { return TABS[key] === def; })[0];
+    form.querySelector('[data-role="modal-fields"]').innerHTML = def.fields.map(function (field) {
+      return fieldHtml(field, row);
+    }).join('');
+    var box = form.querySelector('[data-role="modal-readonly"]');
+    if (box) {
+      var html = readonlyHtml(tab, row);
+      box.innerHTML = html;
+      box.hidden = !html;
+    }
+  }
+
+  // 服务端 4xx 的 message 通常含字段名（如 invalid screen_name）：能匹配就把错误钉到那个输入框。
+  function markServerField(form, def, message) {
+    if (!form || !def) return;
+    var inputs = form.querySelectorAll('[data-field]');
+    for (var i = 0; i < inputs.length; i++) inputs[i].removeAttribute('aria-invalid');
+    var text = String(message || '').toLowerCase();
+    if (!text) return;
+    def.fields.some(function (field) {
+      if (text.indexOf(String(field.key).toLowerCase()) < 0) return false;
+      var el = form.querySelector('[data-field="' + field.key + '"]');
+      if (el) el.setAttribute('aria-invalid', 'true');
+      return true;
+    });
+  }
+
+  // openEdit 先拉当前记录再渲染表单：直接拿列表快照做基线会把别人刚改过的值当成
+  // 「用户没动」而漏提交，也会让 PATCH 覆盖期间发生的外部修改。
   function openEdit(tab, id) {
     if (!host) return;
     var def = TABS[tab];
@@ -1398,7 +1719,9 @@
     var row = findRow(tab, String(id));
     if (!row) return;
 
-    st.editing = { tab: tab, id: String(id), row: row };
+    editSeq += 1;
+    var seq = editSeq;
+    st.editing = { tab: tab, id: String(id), row: row, busy: true };
 
     var dialog = host.querySelector('[data-role="edit-modal"]');
     var form = host.querySelector('[data-role="edit-form"]');
@@ -1409,28 +1732,69 @@
       type: t(def.label),
       id: String(id)
     });
-    form.querySelector('[data-role="modal-fields"]').innerHTML = def.fields.map(function (field) {
-      return fieldHtml(field, row);
-    }).join('');
+    form.querySelector('[data-role="modal-fields"]').innerHTML =
+      '<p class="skeleton data-modal-note" style="height:44px"></p>';
+    var ro = form.querySelector('[data-role="modal-readonly"]');
+    if (ro) { ro.hidden = true; ro.innerHTML = ''; }
     showEditError('');
     var save = form.querySelector('button[type="submit"]');
-    if (save) save.disabled = false;
+    if (save) save.disabled = true;
     if (!dialog.open) dialog.showModal();
-    var first = form.querySelector('input');
-    if (first) first.focus();
+
+    T.api.get(def.api + '/' + encodeURIComponent(id)).then(function (res) {
+      if (seq !== editSeq || !st.editing || st.editing.id !== String(id)) return;
+      var fresh = (res && res.data) || null;
+      if (fresh) {
+        if (fieldsValue(def, row) !== fieldsValue(def, fresh)) {
+          T.toast('info', t('editStale'));
+        }
+        st.editing.row = fresh;
+      }
+      st.editing.busy = false;
+      fillEditFields(form, def, st.editing.row);
+      st.editing.snapshot = editSnapshot(form);
+      if (save) save.disabled = false;
+      var first = form.querySelector('input');
+      if (first) first.focus();
+    }).catch(function (err) {
+      if (seq !== editSeq) return;
+      if (err && err.status === 401) { closeEdit(); return; }
+      closeEdit();
+      T.toast('error', (err && err.message) || T.t('common.fetchFailed'));
+      loadTab(tab);
+    });
   }
 
-  function closeEdit() {
+  // 编辑弹窗关闭前比较字段快照：按 Esc、点取消或关闭按钮都不会静默丢掉已改内容。
+  function editSnapshot(form) {
+    if (!form) return '';
+    var values = {};
+    Array.prototype.forEach.call(form.querySelectorAll('[data-field]'), function (el) {
+      values[el.getAttribute('data-field')] = el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value;
+    });
+    return JSON.stringify(values);
+  }
+
+  function editDirty() {
+    if (!st.editing || !st.editing.snapshot || !host) return false;
+    var form = host.querySelector('[data-role="edit-form"]');
+    return editSnapshot(form) !== st.editing.snapshot;
+  }
+
+  function closeEdit(force) {
+    if (!force && editDirty() && !T.confirm(t('discardEdit'))) return false;
+    editSeq += 1;
     st.editing = null;
-    if (!host) return;
+    if (!host) return true;
     var dialog = host.querySelector('[data-role="edit-modal"]');
     if (dialog && dialog.open) {
       try { dialog.close(); } catch (e) { /* ignore */ }
     }
+    return true;
   }
 
   function saveEdit() {
-    if (!host || !st.editing) return;
+    if (!host || !st.editing || st.editing.busy) return;
     var editing = st.editing;
     var def = TABS[editing.tab];
     var form = host.querySelector('[data-role="edit-form"]');
@@ -1471,7 +1835,7 @@
       return;
     }
     if (!Object.keys(changes).length) {
-      closeEdit();
+      closeEdit(true);
       T.toast('info', t('noChanges'));
       return;
     }
@@ -1482,12 +1846,14 @@
 
     T.api.patch(def.api + '/' + encodeURIComponent(editing.id), changes).then(function () {
       T.toast('success', T.t('common.saved'));
-      closeEdit();
+      closeEdit(true);
       loadTab(editing.tab);
       loadStats();
     }).catch(function (err) {
       if (err && err.status === 401) return;
-      showEditError((err && err.message) || T.t('common.failed'));
+      var message = (err && err.message) || T.t('common.failed');
+      markServerField(form, def, message);
+      showEditError(message);
     }).then(function () {
       if (saveBtn) { saveBtn.disabled = false; saveBtn.classList.remove('btn--busy'); }
     });
@@ -1617,6 +1983,7 @@
       case 'retry-tab': loadTab(st.tab); break;
       case 'prev': changePage(-1); break;
       case 'next': changePage(1); break;
+      case 'page': goPage(act.getAttribute('data-page')); break;
       case 'detail': openDetail(st.tab, id); break;
       case 'edit': openEdit(st.tab, id); break;
       case 'del': askDelete(st.tab, id); break;
@@ -1640,6 +2007,7 @@
         break;
       }
       case 'edit-close': closeEdit(); break;
+      case 'retry-related': if (st.detail) loadRelated(st.detail); break;
       case 'delete-close': closeDelete(); break;
       case 'delete-confirm': confirmDelete(); break;
       case 'related-more': relatedMore(act); break;
@@ -1664,8 +2032,10 @@
       loadTab(st.tab);
       return;
     }
+    var jump = event.target.closest('[data-role="page-jump"]');
+    if (jump) { goPage(jump.value); return; }
     var el = event.target.closest('[data-filter]');
-    if (el && el.tagName === 'SELECT') {
+    if (el) {
       var state = tabState(st.tab);
       state.filters[el.getAttribute('data-filter')] = el.value;
       state.page = 1;
@@ -1674,6 +2044,22 @@
   }
 
   function onKeydown(event) {
+    // 搜索框回车立即取数，不等 300ms 防抖。
+    var filterEl = event.target && event.target.closest ? event.target.closest('input[data-filter]') : null;
+    if (filterEl && event.key === 'Enter') {
+      event.preventDefault();
+      var fs = tabState(st.tab);
+      fs.filters[filterEl.getAttribute('data-filter')] = filterEl.value;
+      fs.page = 1;
+      loadTab(st.tab);
+      return;
+    }
+    var jump = event.target && event.target.closest ? event.target.closest('[data-role="page-jump"]') : null;
+    if (jump && event.key === 'Enter') {
+      event.preventDefault();
+      goPage(jump.value);
+      return;
+    }
     if (event.key !== 'Enter' && event.key !== ' ') return;
     var th = event.target && event.target.closest ? event.target.closest('th[data-sort]') : null;
     if (!th) return;
@@ -1701,7 +2087,10 @@
     }
     var edit = host.querySelector('[data-role="edit-modal"]');
     if (edit) {
-      edit.addEventListener('close', function () { st.editing = null; });
+      edit.addEventListener('cancel', function (event) {
+        if (!closeEdit()) event.preventDefault();
+      });
+      edit.addEventListener('close', function () { editSeq += 1; st.editing = null; });
     }
     var del = host.querySelector('[data-role="delete-modal"]');
     if (del) {
@@ -1732,10 +2121,20 @@
     return Promise.all([loadStats(), loadTab(st.tab)]);
   }
 
+  function onHashChange() {
+    if (!host || !host.getAttribute) return;
+    var id = tabFromHash();
+    if (!id || id === st.tab) return;
+    var section = document.getElementById('view-data');
+    if (section && section.hidden) return;
+    switchTab(id, null, { fromHash: true });
+  }
+
   T.views.register('data', {
     mount: function (root) {
       host = root;
-      st.tab = 'users';
+      var initial = tabFromHash() || 'users';
+      st.tab = initial;
       st.tabs = {};
       st.stats = null;
       st.statsError = '';
@@ -1750,10 +2149,19 @@
       renderPager();
       renderStats();
       loadStats();
-      loadTab('users');
+      loadTab(initial);
+      writeTabHash(initial);
+      window.addEventListener('hashchange', onHashChange);
       return {
         refresh: refresh,
+        canLeave: function () {
+          if (!editDirty()) return true;
+          if (!T.confirm(t('discardEdit'))) return false;
+          closeEdit(true);
+          return true;
+        },
         destroy: function () {
+          window.removeEventListener('hashchange', onHashChange);
           unbind();
           host = null;
           st.detail = null;

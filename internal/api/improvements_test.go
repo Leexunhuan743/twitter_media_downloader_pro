@@ -202,6 +202,31 @@ func TestHandleTasksQuery_FiltersSortsAndPaginates(t *testing.T) {
 		}
 	})
 
+	t.Run("stage filter", func(t *testing.T) {
+		downloading := server.taskManager.CreateTask(TaskTypeUserDownload, &UserDownloadTaskData{ScreenName: "dave"})
+		require.True(t, server.taskManager.UpdateTaskProgress(downloading.ID, &TaskProgress{
+			Stage: "downloading", Total: 10, Completed: 2, Current: "dave",
+		}))
+
+		rr := httptest.NewRecorder()
+		server.handleTasksQuery(rr, httptest.NewRequest(http.MethodGet, "/api/v1/tasks/query?stage=downloading", nil))
+
+		var resp TasksQueryResponse
+		decodeEnvelope(t, rr, &resp)
+		require.Equal(t, 1, resp.Total)
+		assert.Equal(t, downloading.ID, resp.Items[0].ID)
+
+		rr = httptest.NewRecorder()
+		server.handleTasksQuery(rr, httptest.NewRequest(http.MethodGet, "/api/v1/tasks/query?stage=downloading,retrying", nil))
+		decodeEnvelope(t, rr, &resp)
+		assert.Equal(t, 1, resp.Total)
+
+		rr = httptest.NewRecorder()
+		server.handleTasksQuery(rr, httptest.NewRequest(http.MethodGet, "/api/v1/tasks/query?stage=downloading&status=failed", nil))
+		decodeEnvelope(t, rr, &resp)
+		assert.Equal(t, 0, resp.Total)
+	})
+
 	t.Run("unknown filter values rejected", func(t *testing.T) {
 		rr := httptest.NewRecorder()
 		server.handleTasksQuery(rr, httptest.NewRequest(http.MethodGet, "/api/v1/tasks/query?status=bogus", nil))
@@ -209,6 +234,10 @@ func TestHandleTasksQuery_FiltersSortsAndPaginates(t *testing.T) {
 
 		rr = httptest.NewRecorder()
 		server.handleTasksQuery(rr, httptest.NewRequest(http.MethodGet, "/api/v1/tasks/query?type=bogus", nil))
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+
+		rr = httptest.NewRecorder()
+		server.handleTasksQuery(rr, httptest.NewRequest(http.MethodGet, "/api/v1/tasks/query?stage=bogus", nil))
 		assert.Equal(t, http.StatusBadRequest, rr.Code)
 	})
 

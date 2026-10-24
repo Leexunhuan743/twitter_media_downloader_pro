@@ -379,4 +379,16 @@ type QueueStatusResponse struct {
 type ErrorSummaryResponse struct {
 	Regular map[int]int                   `json:"regular"` // entity ID → 失败推文数
 	JSON    []downloading.JsonDumpSummary `json:"json"`    // JSON 文件来源摘要
+	// RegularDetails 与 Regular 同源，附带实体名与所属用户，便于界面直接显示可读目标。
+	RegularDetails []ErrorEntityDetail `json:"regular_details,omitempty"`
+}
+
+// ErrorEntityDetail 描述一条常规失败记录的实体信息。
+type ErrorEntityDetail struct {
+	EntityID   int    `json:"entity_id"`
+	Kind       string `json:"kind"` // "user"；实体已删除时为空
+	Name       string `json:"name,omitempty"`
+	ScreenName string `json:"screen_name,omitempty"`
+	UserID     uint64 `json:"user_id,omitempty"`
+	Failed     int    `json:"failed"`
 }

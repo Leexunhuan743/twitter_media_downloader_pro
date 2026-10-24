@@ -23,8 +23,11 @@ import (
 	"github.com/unkmonster/tmd/internal/bot"
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/database"
+	"github.com/unkmonster/tmd/internal/downloading"
+	"github.com/unkmonster/tmd/internal/path"
 	"github.com/unkmonster/tmd/internal/scheduler"
 	"github.com/unkmonster/tmd/internal/service"
+	"github.com/unkmonster/tmd/internal/twitter"
 	"github.com/unkmonster/tmd/internal/utils"
 )
 
@@ -3180,6 +3183,56 @@ func TestHandleErrors(t *testing.T) {
 	// regular 和 json 字段都存在
 	assert.NotNil(t, data["regular"])
 	assert.NotNil(t, data["json"])
+}
+
+// 失败记录带实体名：regular_details 让界面不必显示裸实体 ID。
+func TestHandleErrorsEntityDetails(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer db.Close()
+
+	require.NoError(t, database.CreateUser(db, &database.User{Id: 4242, ScreenName: "probeuser", Name: "Probe User"}))
+
+	ue := &database.UserEntity{UserId: 4242, Name: "probeuser", ParentDir: "users"}
+	require.NoError(t, database.CreateUserEntity(db, ue))
+	entityID := int(ue.Id.Int32)
+
+	// 失败记录的键是 user_entities.id；实体被删除时只留 ID 与计数。
+	missingID := entityID + 1000
+
+	storePath, err := path.NewStorePath(server.config.RootPath)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(storePath.ErrorsPath), 0755))
+
+	dumper := downloading.NewDumper()
+	dumper.Push(entityID, &twitter.Tweet{Id: 1}, &twitter.Tweet{Id: 2})
+	dumper.Push(missingID, &twitter.Tweet{Id: 3})
+	require.NoError(t, dumper.Dump(storePath.ErrorsPath))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/errors", nil)
+	rr := serveAPI(server, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp struct {
+		Success bool                 `json:"success"`
+		Data    ErrorSummaryResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.True(t, resp.Success)
+	require.Len(t, resp.Data.RegularDetails, 2)
+
+	first := resp.Data.RegularDetails[0]
+	assert.Equal(t, entityID, first.EntityID)
+	assert.Equal(t, "user", first.Kind)
+	assert.Equal(t, "probeuser", first.Name)
+	assert.Equal(t, "probeuser", first.ScreenName)
+	assert.Equal(t, uint64(4242), first.UserID)
+	assert.Equal(t, 2, first.Failed)
+
+	second := resp.Data.RegularDetails[1]
+	assert.Equal(t, missingID, second.EntityID)
+	assert.Empty(t, second.Kind)
+	assert.Empty(t, second.Name)
+	assert.Equal(t, 1, second.Failed)
 }
 
 func TestHandleBatchMark(t *testing.T) {

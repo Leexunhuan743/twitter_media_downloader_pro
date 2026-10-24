@@ -149,6 +149,11 @@ func (s *Server) handleTasksQuery(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "Invalid type filter")
 		return
 	}
+	stages, ok := parseTaskStageFilter(query.Get("stage"))
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "Invalid stage filter")
+		return
+	}
 
 	page := parseIntQuery(query.Get("page"), 1)
 	if page < 1 {
@@ -174,6 +179,15 @@ func (s *Server) handleTasksQuery(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(types) > 0 {
 			if _, ok := types[task.Type]; !ok {
+				continue
+			}
+		}
+		if len(stages) > 0 {
+			stage := ""
+			if task.Progress != nil {
+				stage = task.Progress.Stage
+			}
+			if _, ok := stages[stage]; !ok {
 				continue
 			}
 		}
@@ -239,6 +253,37 @@ func parseTaskStatusFilter(raw string) (map[TaskStatus]struct{}, bool) {
 	result := make(map[TaskStatus]struct{})
 	for _, part := range strings.Split(raw, ",") {
 		value := TaskStatus(strings.TrimSpace(part))
+		if value == "" {
+			continue
+		}
+		if _, ok := valid[value]; !ok {
+			return nil, false
+		}
+		result[value] = struct{}{}
+	}
+	return result, true
+}
+
+// parseTaskStageFilter 按进度阶段过滤。阶段来自 TaskProgress.Stage，只有运行中的
+// 任务会持续更新；排队任务没有阶段，因此不会命中任何具体阶段。
+func parseTaskStageFilter(raw string) (map[string]struct{}, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, true
+	}
+	valid := map[string]struct{}{
+		"syncing":         {},
+		"resolving":       {},
+		"downloading":     {},
+		"retrying":        {},
+		"profile":         {},
+		"profile_warning": {},
+		"marking":         {},
+		"completed":       {},
+	}
+	result := make(map[string]struct{})
+	for _, part := range strings.Split(raw, ",") {
+		value := strings.ToLower(strings.TrimSpace(part))
 		if value == "" {
 			continue
 		}

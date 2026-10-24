@@ -101,6 +101,13 @@
       </div>
       <p class="cmdbar__hint" id="parse-hint" aria-live="polite" data-i18n="target.hint">支持 @screen_name、x.com/twitter.com 链接、数字 list id、JSON 文件路径</p>
 
+      <div class="cmdbar__following" id="batch-following-wrap" hidden>
+        <label class="cmdbar__following-label" for="batch-following" data-i18n="batch.followingLabel">关注源</label>
+        <input class="input" id="batch-following" type="text" spellcheck="false" autocapitalize="off" autocomplete="off"
+          data-i18n-placeholder="batch.followingPlaceholder" placeholder="@name1, @name2（下载这些账号关注的人）">
+        <span class="field__help" data-i18n="batch.followingHelp">与上方用户/列表是不同目标：这里下载这些账号关注的人。</span>
+      </div>
+
       <div class="cmdbar__row">
         <div class="segmented segmented--scroll" id="mode-group" role="radiogroup" data-i18n-aria="mode.group" aria-label="下载方式"></div>
         <div class="opts" id="options-group"></div>
@@ -124,9 +131,13 @@
         </div>
         <div class="cmdbar__upload" id="upload-field" hidden>
           <label class="btn btn--ghost btn--sm" for="json-files">
-            <span data-i18n="upload.label">或上传 .json 文件</span>
+            <span data-i18n="upload.label">上传 .json 文件</span>
           </label>
           <input type="file" id="json-files" accept=".json,application/json" multiple class="visually-hidden">
+          <label class="btn btn--ghost btn--sm" for="json-folder">
+            <span data-i18n="upload.folder">上传文件夹</span>
+          </label>
+          <input type="file" id="json-folder" webkitdirectory directory multiple class="visually-hidden">
           <span class="field__help" data-i18n="upload.help">单文件 ≤400MB，仅 .json；上传生成的任务不可重试。</span>
           <span class="field__help" id="upload-files"></span>
         </div>
@@ -148,16 +159,24 @@
       <div class="queue" id="queue" aria-live="polite" aria-relevant="additions text"></div>
     </section>
 
-    <div class="errorsbar" id="errors-strip" hidden>
-      <span class="errorsbar__icon" aria-hidden="true">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M8 2.2 14.2 13H1.8Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 6.4v3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.3" r=".85" fill="currentColor"/></svg>
-      </span>
-      <span class="errorsbar__text" id="errors-summary"></span>
-      <div class="errorsbar__actions">
-        <button type="button" class="btn btn--ghost btn--sm" id="btn-retry-all" data-i18n="errors.retryAll">全部重试</button>
-        <button type="button" class="btn btn--ghost btn--sm btn--danger" id="btn-clear-errors" data-i18n="errors.clear">清除记录</button>
+    <section class="errorspanel" id="errors-strip" hidden aria-labelledby="errors-title">
+      <div class="errorspanel__head">
+        <span class="errorspanel__icon" aria-hidden="true">
+          <svg viewBox="0 0 16 16" fill="none"><path d="M8 2.2 14.2 13H1.8Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 6.4v3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.3" r=".85" fill="currentColor"/></svg>
+        </span>
+        <h2 class="errorspanel__title" id="errors-title">
+          <span data-i18n="errors.title">失败记录</span>
+          <span class="count" id="errors-count" data-tone="warn"></span>
+        </h2>
+        <span class="errorspanel__text" id="errors-summary"></span>
+        <button type="button" class="btn btn--ghost btn--sm errorspanel__toggle" id="errors-toggle" aria-expanded="false" aria-controls="errors-body" data-i18n="errors.details">明细</button>
+        <div class="errorspanel__actions">
+          <button type="button" class="btn btn--ghost btn--sm" id="btn-retry-all" data-i18n="errors.retryAll">全部重试</button>
+          <button type="button" class="btn btn--ghost btn--sm btn--danger" id="btn-clear-errors" data-i18n="errors.clear">清除记录</button>
+        </div>
       </div>
-    </div>
+      <div class="errorspanel__body" id="errors-body" hidden></div>
+    </section>
 
     <section class="card card--ledger" aria-labelledby="ledger-title">
       <header class="card__head card__head--ledger">
@@ -168,19 +187,34 @@
         <label class="search">
           <svg class="search__icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7.2" cy="7.2" r="4.2"/><path d="M10.4 10.4L14 14" stroke-linecap="round"/></svg>
           <span class="visually-hidden" data-i18n="ledger.searchLabel">搜索台账</span>
-          <input type="search" id="ledger-search" data-i18n-placeholder="ledger.search" placeholder="搜索目标 / 任务 ID" autocomplete="off">
+          <input type="search" id="ledger-search" data-i18n-placeholder="ledger.search" placeholder="搜索目标 / 任务 ID（/）" autocomplete="off">
         </label>
       </header>
 
       <div class="ledger__bar">
         <div class="filters filters--chips" id="ledger-filters" role="group" data-i18n-aria="ledger.filterGroup" aria-label="按状态过滤"></div>
         <div class="ledger__bulk">
+          <label class="visually-hidden" for="ledger-type" data-i18n="ledger.typeLabel">按类型过滤</label>
+          <select class="select select--sm" id="ledger-type"></select>
+          <label class="visually-hidden" for="ledger-stage" data-i18n="ledger.stageLabel">按阶段过滤</label>
+          <select class="select select--sm" id="ledger-stage"></select>
           <button type="button" class="btn btn--ghost btn--sm" id="btn-batch-retry" disabled data-i18n="ledger.batchRetry">重试失败</button>
           <button type="button" class="btn btn--ghost btn--sm btn--danger" id="btn-batch-delete" disabled data-i18n="ledger.batchDelete">清理终态</button>
         </div>
       </div>
 
-      <div class="ledger__head" aria-hidden="true">
+      <div class="ledger__selection" id="ledger-selection" hidden>
+        <span class="ledger__selection-text" id="ledger-selection-text" aria-live="polite"></span>
+        <div class="ledger__selection-actions">
+          <button type="button" class="btn btn--ghost btn--sm" id="btn-selection-clear" data-i18n="selection.clear">取消选择</button>
+          <button type="button" class="btn btn--ghost btn--sm" id="btn-selection-cancel" data-i18n="selection.cancel">取消任务</button>
+          <button type="button" class="btn btn--ghost btn--sm" id="btn-selection-retry" data-i18n="selection.retry">重试任务</button>
+          <button type="button" class="btn btn--ghost btn--sm btn--danger" id="btn-selection-delete" data-i18n="selection.delete">删除记录</button>
+        </div>
+      </div>
+
+      <div class="ledger__head">
+        <span class="ledger__check"><input type="checkbox" id="ledger-select-all" data-i18n-aria="selection.all" aria-label="选择当前列表全部任务"></span>
         <span data-i18n="ledger.colStatus">状态</span>
         <span data-i18n="ledger.colTarget">目标</span>
         <span data-i18n="ledger.colProgress">进度</span>
@@ -193,7 +227,13 @@
         <p class="empty__title" id="ledger-empty-text"></p>
         <div class="empty__actions" id="ledger-empty-actions"></div>
       </div>
-      <button type="button" class="btn btn--ghost btn--wide" id="ledger-more" hidden data-i18n="ledger.more">显示更多记录</button>
+      <nav class="ledger__pager" id="ledger-pager" hidden aria-label="台账分页">
+        <button type="button" class="btn btn--ghost btn--sm" id="ledger-prev" data-i18n="ledger.prevPage">上一页</button>
+        <span class="ledger__pageinfo" id="ledger-pageinfo" aria-live="polite"></span>
+        <label class="visually-hidden" for="ledger-page-jump" data-i18n="ledger.jump">跳至页码</label>
+        <input class="input ledger__jump" id="ledger-page-jump" type="number" min="1" step="1" inputmode="numeric" data-i18n-placeholder="ledger.jump" placeholder="跳至">
+        <button type="button" class="btn btn--ghost btn--sm" id="ledger-next" data-i18n="ledger.nextPage">下一页</button>
+      </nav>
     </section>
   </section>
 
