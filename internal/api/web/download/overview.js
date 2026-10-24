@@ -50,6 +50,7 @@
         failuresClear: '清除',
         schedules: '接下来的计划',
         schedulesEmpty: '没有启用的计划任务',
+        schedulesEmptyHint: '在计划页新建并启用计划后，下次运行时间会显示在这里。',
         schedulesAll: '管理计划',
         systems: '系统概况',
         sysHealth: '服务',
@@ -117,6 +118,7 @@
         failuresClear: 'Clear',
         schedules: 'Next up',
         schedulesEmpty: 'No enabled schedules',
+  schedulesEmptyHint: 'Create and enable a schedule on the schedules page; upcoming runs will appear here.',
         schedulesAll: 'Manage schedules',
         systems: 'System',
         sysHealth: 'Service',
@@ -427,12 +429,11 @@
   function renderRecent() {
     var box = host.querySelector('[data-role="recent"]');
     if (!box) return;
-    var tasks = (T.state.tasks || []).slice(0, 7);
+    var tasks = (T.state.tasks || []).slice(0, 4);
     if (!tasks.length) {
       box.innerHTML = '<div class="ov-empty">' +
         '<p class="ov-empty__title">' + esc(t('recentEmpty')) + '</p>' +
         '<p class="muted small">' + esc(t('recentEmptyHint')) + '</p>' +
-        '<button type="button" class="btn btn--ghost btn--sm mt-12" data-go="/tasks">' + esc(t('viewAll')) + '</button>' +
         '</div>';
       return;
     }
@@ -506,8 +507,9 @@
         return am - bm;
       }).slice(0, 4);
     if (!upcoming.length) {
-      box.innerHTML = '<div class="ov-empty" style="border:0;padding:18px 14px">' +
-        '<p class="muted small">' + esc(t('schedulesEmpty')) + '</p></div>';
+      box.innerHTML = '<div class="ov-empty">' +
+        '<p class="ov-empty__title">' + esc(t('schedulesEmpty')) + '</p>' +
+        '<p class="muted small">' + esc(t('schedulesEmptyHint')) + '</p></div>';
       return;
     }
     box.innerHTML = upcoming.map(function (item) {
