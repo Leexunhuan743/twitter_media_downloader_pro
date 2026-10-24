@@ -17,7 +17,7 @@ require (
 	github.com/rs/cors v1.11.1
 	github.com/sirupsen/logrus v1.10.2
 	github.com/stretchr/testify v1.12.1
-	github.com/tidwall/gjson v1.19.1
+	github.com/tidwall/gjson v1.20.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.60.1
 )
