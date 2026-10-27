@@ -271,15 +271,9 @@ func parseTaskStageFilter(raw string) (map[string]struct{}, bool) {
 	if raw == "" {
 		return nil, true
 	}
-	valid := map[string]struct{}{
-		"syncing":         {},
-		"resolving":       {},
-		"downloading":     {},
-		"retrying":        {},
-		"profile":         {},
-		"profile_warning": {},
-		"marking":         {},
-		"completed":       {},
+	valid := make(map[string]struct{}, len(taskStages))
+	for _, stage := range taskStages {
+		valid[string(stage)] = struct{}{}
 	}
 	result := make(map[string]struct{})
 	for _, part := range strings.Split(raw, ",") {
