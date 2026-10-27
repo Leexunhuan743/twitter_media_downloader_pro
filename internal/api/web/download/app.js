@@ -829,7 +829,9 @@
   /* ---------------- target parsing ---------------- */
 
   var RE_HANDLE = /^@?[A-Za-z0-9_]{1,15}$/;
-  var RE_URL = /^(?:https?:\/\/)?(?:www\.|mobile\.)?(?:x|twitter)\.com\//i;
+  // scheme 可省略、主机名大小写不敏感；子域名（m./www./mobile.）一并吸收，
+  // 主机名后必须是路径分隔符或结尾，避免把 x.com.evil 之类当成 X 链接。
+  var RE_URL = /^(?:https?:\/\/)?(?:[a-z0-9-]+\.)*(?:x|twitter)\.com(?=[/?#]|$)/i;
   var RE_LIST_URL = /\/i\/lists\/(\d+)/i;
   var RE_JSON = /\.json$/i;
   var RE_PATH = /^(?:[A-Za-z]:[\\/]|\/|\.{1,2}[\\/]|~[\\/])/;
@@ -837,8 +839,13 @@
   var URL_RESERVED = {
     home: 1, explore: 1, notifications: 1, messages: 1, search: 1, settings: 1,
     i: 1, intent: 1, share: 1, hashtag: 1, compose: 1, login: 1, logout: 1,
-    signup: 1, tos: 1, privacy: 1, account: 1, jobs: 1, premium: 1, about: 1
+    signup: 1, tos: 1, privacy: 1, account: 1, jobs: 1, premium: 1, about: 1,
+    lists: 1, bookmarks: 1, communities: 1, download: 1, help: 1, rules: 1,
+    terms: 1, following: 1, followers: 1, verified: 1
   };
+  // 用户名后面的页面段：/media /reposts /with_replies 等仍然指向同一个账号，
+  // 其余段（/status/1、/lists、/communities）没有对应的下载任务。
+  var URL_USER_PAGES = { media: 1, reposts: 1, with_replies: 1, highlights: 1, likes: 1, photo: 1 };
   var RE_STATUS_URL = /\/(?:status|statuses)\/\d+/i;
 
   function classify(token) {
@@ -848,11 +855,14 @@
       if (listMatch) return { kind: 'list', value: listMatch[1] };
       var url = token.replace(/[?#].*$/, '').replace(/\/+$/, '')
         .replace(/^https?:\/\//i, '')
-        .replace(/^(?:www\.|mobile\.)?(?:x|twitter)\.com/i, '');
+        .replace(/^(?:[a-z0-9-]+\.)*(?:x|twitter)\.com/i, '');
       // 单条推文、搜索页、设置页等在下载器里没有对应任务，直接标为无法识别。
       if (RE_STATUS_URL.test(url)) return { kind: 'bad', value: token };
       var parts = url.split('/').filter(Boolean);
       var handle = (parts[0] || '').replace(/^@/, '');
+      // 第二段只接受「仍是这个账号的页面」的白名单，/handle/anything 不算账号。
+      var tail = parts.length > 1 ? String(parts[1]).toLowerCase() : '';
+      if (tail && !URL_USER_PAGES[tail]) return { kind: 'bad', value: token };
       if (handle && RE_HANDLE.test(handle) && !URL_RESERVED[handle.toLowerCase()]) {
         return { kind: 'user', value: handle };
       }
@@ -865,15 +875,15 @@
     return { kind: 'bad', value: token };
   }
 
-  // 每行先按换行切，一行只有一个候选时整行保留（路径可含空格）；行内再按空白/逗号
-  // 切分多个目标。含盘符或分隔符的片段不再被二次切开。
+  // 每行先按换行切，行内再按空白/逗号切成多个目标。像文件路径的行（带盘符、绝对
+  // 路径、~ 或 . 开头）整行保留，因为路径可以含空格；没有空白的行也不必切。
   function parseTargets(text) {
     var lines = String(text || '').split(/\r?\n/);
     var out = [];
     lines.forEach(function (line) {
       var trimmed = line.trim();
       if (!trimmed) return;
-      var tokens = /[\\/]/.test(trimmed) || /^[A-Za-z]:/.test(trimmed)
+      var tokens = RE_PATH.test(trimmed) || !/\s/.test(trimmed)
         ? [trimmed]
         : trimmed.split(/[\s,;，、]+/).filter(Boolean);
       tokens.forEach(function (token) {
@@ -3851,3 +3861,4 @@
     boot();
   }
 })();
+
