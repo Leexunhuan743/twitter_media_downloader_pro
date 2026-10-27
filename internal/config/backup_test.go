@@ -100,3 +100,54 @@ func TestCreateBackupPrunesPerSourceFile(t *testing.T) {
 	assert.Equal(t, maxConfigBackupCount, confCount, "conf.yaml 应保留 10 份")
 	assert.Equal(t, 3, schedCount, "schedules.yaml 应保留全部 3 份")
 }
+
+// 同一秒钟内的连续备份不能重名。系统时钟精度低时两次 time.Now().UnixNano()
+// 会取到同一个值，重名让后一次写入覆盖前一份，备份份数因此偏少。
+func TestCreateBackupUniqueNamesWithinSameTick(t *testing.T) {
+	root := t.TempDir()
+	confPath := filepath.Join(root, "conf.yaml")
+	require.NoError(t, os.WriteFile(confPath, []byte("root_path: x"), 0600))
+
+	const runs = 50
+	names := make(map[string]struct{}, runs)
+	for i := 0; i < runs; i++ {
+		name, err := CreateBackup(confPath)
+		require.NoError(t, err)
+		require.NotEmpty(t, name)
+		_, dup := names[name]
+		require.False(t, dup, "备份名重复：%s", name)
+		names[name] = struct{}{}
+	}
+
+	entries, err := os.ReadDir(filepath.Join(root, backupDirName))
+	require.NoError(t, err)
+	// 上限 10 份，其余在创建时已被修剪；留下的必须是 10 份不同的文件。
+	assert.Equal(t, maxConfigBackupCount, len(entries))
+}
+
+// 备份文件名的时间戳必须随创建顺序递增，修剪依据的就是这个顺序。
+func TestCreateBackupTimestampsIncrease(t *testing.T) {
+	root := t.TempDir()
+	confPath := filepath.Join(root, "conf.yaml")
+	require.NoError(t, os.WriteFile(confPath, []byte("root_path: x"), 0600))
+
+	var stamps []string
+	for i := 0; i < 5; i++ {
+		name, err := CreateBackup(confPath)
+		require.NoError(t, err)
+		idx := strings.Index(name, ".backup.")
+		require.GreaterOrEqual(t, idx, 0)
+		stamps = append(stamps, name[idx+len(".backup."):])
+	}
+	for i := 1; i < len(stamps); i++ {
+		require.NotEqual(t, len(stamps[i-1]), 0)
+		// 长度不同的数字串按字典序比较会失真，比较前对齐到同一宽度。
+		width := len(stamps[i])
+		if len(stamps[i-1]) > width {
+			width = len(stamps[i-1])
+		}
+		prev := strings.Repeat("0", width-len(stamps[i-1])) + stamps[i-1]
+		cur := strings.Repeat("0", width-len(stamps[i])) + stamps[i]
+		assert.Less(t, prev, cur, "时间戳应递增")
+	}
+}
