@@ -159,8 +159,16 @@
     '.stat--link:hover { background: var(--surface-2); }',
     '.stat--link:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }',
     '.stat__arrow { margin-left: auto; color: var(--muted); font-size: 12px; }',
-    '.ov-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 16px; align-items: start; }',
+    // 两列等高：网格行拉伸，左右两列的卡片总高一致；卡片内容区吸收剩余高度，
+    // 内容少的一侧把空态块垂直居中，不贴在卡片顶部。
+    '.ov-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 16px; align-items: stretch; }',
+    '.ov-grid > .card { display: flex; flex-direction: column; min-width: 0; }',
+    '.ov-grid > .card > [data-role="recent"] { flex: 1 1 auto; display: flex; flex-direction: column; }',
+    '.ov-grid > .card > [data-role="recent"] > .ov-empty { margin: auto 0; }',
     '.ov-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }',
+    '.ov-side > .card:last-child { flex: 1 1 auto; display: flex; flex-direction: column; }',
+    '.ov-sched { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }',
+    '.ov-sched > .ov-empty { margin: auto 0; }',
     '.ov-updated { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }',
     '.ov-stale { margin: 0 0 12px; }',
     '.ov-row.lrow { grid-template-columns: 78px minmax(0, 1fr) 128px 78px 88px; }',
@@ -178,7 +186,6 @@
     '.ov-fail__name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
     '.ov-fail__count { color: var(--danger); font-variant-numeric: tabular-nums; }',
     '.ov-fail__foot { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); flex-wrap: wrap; }',
-    '.ov-sched { display: flex; flex-direction: column; }',
     '.ov-sched__row { display: flex; align-items: baseline; gap: 8px; padding: 8px 14px; border-top: 1px solid var(--border); font-size: 12.5px; }',
     '.ov-sched__row:first-child { border-top: 0; }',
     '.ov-sched__name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
@@ -187,7 +194,7 @@
     '.ov-sys .kv__val { max-width: 62%; }',
     '.ov-truncate { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }',
     '.mt-12 { margin-top: 12px; }',
-    '@media (max-width: 900px) { .ov-grid { grid-template-columns: minmax(0, 1fr); } }',
+    '@media (max-width: 900px) { .ov-grid { grid-template-columns: minmax(0, 1fr); align-items: start; } .ov-grid > .card, .ov-side > .card:last-child, .ov-sched { flex: 0 1 auto; } }',
     '@media (max-width: 720px) {',
     '  .ov-quick { flex-wrap: wrap; }',
     '  .ov-quick .btn { width: 100%; }',
@@ -790,4 +797,3 @@
     }
   });
 })();
-
