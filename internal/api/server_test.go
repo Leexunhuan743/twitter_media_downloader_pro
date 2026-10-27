@@ -3235,6 +3235,45 @@ func TestHandleErrorsEntityDetails(t *testing.T) {
 	assert.Equal(t, 1, second.Failed)
 }
 
+// 失败记录也可能属于列表实体：lst_entities.id 与 user_entities.id 共用同一区间，
+// 未命中 user_entities 的 ID 必须回落到 lst_entities，否则界面只能显示裸 ID。
+func TestHandleErrorsEntityDetailsListEntity(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer db.Close()
+
+	require.NoError(t, database.CreateUser(db, &database.User{Id: 777, ScreenName: "owner", Name: "Owner"}))
+	require.NoError(t, database.CreateLst(db, &database.Lst{Id: 2003, Name: "Watchlist", OwnerUserId: 777}))
+
+	le := &database.LstEntity{LstId: 2003, Name: "members", ParentDir: "lists"}
+	require.NoError(t, database.CreateLstEntity(db, le))
+	entityID := int(le.Id.Int32)
+
+	storePath, err := path.NewStorePath(server.config.RootPath)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(storePath.ErrorsPath), 0755))
+
+	dumper := downloading.NewDumper()
+	dumper.Push(entityID, &twitter.Tweet{Id: 1})
+	require.NoError(t, dumper.Dump(storePath.ErrorsPath))
+
+	rr := serveAPI(server, httptest.NewRequest(http.MethodGet, "/api/v1/errors", nil))
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp struct {
+		Success bool                 `json:"success"`
+		Data    ErrorSummaryResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.Len(t, resp.Data.RegularDetails, 1)
+
+	detail := resp.Data.RegularDetails[0]
+	assert.Equal(t, entityID, detail.EntityID)
+	assert.Equal(t, "list", detail.Kind)
+	assert.Equal(t, "members", detail.Name)
+	assert.Equal(t, "Watchlist", detail.ScreenName)
+	assert.Equal(t, 1, detail.Failed)
+}
+
 func TestHandleBatchMark(t *testing.T) {
 	server, db := setupTestServer(t)
 	defer db.Close()

@@ -48,6 +48,38 @@ func GetLstEntity(db *sqlx.DB, id int) (*LstEntity, error) {
 	return GetLstEntityWithTx(db, id)
 }
 
+// GetLstEntitiesByIDs 批量取 lst_entities，返回以 id 为键的映射。
+func GetLstEntitiesByIDs(db *sqlx.DB, ids []int) (map[int]*LstEntity, error) {
+	result := make(map[int]*LstEntity, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+
+	query, args, err := sqlx.In(`SELECT * FROM lst_entities WHERE id IN (?)`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build batch list entity query: %w", err)
+	}
+	rows, err := db.Queryx(db.Rebind(query), args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch get list entities: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		record := &LstEntity{}
+		if err := rows.StructScan(record); err != nil {
+			return nil, fmt.Errorf("failed to scan list entity: %w", err)
+		}
+		if record.Id.Valid {
+			result[int(record.Id.Int32)] = record
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read list entities: %w", err)
+	}
+	return result, nil
+}
+
 // GetLstEntityWithTx 支持在事务中查询 lst_entities
 func GetLstEntityWithTx(queryer interface {
 	Get(dest interface{}, query string, args ...interface{}) error

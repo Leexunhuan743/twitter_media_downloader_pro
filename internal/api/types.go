@@ -384,9 +384,11 @@ type ErrorSummaryResponse struct {
 }
 
 // ErrorEntityDetail 描述一条常规失败记录的实体信息。
+// Kind 为 "user" 或 "list"；实体已删除时为空，此时只有 EntityID 与 Failed 有效。
+// ScreenName 对用户是 @handle，对列表是所属列表的名字。
 type ErrorEntityDetail struct {
 	EntityID   int    `json:"entity_id"`
-	Kind       string `json:"kind"` // "user"；实体已删除时为空
+	Kind       string `json:"kind"`
 	Name       string `json:"name,omitempty"`
 	ScreenName string `json:"screen_name,omitempty"`
 	UserID     uint64 `json:"user_id,omitempty"`

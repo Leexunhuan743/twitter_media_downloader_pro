@@ -59,6 +59,39 @@ func GetUserEntity(db *sqlx.DB, id int) (*UserEntity, error) {
 	return handleGetResultWithContext(result, err, "failed to get user entity %d: %w", id)
 }
 
+// GetUserEntitiesByIDs 批量取 user_entities，返回以 id 为键的映射，
+// 供只带一组实体 ID 的调用方（如失败明细）避免逐条查询。
+func GetUserEntitiesByIDs(db *sqlx.DB, ids []int) (map[int]*UserEntity, error) {
+	result := make(map[int]*UserEntity, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+
+	query, args, err := sqlx.In(`SELECT * FROM user_entities WHERE id IN (?)`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build batch user entity query: %w", err)
+	}
+	rows, err := db.Queryx(db.Rebind(query), args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch get user entities: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		record := &UserEntity{}
+		if err := rows.StructScan(record); err != nil {
+			return nil, fmt.Errorf("failed to scan user entity: %w", err)
+		}
+		if record.Id.Valid {
+			result[int(record.Id.Int32)] = record
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read user entities: %w", err)
+	}
+	return result, nil
+}
+
 // UpdateUserEntityNameIfCurrent updates only the directory-backed name when
 // the caller's view is still current. A false result reports a stale write.
 func UpdateUserEntityNameIfCurrent(db *sqlx.DB, id int, currentName, newName string) (bool, error) {

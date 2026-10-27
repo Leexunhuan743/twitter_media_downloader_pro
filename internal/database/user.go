@@ -28,6 +28,36 @@ func GetUserById(db *sqlx.DB, uid uint64) (*User, error) {
 	return handleGetResultWithContext(result, err, "failed to get user %d: %w", uid)
 }
 
+// GetUsersByIds 批量取 users，返回以 id 为键的映射。
+func GetUsersByIds(db *sqlx.DB, uids []uint64) (map[uint64]*User, error) {
+	result := make(map[uint64]*User, len(uids))
+	if len(uids) == 0 {
+		return result, nil
+	}
+
+	query, args, err := sqlx.In(`SELECT * FROM users WHERE id IN (?)`, uids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build batch user query: %w", err)
+	}
+	rows, err := db.Queryx(db.Rebind(query), args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch get users: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		record := &User{}
+		if err := rows.StructScan(record); err != nil {
+			return nil, fmt.Errorf("failed to scan user: %w", err)
+		}
+		result[record.Id] = record
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read users: %w", err)
+	}
+	return result, nil
+}
+
 func SetUserAccessible(db *sqlx.DB, uid uint64, accessible bool) error {
 	stmt := `UPDATE users SET is_accessible=? WHERE id=?`
 	result, err := db.Exec(stmt, accessible, uid)

@@ -1188,27 +1188,93 @@ func (s *Server) handleErrors(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, NewSuccessResponse(resp))
 }
 
-// errorEntityDetails 把失败计数映射成带实体名的明细：先按 user_entities 查，
-// 未命中再按 lst_entities 查。查不到的实体保留 ID 和计数，界面仍能显示裸 ID。
+// errorEntityDetails 把失败计数映射成带实体名的明细。一次批量查询 user_entities
+// 与 lst_entities，再批量取用户账号；查不到的实体保留 ID 和计数，界面仍能显示裸 ID。
+// 失败记录的键是实体 ID，user_entities 与 lst_entities 的 ID 取自同一自增区间，
+// 因此先命中 user_entities，未命中再按 lst_entities 处理。
 func (s *Server) errorEntityDetails(regular map[int]int) []ErrorEntityDetail {
 	if len(regular) == 0 {
 		return nil
 	}
-	details := make([]ErrorEntityDetail, 0, len(regular))
-	for id, failed := range regular {
-		detail := ErrorEntityDetail{EntityID: id, Failed: failed}
-		if s.db != nil {
-			if ue, err := database.GetUserEntity(s.db, id); err == nil && ue != nil {
-				detail.Kind = "user"
-				detail.Name = ue.Name
-				detail.UserID = ue.UserId
-				if usr, err := database.GetUserById(s.db, ue.UserId); err == nil && usr != nil {
-					detail.ScreenName = usr.ScreenName
+	ids := make([]int, 0, len(regular))
+	for id := range regular {
+		ids = append(ids, id)
+	}
+
+	var userEntities map[int]*database.UserEntity
+	var lstEntities map[int]*database.LstEntity
+	if s.db != nil {
+		if found, err := database.GetUserEntitiesByIDs(s.db, ids); err == nil {
+			userEntities = found
+		} else {
+			log.Debugf("[errors] Batch user entity lookup failed error=%q", err.Error())
+		}
+		if len(userEntities) < len(ids) {
+			missing := make([]int, 0, len(ids)-len(userEntities))
+			for _, id := range ids {
+				if _, ok := userEntities[id]; !ok {
+					missing = append(missing, id)
 				}
 			}
+			if found, err := database.GetLstEntitiesByIDs(s.db, missing); err == nil {
+				lstEntities = found
+			} else {
+				log.Debugf("[errors] Batch list entity lookup failed error=%q", err.Error())
+			}
+		}
+	}
+
+	details := make([]ErrorEntityDetail, 0, len(ids))
+	ownerIDs := make([]uint64, 0, len(userEntities))
+	for id, failed := range regular {
+		detail := ErrorEntityDetail{EntityID: id, Failed: failed}
+		if ue, ok := userEntities[id]; ok && ue != nil {
+			detail.Kind = "user"
+			detail.Name = ue.Name
+			detail.UserID = ue.UserId
+			ownerIDs = append(ownerIDs, ue.UserId)
+		} else if le, ok := lstEntities[id]; ok && le != nil {
+			// 列表实体只带自己名字，归属信息来自 lsts 表。
+			detail.Kind = "list"
+			detail.Name = le.Name
 		}
 		details = append(details, detail)
 	}
+
+	if s.db != nil && len(ownerIDs) > 0 {
+		owners, err := database.GetUsersByIds(s.db, ownerIDs)
+		if err != nil {
+			log.Debugf("[errors] Batch user lookup failed error=%q", err.Error())
+		}
+		for i := range details {
+			if details[i].UserID == 0 {
+				continue
+			}
+			if usr, ok := owners[details[i].UserID]; ok && usr != nil {
+				details[i].ScreenName = usr.ScreenName
+			}
+		}
+	}
+	if s.db != nil && len(lstEntities) > 0 {
+		listIDs := make([]uint64, 0, len(lstEntities))
+		for _, le := range lstEntities {
+			if le != nil {
+				listIDs = append(listIDs, uint64(le.LstId))
+			}
+		}
+		lists := s.batchLoadNames("lsts", "id", "name", uint64Args(listIDs))
+		for i := range details {
+			if details[i].Kind != "list" {
+				continue
+			}
+			if le, ok := lstEntities[details[i].EntityID]; ok && le != nil {
+				if name, ok := lists[le.LstId]; ok && name != "" {
+					details[i].ScreenName = name
+				}
+			}
+		}
+	}
+
 	sort.Slice(details, func(i, j int) bool {
 		if details[i].Failed != details[j].Failed {
 			return details[i].Failed > details[j].Failed
@@ -1216,6 +1282,15 @@ func (s *Server) errorEntityDetails(regular map[int]int) []ErrorEntityDetail {
 		return details[i].EntityID < details[j].EntityID
 	})
 	return details
+}
+
+// uint64Args 把 []uint64 转成 batchLoadNames 需要的 []interface{}。
+func uint64Args(values []uint64) []interface{} {
+	args := make([]interface{}, len(values))
+	for i, v := range values {
+		args[i] = v
+	}
+	return args
 }
 
 func (s *Server) handleQueueStatus(w http.ResponseWriter, _ *http.Request) {
