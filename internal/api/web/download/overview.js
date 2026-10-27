@@ -11,11 +11,11 @@
         title: '总览',
         sub: '一眼看清服务状态与队列压力，常用操作不用切页：粘贴目标即可开始下载。',
         quickTitle: '快速下载',
-        quickSub: '粘贴 @handle、x.com 链接或列表 id，回车即入队；更多选项在下载页。',
+        quickSub: '粘贴 @handle、x.com 链接或列表 id，回车即入队；Shift + 回车换行。',
         quickPlaceholder: '@nasa、https://x.com/elonmusk、1234567890',
         quickGo: '开始下载',
         quickBusy: '提交中…',
-        quickHint: '支持空格或换行分隔多个目标',
+        quickHint: '支持空格或换行分隔多个目标，每行一个也可',
         quickEmpty: '先粘贴一个目标',
         quickClipboardUnsupported: '当前环境无法读取剪贴板，请手动粘贴',
         quickClipboardDenied: '剪贴板读取被拒绝，请手动粘贴',
@@ -79,7 +79,7 @@
         title: 'Overview',
         sub: 'Service state and queue pressure at a glance; common actions without switching pages.',
         quickTitle: 'Quick download',
-        quickSub: 'Paste a handle, an x.com link or a list id; Enter queues it. More options on the download page.',
+        quickSub: 'Paste a handle, an x.com link or a list id; Enter queues it. Shift + Enter adds a line.',
         quickPlaceholder: '@nasa, https://x.com/elonmusk, 1234567890',
         quickGo: 'Start download',
         quickBusy: 'Submitting…',
@@ -150,7 +150,7 @@
     '.ov-hero__text { display: flex; flex-direction: column; gap: 2px; }',
     '.ov-hero__text p { margin: 0; }',
     '.ov-quick { display: flex; gap: 8px; align-items: stretch; }',
-    '.ov-quick__input { flex: 1 1 auto; min-width: 0; min-height: 40px; font-size: 14px; }',
+    '.ov-quick__input { flex: 1 1 auto; min-width: 0; min-height: 40px; font-size: 14px; line-height: 1.45; resize: none; }',
     '.ov-quick__hint { margin: 0; color: var(--muted); font-size: 12px; }',
     '.ov-quick__hint[data-tone="good"] { color: var(--ok); }',
     '.ov-quick__hint[data-tone="bad"] { color: var(--danger); }',
@@ -273,7 +273,7 @@
           '<p class="muted small">' + esc(t('quickSub')) + '</p>' +
         '</div>' +
         '<form class="ov-quick" id="ov-quick-form" novalidate>' +
-          '<input class="input ov-quick__input" id="ov-quick-input" autocomplete="off" spellcheck="false" placeholder="' + esc(t('quickPlaceholder')) + '" aria-label="' + esc(t('quickTitle')) + '">' +
+          '<textarea class="textarea ov-quick__input" id="ov-quick-input" rows="1" autocomplete="off" spellcheck="false" placeholder="' + esc(t('quickPlaceholder')) + '" aria-label="' + esc(t('quickTitle')) + '"></textarea>' +
           '<button type="submit" class="btn btn--primary" id="ov-quick-go">' + esc(t('quickGo')) + '</button>' +
         '</form>' +
         '<p class="ov-quick__hint" id="ov-quick-hint" aria-live="polite">' + esc(t('quickHint')) + '</p>' +
@@ -572,6 +572,7 @@
         if (result.empty) { quickHint(t('quickClipboardEmpty'), 'bad'); return; }
         if (!input.value.trim()) {
           input.value = result.text;
+          autoGrowQuickInput();
           submitQuick(null);
         }
       }, function (reason) {
@@ -607,6 +608,7 @@
       setQuickBusy(false);
       if (ok > 0) {
         input.value = '';
+        autoGrowQuickInput();
         quickHint(failed ? t('quickPartial', { ok: ok, fail: failed }) : t('quickOk', {
           names: items.slice(0, 3).map(function (item) { return item.value; }).join(', ') + (items.length > 3 ? ' …' : '')
         }), failed ? 'bad' : 'good');
@@ -616,6 +618,30 @@
         quickHint(lastError || t('quickBad', { n: items.length }), 'bad');
       }
     });
+  }
+
+  // bindQuickInput 让快速下载框接受多行粘贴：Enter 提交，Shift+Enter 手动换行，
+  // 高度随内容增长到上限（超过 3 行的部分在框内滚动）。
+  function bindQuickInput() {
+    var input = host.querySelector('#ov-quick-input');
+    if (!input) return;
+    input.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+      event.preventDefault();
+      submitQuick(null);
+    });
+    input.addEventListener('input', autoGrowQuickInput);
+    autoGrowQuickInput();
+  }
+
+  function autoGrowQuickInput() {
+    var input = host.querySelector('#ov-quick-input');
+    if (!input) return;
+    input.style.height = 'auto';
+    var lineHeight = 21;
+    var max = lineHeight * 3 + 18;
+    input.style.height = Math.min(input.scrollHeight, max) + 'px';
+    input.style.overflowY = input.scrollHeight > max ? 'auto' : 'hidden';
   }
 
   /* ---------------- 行内操作 ---------------- */
@@ -735,6 +761,7 @@
 
     var form = host.querySelector('#ov-quick-form');
     if (form) form.addEventListener('submit', submitQuick);
+    bindQuickInput();
   }
 
   T.views.register('overview', {
@@ -763,3 +790,4 @@
     }
   });
 })();
+
