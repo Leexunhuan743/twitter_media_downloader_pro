@@ -2785,7 +2785,9 @@
     });
   }
 
-  var BATCH_LIMIT = 200;
+  // BATCH_LIMIT 与后端 batchTaskMaxIDs 一致：超过上限的请求后端直接 400，
+  // 前端必须先截断再发，否则用户看到的是报错而不是截断提示。
+  var BATCH_LIMIT = 100;
 
   // batchScope 把批量操作的目标限定在当前已加载的台账行内，并按上限截断；
   // 截断发生时提示跳过数量，避免「看起来全处理了」的错觉。
@@ -2814,11 +2816,16 @@
     });
     if (!picked) { toast('info', t('selection.count', { n: 0 })); return; }
     if (!ids.length) { toast('info', t('toast.batchEmpty')); return; }
-    if (action === 'cancel' && !window.confirm(t('confirm.cancelSelected', { n: ids.length }))) return;
-    if (action === 'retry' && !window.confirm(t('confirm.retrySelected', { n: ids.length }))) return;
+    // 选中数量可能超过单次上限：确认文案按实际提交的数量，并单独提示被跳过的部分。
+    var sent = ids.slice(0, BATCH_LIMIT);
+    if (ids.length > sent.length) {
+      toast('info', t('ledger.batchTruncated', { n: BATCH_LIMIT, rest: ids.length - sent.length }));
+    }
+    if (action === 'cancel' && !window.confirm(t('confirm.cancelSelected', { n: sent.length }))) return;
+    if (action === 'retry' && !window.confirm(t('confirm.retrySelected', { n: sent.length }))) return;
     var run = function () {
-      batchTasks(action, ids.slice(0, BATCH_LIMIT)).then(function () {
-        ids.forEach(function (id) { delete state.select[id]; });
+      batchTasks(action, sent).then(function () {
+        sent.forEach(function (id) { delete state.select[id]; });
         renderSelection();
       }).catch(function (err) {
         if (err.status !== 401) toast('error', err.message);
@@ -3861,4 +3868,3 @@
     boot();
   }
 })();
-
