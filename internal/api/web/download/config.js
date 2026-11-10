@@ -485,13 +485,8 @@
 
   function injectStyle() {
     T.injectStyle('view-system-style', [
-      /* 分区锚点 */
-      '.sys-nav { position: sticky; top: 102px; z-index: 18; margin: 0 0 14px; padding: 4px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); box-shadow: var(--shadow-sm); }',
-      '.sys-nav__inner { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }',
-      '.sys-nav__inner::-webkit-scrollbar { display: none; }',
-      '.sys-nav__item { flex: 0 0 auto; display: inline-flex; align-items: center; min-height: 34px; padding: 0 12px; border-radius: 7px; color: var(--text-soft); font-size: 13px; font-weight: 550; text-decoration: none; white-space: nowrap; }',
-      '.sys-nav__item:hover { background: var(--surface-2); color: var(--text); }',
-      '.sys-nav__item[aria-current="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 650; }',
+      /* 分区锚点：只负责粘附定位，容器与胶囊样式来自全局 .band */
+      '.sys-nav { position: sticky; top: 102px; z-index: 18; }',
       /* 卡片内分区 */
       '.sys-group { scroll-margin-top: 168px; }',
       '.sys-group + .sys-group { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border); }',
@@ -554,7 +549,7 @@
       /* 移动端 */
       '@media (max-width: 700px) {',
       '  .sys-nav { margin-left: -8px; margin-right: -8px; border-radius: 0; border-left: 0; border-right: 0; }',
-      '  .sys-nav__item { min-height: 40px; padding: 0 10px; }',
+      '  .sys-nav .band__item { min-height: 40px; padding: 0 10px; }',
       '  .sys-fields { grid-template-columns: minmax(0, 1fr); }',
       '  .sys-field__head { min-height: 40px; }',
       '  .sys-field__clear { min-height: 40px; padding: 0 12px; }',
@@ -585,9 +580,7 @@
   }
 
   function navMarkup() {
-    return '<nav class="sys-nav" aria-label="' + esc(t('nav.aria')) + '">' +
-      '<div class="sys-nav__inner" data-role="sys-nav"></div>' +
-      '</nav>';
+    return '<nav class="band sys-nav" data-role="sys-nav" aria-label="' + esc(t('nav.aria')) + '"></nav>';
   }
 
   function sessionCardMarkup() {
@@ -908,7 +901,7 @@
     if (!groups.length && !S.fieldsError) groups = GROUPS.slice();
     var items = groups.concat(['session', 'runtime', 'danger']);
     holder.innerHTML = items.map(function (id) {
-      return '<a class="sys-nav__item" href="#sys-' + esc(id) + '" data-nav-target="' + esc(id) + '">' +
+      return '<a class="band__item" href="#sys-' + esc(id) + '" data-nav-target="' + esc(id) + '">' +
         esc(navLabel(id)) + '</a>';
     }).join('');
     syncActiveNav(activeNav);

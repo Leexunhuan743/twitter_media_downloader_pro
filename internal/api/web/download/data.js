@@ -235,14 +235,6 @@
   /* ---------------- 视图私有样式（id: view-data-style，选择器前缀 data-） ---------------- */
 
   T.injectStyle('view-data-style', `
-.data-stats{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));margin-top:16px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow-sm);overflow:hidden}
-.data-stat{display:flex;flex-direction:column;gap:3px;align-items:flex-start;padding:10px 14px;border:0;background:transparent;text-align:left;cursor:pointer;transition:background .14s ease}
-.data-stat + .data-stat{border-left:1px solid var(--border)}
-.data-stat:hover{background:var(--surface-2)}
-.data-stat[aria-pressed="true"]{background:var(--accent-soft)}
-.data-stat__label{color:var(--muted);font-size:11.5px;font-weight:650;letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.data-stat__value{color:var(--text);font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.01em;line-height:1.2}
-.data-stat[aria-pressed="true"] .data-stat__label,.data-stat[aria-pressed="true"] .data-stat__value{color:var(--accent)}
 .data-stats-error{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}
 .data-card{padding:16px 16px 12px}
 .data-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px}
@@ -302,12 +294,6 @@
 .modal[data-role="detail-modal"]:focus,.modal[data-role="detail-modal"]:focus-visible,.modal[data-role="delete-modal"]:focus,.modal[data-role="delete-modal"]:focus-visible{outline:none}
 .data-rename-hint{margin:6px 0 0;color:var(--warn);font-size:12px}
 .data-required{color:var(--danger);font-weight:700}
-@media (max-width:900px){
-  .data-stats{grid-template-columns:repeat(3,minmax(0,1fr))}
-  .data-stat:nth-child(3n+1){border-left:0}
-  .data-stat:nth-child(n+4){border-top:1px solid var(--border)}
-  .data-stat__value{font-size:17px}
-}
 @media (max-width:720px){
   .data-card{padding:14px 12px 10px}
   .data-toolbar{gap:10px}
@@ -690,11 +676,11 @@
 
   function statButton(item) {
     var active = st.tab === item.tab;
-    return '<button type="button" class="data-stat" data-stat-tab="' + item.tab + '"' +
+    return '<button type="button" class="stat stat--action" data-stat-tab="' + item.tab + '"' +
       ' aria-pressed="' + (active ? 'true' : 'false') + '"' +
       ' title="' + esc(t('switchTo', { name: t(TABS[item.tab].label) })) + '">' +
-      '<span class="data-stat__label">' + esc(t(TABS[item.tab].label)) + '</span>' +
-      '<span class="data-stat__value" data-stat="' + item.tab + '">—</span>' +
+      '<span class="stat__label">' + esc(t(TABS[item.tab].label)) + '</span>' +
+      '<span class="stat__value" data-stat="' + item.tab + '">—</span>' +
       '</button>';
   }
 
@@ -706,7 +692,7 @@
           '<p class="view-sub">' + esc(t('sub')) + '</p>' +
         '</div>' +
       '</div>' +
-      '<div class="data-stats" data-role="stats" role="group" aria-label="' + esc(t('statsLabel')) + '">' +
+      '<div class="statstrip" data-role="stats" role="group" aria-label="' + esc(t('statsLabel')) + '">' +
         STATS.map(statButton).join('') +
       '</div>' +
       '<p class="notice notice--danger data-stats-error" data-role="stats-error" hidden></p>' +

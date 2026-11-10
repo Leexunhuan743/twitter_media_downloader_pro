@@ -173,7 +173,7 @@
       '#view-logs .view-head{flex-wrap:wrap;row-gap:10px}',
       '#view-logs .view-head__actions{flex-wrap:wrap;justify-content:flex-end;min-width:0}',
       '#view-logs .view-head__actions .btn{min-height:40px;min-width:40px}',
-      '#view-logs .chip{min-height:40px}',
+      '#view-logs .band__item{min-height:40px}',
       '#view-logs .logbar .switch{min-height:40px}',
       '#view-logs .logfilters__q,#view-logs .logfilters__domain{flex:1 1 100%;min-width:0}',
       '#view-logs .logfilters .select{flex:1 1 auto;min-width:0}',
@@ -414,7 +414,7 @@
 
   function chip(level) {
     var pressed = filters.level === level ? 'true' : 'false';
-    return '<button type="button" class="chip" data-level="' + level + '" aria-pressed="' + pressed + '">' +
+    return '<button type="button" class="band__item" data-level="' + level + '" aria-pressed="' + pressed + '">' +
       esc(t(LEVEL_LABEL[level])) +
       '<span class="chip__count" data-stat="' + level + '">—</span>' +
       '</button>';
@@ -475,7 +475,7 @@
           '<button type="button" class="btn btn--ghost btn--sm" data-role="refresh" title="' + esc(T.t('common.refresh')) + '" aria-label="' + esc(T.t('common.refresh')) + '">' + ICONS.refresh + '</button>' +
         '</div>' +
       '</div>' +
-      '<div class="filters" data-role="stats">' + LEVELS.map(chip).join('') + '</div>' +
+      '<div class="band" data-role="stats">' + LEVELS.map(chip).join('') + '</div>' +
       '<section class="card">' +
         '<header class="card__head">' +
           '<h3 class="card__title">' + esc(t('results')) + '</h3>' +
@@ -518,7 +518,7 @@
 
   function renderFilterState() {
     if (!host) return;
-    Array.prototype.forEach.call(host.querySelectorAll('.chip[data-level]'), function (el) {
+    Array.prototype.forEach.call(host.querySelectorAll('.band__item[data-level]'), function (el) {
       el.setAttribute('aria-pressed', el.getAttribute('data-level') === filters.level ? 'true' : 'false');
     });
     var rangeSelect = host.querySelector('[data-role="range"]');
@@ -1135,7 +1135,7 @@
     var target = event.target;
     if (!target || typeof target.closest !== 'function') return;
 
-    var chipEl = target.closest('.chip[data-level]');
+    var chipEl = target.closest('.band__item[data-level]');
     if (chipEl && host.contains(chipEl)) {
       setLevel(chipEl.getAttribute('data-level'));
       return;

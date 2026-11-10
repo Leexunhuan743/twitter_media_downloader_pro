@@ -154,10 +154,6 @@
     '.ov-quick__hint { margin: 0; color: var(--muted); font-size: 12px; }',
     '.ov-quick__hint[data-tone="good"] { color: var(--ok); }',
     '.ov-quick__hint[data-tone="bad"] { color: var(--danger); }',
-    '.ov-stats { margin-bottom: 14px; }',
-    '.stat--link { text-decoration: none; color: inherit; cursor: pointer; }',
-    '.stat--link:hover { background: var(--surface-2); }',
-    '.stat--link:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }',
     '.stat__arrow { margin-left: auto; color: var(--muted); font-size: 12px; }',
     // 两列等高：网格行拉伸，左右两列的卡片总高一致；卡片内容区吸收剩余高度，
     // 内容少的一侧把空态块垂直居中，不贴在卡片顶部。
@@ -285,7 +281,7 @@
         '</form>' +
         '<p class="ov-quick__hint" id="ov-quick-hint" aria-live="polite">' + esc(t('quickHint')) + '</p>' +
       '</section>' +
-      '<div class="statstrip ov-stats" data-role="stats">' +
+      '<div class="statstrip" data-role="stats">' +
         statLink('queue', { path: '/tasks', status: 'active' }, '—', '', '', t('statQueue')) +
         statLink('tasks', { path: '/tasks' }, '—', '', '', t('statTasks')) +
         statLink('errors', { path: '/tasks', status: 'failed', errors: true }, '—', '', '', t('statErrors')) +

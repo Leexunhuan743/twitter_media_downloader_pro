@@ -1566,12 +1566,25 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   border-right: 1px solid var(--border);
 }
 .stat:last-child { border-right: 0; }
-.stat__label { display: block; color: var(--muted); font-size: 11.5px; font-weight: 650; letter-spacing: .02em; }
+.stat__label { display: block; max-width: 100%; color: var(--muted); font-size: 11.5px; font-weight: 650; letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stat__value { display: flex; align-items: baseline; gap: 6px; margin-top: 2px; font-size: 20px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .stat__value small { color: var(--muted); font-size: 12px; font-weight: 500; letter-spacing: 0; }
 .stat__sub { display: block; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .stat[data-tone="danger"] .stat__value { color: var(--danger); }
 .stat[data-tone="ok"] .stat__value { color: var(--ok); }
+
+/* 可点击的统计格：链接跳到明细页，按钮切换下方列表的筛选。 */
+.stat--link,
+.stat--action { cursor: pointer; transition: background .14s ease; }
+.stat--link { color: inherit; text-decoration: none; }
+.stat--action { border: 0; background: transparent; font: inherit; color: inherit; text-align: left; }
+.stat--link:hover,
+.stat--action:hover { background: var(--surface-2); }
+.stat--link:focus-visible,
+.stat--action:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.stat--action[aria-pressed="true"] { background: var(--accent-soft); }
+.stat--action[aria-pressed="true"] .stat__label,
+.stat--action[aria-pressed="true"] .stat__value { color: var(--accent); }
 
 /* 开关（计划启用等） */
 .switch {
@@ -1643,42 +1656,45 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
-.chip[aria-pressed="true"] .chip__count { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.chip[aria-pressed="true"] .chip__count,
+.band__item[aria-pressed="true"] .chip__count { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
 
-/* 段落标题 + 锚点导航（系统页等） */
-.section-nav {
-  position: sticky;
-  top: 60px;
-  z-index: 15;
+/* 页面级分段条带：统计条（.statstrip）与胶囊导航（.band）共用同一套容器外观 */
+.band {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin: -4px 0 16px;
+  margin: 0 0 16px;
   padding: 6px;
   border: 1px solid var(--border);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: blur(10px);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
   overflow-x: auto;
   scrollbar-width: none;
 }
-.section-nav::-webkit-scrollbar { display: none; }
-.section-nav a,
-.section-nav button {
+.band::-webkit-scrollbar { display: none; }
+.band__item {
   flex: none;
-  padding: 6px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 12px;
   border: 0;
   border-radius: 999px;
   background: transparent;
-  color: var(--muted);
+  color: var(--text-soft);
   font-size: 12.5px;
   font-weight: 550;
   text-decoration: none;
-  cursor: pointer;
   white-space: nowrap;
+  cursor: pointer;
+  transition: background .14s ease, color .14s ease;
 }
-.section-nav a:hover, .section-nav button:hover { background: var(--surface-2); color: var(--text); }
-.section-nav [aria-current="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }
+.band__item:hover { background: var(--surface-2); color: var(--text); }
+.band__item[aria-pressed="true"],
+.band__item[aria-current="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 650; }
 
 /* 底部未保存操作条（系统页等） */
 .stickybar {
