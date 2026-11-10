@@ -25,10 +25,6 @@
         searchLabel: '搜索',
         filterAccessible: '可访问',
         filterProtected: '受保护',
-        filterAccessibleYes: '可访问',
-        filterAccessibleNo: '不可访问',
-        filterProtectedYes: '受保护',
-        filterProtectedNo: '不受保护',
         filterOwner: '所属用户 ID',
         filterUser: '用户 ID',
         filterList: '列表 ID',
@@ -70,6 +66,7 @@
         relatedListEntities: '列表媒体',
         relatedMembers: '列表成员',
         relatedUserEntity: '用户媒体记录',
+        relatedMemberUser: '用户 {id}',
         relatedParentList: '所属列表实体',
         relatedEmpty: '没有关联记录',
         readonlyTitle: '只读字段',
@@ -94,6 +91,7 @@
         invalidNameDot: '不能以空格或句点结尾',
         invalidTooLong: '不能超过 250 个字符',
         invalidTime: '请输入有效时间',
+        fieldError: '{label}：{error}',
         renameHint: '改名会同步重命名磁盘上的媒体目录。',
         deleteTitle: '删除记录',
         deleteDesc: '{type} · {name}（ID {id}）',
@@ -110,13 +108,9 @@
         goDownload: '去下载',
         filterSummary: '筛选：{text}',
         filterCount: '命中 {n} 条',
-        editLoading: '正在读取最新记录…',
         editStale: '记录已更新，表单已同步最新值',
         detailStale: '记录已更新',
-        jump: '跳至',
-        jumpPage: '页码',
-        firstPage: '首页',
-        lastPage: '末页'
+        jump: '跳至'
       }
     },
     'en': {
@@ -136,10 +130,6 @@
         searchLabel: 'Search',
         filterAccessible: 'Accessible',
         filterProtected: 'Protected',
-        filterAccessibleYes: 'Accessible',
-        filterAccessibleNo: 'Unreachable',
-        filterProtectedYes: 'Protected',
-        filterProtectedNo: 'Public',
         filterOwner: 'Owner user ID',
         filterUser: 'User ID',
         filterList: 'List ID',
@@ -181,6 +171,7 @@
         relatedListEntities: 'List media',
         relatedMembers: 'List members',
         relatedUserEntity: 'User media record',
+        relatedMemberUser: 'User {id}',
         relatedParentList: 'Parent list entity',
         relatedEmpty: 'No related records',
         readonlyTitle: 'Read-only',
@@ -205,6 +196,7 @@
         invalidNameDot: 'Cannot end with a space or dot',
         invalidTooLong: 'Must not exceed 250 characters',
         invalidTime: 'Enter a valid time',
+        fieldError: '{label}: {error}',
         renameHint: 'Renaming also renames the media directory on disk.',
         deleteTitle: 'Delete record',
         deleteDesc: '{type} · {name} (ID {id})',
@@ -221,13 +213,9 @@
         goDownload: 'Go to downloads',
         filterSummary: 'Filtered: {text}',
         filterCount: '{n} matches',
-        editLoading: 'Loading the latest record…',
         editStale: 'The record changed; the form shows the latest values',
         detailStale: 'Record updated',
-        jump: 'Go to',
-        jumpPage: 'Page number',
-        firstPage: 'First',
-        lastPage: 'Last'
+        jump: 'Go to'
       }
     }
   });
@@ -246,43 +234,40 @@
 .data-filter .select{width:auto;min-width:84px}
 .data-num{width:110px}
 .data-refresh{margin-left:auto}
-.data-tablewrap{overflow:hidden}
 .data-tablewrap.is-busy{opacity:.55;pointer-events:none;transition:opacity .15s ease}
 .data-table{table-layout:fixed}
 .data-table th,.data-table td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .data-table th{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.35}
 .data-table th[data-sortable]{cursor:pointer}
-.data-table th[data-sortable]:not([aria-sort])::after{content:"↕";margin-left:4px;color:var(--muted);opacity:.55;font-size:11px}
 .data-table .data-th-actions{text-align:right}
 .data-ell{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.data-id{display:inline-flex;align-items:center;gap:4px;margin:-2px -6px;padding:2px 6px;border:0;border-radius:6px;background:transparent;color:var(--text-soft);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;font-variant-numeric:tabular-nums;cursor:pointer}
+.data-id{display:inline-flex;align-items:center;gap:4px;margin:-2px -6px;padding:2px 6px;border:0;border-radius:var(--radius-xs);background:transparent;color:var(--text-soft);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;font-variant-numeric:tabular-nums;cursor:pointer}
 .data-id:hover{background:var(--surface-3);color:var(--accent)}
 .data-id svg{width:12px;height:12px;opacity:0;transition:opacity .12s ease}
 .data-id:hover svg,.data-id:focus-visible svg{opacity:.75}
+@media (hover:none){.data-id svg{opacity:.6}}
 .data-actions{display:flex;align-items:center;justify-content:flex-end;gap:3px}
-.data-iconbtn{display:inline-flex;align-items:center;justify-content:center;gap:6px;width:32px;height:32px;padding:0;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--text-soft);cursor:pointer;transition:background .12s ease,color .12s ease,border-color .12s ease}
+.data-iconbtn{display:inline-flex;align-items:center;justify-content:center;gap:6px;width:32px;height:32px;padding:0;border:1px solid transparent;border-radius:var(--radius-xs);background:transparent;color:var(--text-soft);cursor:pointer;transition:background .12s ease,color .12s ease,border-color .12s ease}
 .data-iconbtn:hover{background:var(--surface-2);border-color:var(--border);color:var(--text)}
 .data-iconbtn--danger:hover{background:var(--danger-soft);border-color:color-mix(in srgb,var(--danger) 34%,var(--border));color:var(--danger)}
 .data-iconbtn__label{display:none;font-size:12.5px;font-weight:600}
-.data-empty{display:flex;flex-direction:column;align-items:center;gap:6px;padding:30px 16px}
-.data-empty__title{color:var(--text);font-size:14px;font-weight:650}
-.data-empty__desc{max-width:52ch;color:var(--muted);font-size:12.5px}
-.data-empty__actions{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-top:10px}
+.data-result .empty__hint{max-width:52ch}
 .data-error{display:flex;flex-direction:column;align-items:flex-start;gap:8px}
 .data-error__text{margin:0;word-break:break-word}
 .data-error__actions{display:flex;flex-wrap:wrap;gap:8px}
 .data-skel td{padding:8px 12px}
 .data-group{margin-top:16px}
-.data-group__title{margin:0 0 6px;color:var(--muted);font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.data-section-title{margin:0 0 6px;color:var(--muted);font-size:11.5px;font-weight:650;letter-spacing:.04em;text-transform:uppercase}
+.data-subhead .data-section-title{margin:0}
+.data-readonly .data-section-title{grid-column:1/-1;margin:0 0 2px}
 .data-kv .kv__row{align-items:flex-start}
 .data-kv .kv__val{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap;min-width:0}
 .data-kv .data-kv-wrap{display:block;text-align:right;word-break:break-all}
 .data-brk{word-break:break-all}
-.data-copy{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--muted);cursor:pointer;flex:none}
+.data-copy{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:0;border-radius:var(--radius-xs);background:transparent;color:var(--muted);cursor:pointer;flex:none}
 .data-copy:hover{background:var(--surface-3);color:var(--accent)}
 .data-copy svg{width:13px;height:13px}
 .data-subhead{display:flex;align-items:center;gap:8px;margin:12px 0 6px;flex-wrap:wrap}
-.data-subhead__title{color:var(--text-soft);font-size:12.5px;font-weight:650}
 .data-subhead .data-more{margin-left:auto}
 .data-rel-list{display:flex;flex-direction:column;margin:0;padding:0;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;list-style:none}
 .data-rel{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:8px 12px;border-bottom:1px solid var(--border);font-size:13px}
@@ -319,13 +304,14 @@
   .data-actions{justify-content:flex-start;gap:8px}
   .data-iconbtn{width:auto;min-width:44px;height:40px;padding:0 12px;border-color:var(--border)}
   .data-iconbtn__label{display:inline}
+  .data-copy{width:32px;height:32px}
   .data-id{font-size:13px}
   .data-kv .kv__row{flex-direction:column;gap:3px}
   .data-kv .kv__val,.data-kv .data-kv-wrap{justify-content:flex-start;text-align:left}
   .data-actions-sticky{margin-top:14px;padding:10px 0}
   .modal__actions{flex-wrap:wrap}
 }
-.data-ctx{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px;padding:8px 10px;border:1px solid var(--accent-soft-border,var(--border));border-radius:var(--radius-sm);background:var(--accent-soft);color:var(--text-soft);font-size:12.5px}
+.data-ctx{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px;padding:8px 10px;border:1px solid color-mix(in srgb,var(--accent) 32%,var(--border));border-radius:var(--radius-sm);background:var(--accent-soft);color:var(--text-soft);font-size:12.5px}
 .data-ctx__text{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
 .data-ctx__count{color:var(--muted);font-variant-numeric:tabular-nums}
 .data-ctx .btn{flex:0 0 auto}
@@ -335,8 +321,7 @@
 .pager__page{min-width:32px;padding:5px 8px;justify-content:center;font-variant-numeric:tabular-nums}
 .pager__page.is-active{border-color:var(--accent);color:var(--accent);font-weight:600}
 .pager__gap{color:var(--muted);padding:0 2px;user-select:none}
-.data-readonly{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 14px;margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2,#f6f7f9)}
-.data-readonly__title{grid-column:1/-1;margin:0 0 2px;font-size:11.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.data-readonly{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 14px;margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2)}
 .data-readonly__item{display:flex;flex-direction:column;gap:2px;min-width:0}
 .data-readonly__key{font-size:11.5px;color:var(--muted)}
 .data-readonly__val{font-size:13px;overflow-wrap:anywhere}
@@ -370,10 +355,10 @@
       filters: [
         { key: 'q', type: 'search' },
         { key: 'accessible', type: 'select', label: 'filterAccessible', options: [
-          { value: '', label: 'common.all' }, { value: 'true', label: 'filterAccessibleYes' }, { value: 'false', label: 'filterAccessibleNo' }
+          { value: '', label: 'common.all' }, { value: 'true', label: 'stateAccessible' }, { value: 'false', label: 'stateInaccessible' }
         ] },
         { key: 'protected', type: 'select', label: 'filterProtected', options: [
-          { value: '', label: 'common.all' }, { value: 'true', label: 'filterProtectedYes' }, { value: 'false', label: 'filterProtectedNo' }
+          { value: '', label: 'common.all' }, { value: 'true', label: 'stateProtected' }, { value: 'false', label: 'statePublic' }
         ] }
       ],
       fields: [
@@ -550,7 +535,7 @@
 
   function numText(value) {
     var n = Number(value);
-    return isNaN(n) ? '0' : String(n);
+    return isNaN(n) ? '—' : String(n);
   }
 
   function copyIcon() { return ICONS.copy; }
@@ -695,7 +680,7 @@
       '<div class="statstrip" data-role="stats" role="group" aria-label="' + esc(t('statsLabel')) + '">' +
         STATS.map(statButton).join('') +
       '</div>' +
-      '<p class="notice notice--danger data-stats-error" data-role="stats-error" hidden></p>' +
+      '<p class="notice notice--danger data-stats-error" data-role="stats-error" role="alert" hidden></p>' +
       '<section class="card mt-16 data-card">' +
         '<div class="data-toolbar" data-role="toolbar"></div>' +
         '<div class="data-ctx" data-role="ctx" hidden></div>' +
@@ -719,13 +704,13 @@
         '</div>' +
         '<div data-role="detail-fields" class="data-kv"></div>' +
         '<div class="data-group" data-role="detail-related" hidden>' +
-          '<p class="data-group__title">' + esc(t('relatedTitle')) + '</p>' +
+          '<p class="data-section-title">' + esc(t('relatedTitle')) + '</p>' +
           '<div data-role="detail-related-body"></div>' +
         '</div>' +
         '<div class="modal__actions data-actions-sticky">' +
-          '<button type="button" class="btn btn--ghost btn--sm" data-act="detail-close">' + esc(T.t('common.close')) + '</button>' +
-          '<button type="button" class="btn btn--ghost btn--sm btn--danger" data-act="detail-delete">' + esc(T.t('common.delete')) + '</button>' +
-          '<button type="button" class="btn btn--primary btn--sm" data-act="detail-edit">' + esc(T.t('common.edit')) + '</button>' +
+          '<button type="button" class="btn btn--ghost" data-act="detail-close">' + esc(T.t('common.close')) + '</button>' +
+          '<button type="button" class="btn btn--ghost btn--danger" data-act="detail-delete">' + esc(T.t('common.delete')) + '</button>' +
+          '<button type="button" class="btn btn--primary" data-act="detail-edit">' + esc(T.t('common.edit')) + '</button>' +
         '</div>' +
       '</div>' +
     '</dialog>';
@@ -741,10 +726,10 @@
           '</div>' +
           '<button type="button" class="modal__close" data-act="edit-close" aria-label="' + esc(T.t('common.close')) + '">×</button>' +
         '</div>' +
-        '<p class="notice notice--danger" data-role="modal-error" hidden></p>' +
+        '<p class="notice notice--danger" data-role="modal-error" role="alert" hidden></p>' +
         '<div class="data-readonly" data-role="modal-readonly" hidden></div>' +
         '<div class="form-grid" data-role="modal-fields"></div>' +
-        '<div class="modal__actions">' +
+        '<div class="modal__actions data-actions-sticky">' +
           '<button type="button" class="btn btn--ghost" data-act="edit-close">' + esc(T.t('common.cancel')) + '</button>' +
           '<button type="submit" class="btn btn--primary">' + esc(T.t('common.save')) + '</button>' +
         '</div>' +
@@ -764,7 +749,7 @@
         '</div>' +
         '<p class="notice notice--danger" data-role="delete-warn"></p>' +
         '<p class="small muted mt-8" data-role="delete-hint"></p>' +
-        '<p class="notice notice--danger mt-12" data-role="delete-error" hidden></p>' +
+        '<p class="notice notice--danger mt-12" data-role="delete-error" role="alert" hidden></p>' +
         '<div class="modal__actions">' +
           '<button type="button" class="btn btn--ghost" data-act="delete-close">' + esc(T.t('common.cancel')) + '</button>' +
           '<button type="button" class="btn btn--danger" data-act="delete-confirm">' + esc(T.t('common.delete')) + '</button>' +
@@ -894,7 +879,7 @@
     if (!col.sort) return '<th scope="col">' + label + '</th>';
     var aria = s.sortBy === col.sort
       ? ' aria-sort="' + (s.sortOrder === 'asc' ? 'ascending' : 'descending') + '"'
-      : '';
+      : ' aria-sort="none"';
     var hint = s.sortBy === col.sort ? '' : ' aria-label="' + esc(label + ' · ' + t('sortHint')) + '"';
     return '<th scope="col" data-sortable="true" data-sort="' + esc(col.sort) + '" tabindex="0"' + aria + hint + '>' + label + '</th>';
   }
@@ -979,10 +964,10 @@
       actions += '<button type="button" class="btn btn--ghost btn--sm" data-act="reset-filters">' + esc(t('clearFilters')) + '</button>';
     }
     actions += '<button type="button" class="btn btn--primary btn--sm" data-act="go-tasks">' + esc(t('goDownload')) + '</button>';
-    return '<div class="empty data-empty">' +
-      '<p class="data-empty__title">' + esc(title) + '</p>' +
-      '<p class="data-empty__desc">' + esc(desc) + '</p>' +
-      '<div class="data-empty__actions">' + actions + '</div>' +
+    return '<div class="empty">' +
+      '<p class="empty__title">' + esc(title) + '</p>' +
+      '<p class="empty__hint">' + esc(desc) + '</p>' +
+      '<div class="empty__actions">' + actions + '</div>' +
     '</div>';
   }
 
@@ -1085,17 +1070,24 @@
     var jump = '<span class="pager__jump">' +
       '<label for="data-page-jump">' + esc(t('jump')) + '</label>' +
       '<input class="input" id="data-page-jump" type="number" min="1" max="' + Math.max(1, s.totalPages) + '"' +
-        ' step="1" inputmode="numeric" value="' + s.page + '" data-role="page-jump"' +
-        ' aria-label="' + esc(t('jumpPage')) + '">' +
+        ' step="1" inputmode="numeric" value="' + s.page + '" data-role="page-jump">' +
       '<span aria-hidden="true">/ ' + fmtNum(s.totalPages) + '</span></span>';
+    var jumpFocused = false;
+    var active = document.activeElement;
+    if (active && active.getAttribute && active.getAttribute('data-role') === 'page-jump') jumpFocused = true;
     box.innerHTML =
       '<button type="button" class="btn btn--ghost btn--sm" data-act="prev"' + ((s.loading || s.page <= 1) ? ' disabled' : '') + '>' +
         esc(T.t('common.previous')) + '</button>' +
       '<span class="pager__pages">' + pages + '</span>' +
       '<button type="button" class="btn btn--ghost btn--sm" data-act="next"' + ((s.loading || s.page >= s.totalPages) ? ' disabled' : '') + '>' +
         esc(T.t('common.next')) + '</button>' +
-      '<span class="pager__grow">' + esc(info) + '</span>' +
+      '<span class="pager__grow" aria-live="polite">' + esc(info) + '</span>' +
       jump;
+    // 每次重绘都会换掉跳页输入框：之前聚焦在它上面就把焦点还回去，避免键入时丢焦点。
+    if (jumpFocused) {
+      var next = box.querySelector('[data-role="page-jump"]');
+      if (next) { try { next.focus(); next.select(); } catch (e) { /* ignore */ } }
+    }
   }
 
   /* ---------------- 数据加载 ---------------- */
@@ -1351,7 +1343,7 @@
     if (fields) {
       fields.innerHTML = detailGroups(d.tab, d.row).map(function (group) {
         return '<div class="data-group">' +
-          '<p class="data-group__title">' + esc(group.title) + '</p>' +
+          '<p class="data-section-title">' + esc(group.title) + '</p>' +
           '<div class="kv">' + group.items.map(kvRow).join('') + '</div>' +
         '</div>';
       }).join('');
@@ -1385,7 +1377,7 @@
 
   function relatedSection(title, rows, total, renderRow, moreTab, moreKey, moreValue) {
     var head = '<div class="data-subhead">' +
-      '<span class="data-subhead__title">' + esc(title) + '</span>' +
+      '<span class="data-section-title">' + esc(title) + '</span>' +
       '<span class="count">' + esc(fmtNum(total)) + '</span>';
     if (total > rows.length && moreTab) {
       head += '<button type="button" class="btn btn--ghost btn--sm data-more" data-act="related-more"' +
@@ -1460,7 +1452,7 @@
       T.api.get('/api/v1/db/user-links', { listEntityId: id, page: 1, pageSize: 5 }).then(function (res) {
         var rows = unwrap(res);
         paint(relatedSection(t('relatedMembers'), rows, totalOf(res), function (row) {
-          return relatedRow(row.name || ('#' + row.id), row.user_id ? 'user ' + row.user_id : '');
+          return relatedRow(row.name || ('#' + row.id), row.user_id ? t('relatedMemberUser', { id: row.user_id }) : '');
         }, 'userLinks', 'listEntityId'));
       }).catch(fail);
       return;
@@ -1656,7 +1648,7 @@
   function readonlyHtml(tab, row) {
     var keys = READONLY[tab] || [];
     if (!keys.length || !row) return '';
-    return '<p class="data-readonly__title">' + esc(t('readonlyTitle')) + '</p>' +
+    return '<p class="data-section-title">' + esc(t('readonlyTitle')) + '</p>' +
       keys.map(function (pair) {
         var value = row[pair[0]];
         var text = (value === undefined || value === null || String(value) === '') ? '—' : String(value);
@@ -1801,7 +1793,7 @@
       var error = validateInput(field, raw);
       if (error) {
         el.setAttribute('aria-invalid', 'true');
-        problems.push(labelOf(field.label) + '：' + error);
+        problems.push(t('fieldError', { label: labelOf(field.label), error: error }));
         return;
       }
       el.removeAttribute('aria-invalid');
@@ -2082,6 +2074,16 @@
     if (del) {
       del.addEventListener('close', function () { st.deleting = null; });
     }
+    // 点遮罩关闭：三个弹窗同一套行为，编辑弹窗先过未保存守卫。
+    ['detail-modal', 'edit-modal', 'delete-modal'].forEach(function (role) {
+      var dialog = host.querySelector('[data-role="' + role + '"]');
+      if (!dialog) return;
+      dialog.addEventListener('click', function (event) {
+        if (event.target !== dialog) return;
+        if (role === 'edit-modal') { closeEdit(); return; }
+        try { dialog.close(); } catch (e) { /* ignore */ }
+      });
+    });
   }
 
   function unbind() {
