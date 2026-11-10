@@ -81,6 +81,7 @@
         empty: '还没有任务。在上面贴一个目标，按 ⌘/Ctrl + Enter 开始。'
       },
       ledger: {
+        pagerLabel: '台账分页',
         title: '台账',
         search: '搜索目标 / 任务 ID（/）',
         searchLabel: '搜索台账',
@@ -128,7 +129,8 @@
         root: '根目录 {path}',
         db: '库 {users} 用户 · {lists} 列表 · {entities} 媒体',
         version: '版本 {version}',
-        note: 'TMD 下载台 · 单页零构建'
+        note: 'TMD 下载台 · 单页零构建',
+        repo: 'GitHub 仓库'
       },
       auth: {
         title: '需要 API Key',
@@ -165,6 +167,7 @@
         cancelled: '任务已取消：{target}'
       },
       confirm: {
+        title: '请确认',
         delete: '删除任务 {id} 的记录？任务数据不会保留。',
         clearErrors: '清除全部失败记录？',
         cancelQueued: '取消所有排队中的任务？',
@@ -174,7 +177,8 @@
         retryVisible: '重试当前列表里的 {n} 个失败任务？',
         batchDelete: '删除当前列表里 {n} 个已结束任务的记录？此操作不可撤销。'
       },
-      rel: { now: '刚刚', min: '{n} 分钟前', hour: '{n} 小时前', day: '{n} 天前' }
+      label: { targets: '{n} 个目标', paths: '{n} 条路径', list: '列表 {id}' },
+      rel: { now: '刚刚', min: '{n} 分钟前', hour: '{n} 小时前', day: '{n} 天前', futureMin: '{n} 分钟后', futureHour: '{n} 小时后', futureDay: '{n} 天后' }
     },
     en: {
       a11y: { skip: 'Skip to content' },
@@ -236,6 +240,7 @@
         empty: 'No tasks yet. Paste a target above, then press ⌘/Ctrl + Enter.'
       },
       ledger: {
+        pagerLabel: 'Ledger pagination',
         title: 'Ledger',
         search: 'Search target / task id (/)',
         searchLabel: 'Search ledger',
@@ -285,7 +290,8 @@
         root: 'root {path}',
         db: 'db {users} users · {lists} lists · {entities} media',
         version: 'version {version}',
-        note: 'TMD download desk · single page, zero build'
+        note: 'TMD download desk · single page, zero build',
+        repo: 'GitHub repository'
       },
       auth: {
         title: 'API key required',
@@ -322,6 +328,7 @@
         cancelled: 'Task cancelled: {target}'
       },
       confirm: {
+        title: 'Please confirm',
         delete: 'Delete the record for task {id}?',
         clearErrors: 'Clear the whole failure log?',
         cancelQueued: 'Cancel every queued task?',
@@ -331,7 +338,8 @@
         retryVisible: 'Retry the {n} failed tasks in this list?',
         batchDelete: 'Delete the records of {n} finished tasks in this list? This cannot be undone.'
       },
-      rel: { now: 'just now', min: '{n} min ago', hour: '{n} h ago', day: '{n} d ago' }
+      label: { targets: '{n} targets', paths: '{n} paths', list: 'list {id}' },
+      rel: { now: 'just now', min: '{n} min ago', hour: '{n} h ago', day: '{n} d ago', futureMin: 'in {n} min', futureHour: 'in {n} h', futureDay: 'in {n} d' }
     }
   };
 
@@ -414,12 +422,7 @@
     { id: 'retryAll', types: ['retry_all_failed'] }
   ];
 
-  var OPTION_TITLE = {
-    auto_follow: 'auto_follow',
-    follow_members: 'follow_members',
-    skip_profile: 'skip_profile',
-    no_retry: 'no_retry'
-  };
+
 
   /* ---------------- tiny helpers ---------------- */
 
@@ -469,28 +472,157 @@
     try { localStorage.setItem(key, value); } catch (e) { /* 隐私模式忽略 */ }
   }
 
+  function toDate(value) {
+    if (!value) return null;
+    var date = value instanceof Date ? value : new Date(value);
+    return isNaN(date.getTime()) ? null : date;
+  }
+
+  function sameDay(a, b) {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  }
+
+  // 当年只显示月日时分，跨年补上年份，避免"最近发布"这类列看不出是哪个年份。
   function fmtTime(iso) {
-    if (!iso) return '—';
-    var date = new Date(iso);
-    if (isNaN(date.getTime())) return '—';
+    var date = toDate(iso);
+    if (!date) return '—';
+    var sameYear = date.getFullYear() === new Date().getFullYear();
+    try {
+      return new Intl.DateTimeFormat(state.lang, sameYear
+        ? { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
+        : { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
+      ).format(date);
+    } catch (e) {
+      return date.toLocaleString();
+    }
+  }
+
+  function fmtDateTime(iso) {
+    var date = toDate(iso);
+    if (!date) return '';
     try {
       return new Intl.DateTimeFormat(state.lang, {
-        month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
       }).format(date);
     } catch (e) {
       return date.toLocaleString();
     }
   }
 
+  function fmtDate(iso) {
+    var date = toDate(iso);
+    if (!date) return '—';
+    try {
+      return new Intl.DateTimeFormat(state.lang, { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+    } catch (e) {
+      return String(iso).slice(0, 10);
+    }
+  }
+
+  // 日志行时间：当天只给时分秒，其它日期补月日（列宽固定，不加年份）。
+  function fmtClock(value) {
+    var date = toDate(value);
+    if (!date) return '';
+    try {
+      if (sameDay(date, new Date())) {
+        return new Intl.DateTimeFormat(state.lang, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(date);
+      }
+      return new Intl.DateTimeFormat(state.lang, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
+    } catch (e) {
+      return date.toLocaleString();
+    }
+  }
+
+  // datetime-local 需要本地时间串，且必须带秒：只到分钟会让未改动的秒在保存时归零。
+  function toLocalInput(value) {
+    var date = toDate(value);
+    if (!date) return '';
+    function pad(n) { return n < 10 ? '0' + n : String(n); }
+    return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) +
+      'T' + pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds());
+  }
+
+  // 相对时间：过去与未来同一套短语，超过一周退回绝对日期。
   function fmtRelative(iso) {
-    if (!iso) return '';
-    var date = new Date(iso);
-    if (isNaN(date.getTime())) return '';
-    var diff = Date.now() - date.getTime();
-    if (diff < 60000) return t('rel.now');
-    if (diff < 3600000) return t('rel.min', { n: Math.floor(diff / 60000) });
-    if (diff < 86400000) return t('rel.hour', { n: Math.floor(diff / 3600000) });
-    return t('rel.day', { n: Math.floor(diff / 86400000) });
+    var date = toDate(iso);
+    if (!date) return '';
+    var diff = date.getTime() - Date.now();
+    var future = diff > 0;
+    var abs = Math.abs(diff);
+    if (abs < 60000) return t('rel.now');
+    if (abs < 3600000) return t(future ? 'rel.futureMin' : 'rel.min', { n: Math.floor(abs / 60000) });
+    if (abs < 86400000) return t(future ? 'rel.futureHour' : 'rel.hour', { n: Math.floor(abs / 3600000) });
+    if (abs < 604800000) return t(future ? 'rel.futureDay' : 'rel.day', { n: Math.floor(abs / 86400000) });
+    return fmtDate(date);
+  }
+
+  /* ---------------- pager ---------------- */
+
+  var PAGE_SIZES = [20, 50, 100, 200];
+
+  // 多个视图共用的小图标只留一份，避免同一动作出现两套字形。
+  var SHARED_ICONS = {
+    copy: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.6" y="5.6" width="7.8" height="7.8" rx="1.6"/><path d="M10.4 3.4v-.5a1.6 1.6 0 0 0-1.6-1.6H3.3a1.6 1.6 0 0 0-1.6 1.6v5.5a1.6 1.6 0 0 0 1.6 1.6h.5"/></svg>',
+    trash: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.9 4.4h10.2M6.4 4.4V2.9h3.2v1.5M4.3 4.4l.6 8.7h6.2l.6-8.7"/></svg>',
+    refresh: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 3.4V6.6H9.8"/></svg>'
+  };
+
+  // 页码序列：总页数少时全列，多时首尾固定、当前页左右各一页，其余折叠成省略号。
+  function pageNumbers(current, total) {
+    if (total <= 7) {
+      var all = [];
+      for (var i = 1; i <= total; i++) all.push(i);
+      return all;
+    }
+    var pages = [1];
+    var start = Math.max(2, current - 1);
+    var end = Math.min(total - 1, current + 1);
+    if (start > 2) pages.push('…');
+    for (var p = start; p <= end; p++) pages.push(p);
+    if (end < total - 1) pages.push('…');
+    pages.push(total);
+    return pages;
+  }
+
+  // 台账、数据、日志共用同一个分页器：prev · 页码窗口 · next · 计数 · 跳页（· 最新）。
+  function pagerHtml(opts) {
+    var o = opts || {};
+    var pages = Math.max(1, Number(o.pages) || 1);
+    var page = Math.min(Math.max(1, Number(o.page) || 1), pages);
+    var busy = o.loading ? ' disabled' : '';
+    var numbers = pageNumbers(page, pages).map(function (n) {
+      if (n === '…') return '<span class="pager__gap" aria-hidden="true">…</span>';
+      var current = n === page;
+      return '<button type="button" class="btn btn--ghost btn--sm pager__page' + (current ? ' is-active' : '') + '"' +
+        (current ? ' aria-current="page"' : '') +
+        ' data-act="page" data-page="' + n + '"' + busy + '>' + n + '</button>';
+    }).join('');
+    var info = o.info !== undefined
+      ? o.info
+      : t('common.total', { n: Number(o.total) || 0 }) + ' · ' + t('common.page', { page: page, pages: pages });
+    var jump = o.jump === false ? '' : '<span class="pager__jump">' +
+      '<label for="' + esc(o.jumpId || 'pager-jump') + '">' + esc(t('common.jumpTo')) + '</label>' +
+      '<input class="input pager__jump-input" id="' + esc(o.jumpId || 'pager-jump') + '" type="number" min="1" max="' + pages + '" step="1" inputmode="numeric"' +
+        ' value="' + page + '" data-role="page-jump">' +
+      '<span aria-hidden="true">/ ' + pages + '</span></span>';
+    var sizes = '';
+    if (o.sizes) {
+      var sizeValue = Number(o.pageSize) || PAGE_SIZES[0];
+      sizes = '<label class="pager__size"><span>' + esc(t('common.pageSize')) + '</span>' +
+        '<select class="select select--sm" data-act="pagesize">' +
+        PAGE_SIZES.map(function (n) {
+          return '<option value="' + n + '"' + (n === sizeValue ? ' selected' : '') + '>' + n + '</option>';
+        }).join('') + '</select></label>';
+    }
+    return '<button type="button" class="btn btn--ghost btn--sm" data-act="prev"' + ((o.loading || page <= 1) ? ' disabled' : '') + '>' +
+        esc(t('common.previous')) + '</button>' +
+      '<span class="pager__pages">' + numbers + '</span>' +
+      '<button type="button" class="btn btn--ghost btn--sm" data-act="next"' + ((o.loading || page >= pages) ? ' disabled' : '') + '>' +
+        esc(t('common.next')) + '</button>' +
+      '<span class="pager__grow" data-role="pageinfo" aria-live="polite">' + esc(info) + '</span>' +
+      sizes + jump +
+      (o.latest ? '<button type="button" class="btn btn--ghost btn--sm" data-act="latest"' + (o.latestDisabled ? ' disabled' : '') + '>' + esc(t('common.latest')) + '</button>' : '');
   }
 
   /* ---------------- theme ---------------- */
@@ -544,6 +676,9 @@
     });
     $$('[data-i18n-aria]').forEach(function (el) {
       el.setAttribute('aria-label', t(el.getAttribute('data-i18n-aria')));
+    });
+    $$('[data-i18n-title]').forEach(function (el) {
+      el.setAttribute('title', t(el.getAttribute('data-i18n-title')));
     });
 
     document.title = 'TMD · ' + t('nav.' + currentView);
@@ -1031,7 +1166,7 @@
     group.innerHTML = def.opts.map(function (key) {
       var checked = state.flags[key] ? ' checked' : '';
       var label = t('opt.' + key.replace(/_([a-z])/g, function (m, c) { return c.toUpperCase(); }));
-      return '<label class="option" title="' + esc(OPTION_TITLE[key]) + '">' +
+      return '<label class="option">' +
         '<input type="checkbox" data-flag="' + key + '"' + checked + '>' +
         '<span class="option__box" aria-hidden="true"></span>' +
         '<span>' + esc(label) + '</span>' +
@@ -1077,11 +1212,11 @@
         if (!users.length && !lists.length && !followingNames.length) return [];
         var markBody = { users: users, lists: lists.map(Number), following_names: followingNames };
         if (stamp) markBody.timestamp = stamp;
-        return [{ path: '/api/v1/batch/mark', body: markBody, label: users.concat(lists).length + followingNames.length + ' targets' }];
+        return [{ path: '/api/v1/batch/mark', body: markBody, label: t('label.targets', { n: users.concat(lists).length + followingNames.length }) }];
       }
       if (mode === 'list') {
         return lists.map(function (id) {
-          return { path: '/api/v1/lists/' + encodeURIComponent(id) + '/mark', body: stampBody, label: 'list ' + id };
+          return { path: '/api/v1/lists/' + encodeURIComponent(id) + '/mark', body: stampBody, label: t('label.list', { id: id }) };
         });
       }
       if (mode === 'following') {
@@ -1100,25 +1235,25 @@
     if (mode === 'batch') {
       var body = { users: users, lists: lists.map(Number), following_names: followingNames };
       Object.keys(flags).forEach(function (key) { body[key] = flags[key]; });
-      return [{ path: '/api/v1/batch/download', body: body, label: users.concat(lists).length + followingNames.length + ' targets' }];
+      return [{ path: '/api/v1/batch/download', body: body, label: t('label.targets', { n: users.concat(lists).length + followingNames.length }) }];
     }
     if (mode === 'json') {
       var paths = jsonPaths.map(function (i) { return i.value; });
       var isFolder = paths.length > 0 && paths.every(function (p) { return !RE_JSON.test(p); });
       var url = isFolder ? '/api/v1/json/folder/download' : '/api/v1/json/file/download';
-      return [{ path: url, body: { paths: paths, no_retry: !!flags.no_retry }, label: paths.length + ' paths' }];
+      return [{ path: url, body: { paths: paths, no_retry: !!flags.no_retry }, label: t('label.paths', { n: paths.length }) }];
     }
     if (mode === 'profile') {
       // 补档同时支持用户与列表：列表补档走 /lists/{id}/profile。
       return users.map(function (name) {
         return { path: '/api/v1/users/' + encodeURIComponent(name) + '/profile', body: undefined, label: name };
       }).concat(lists.map(function (id) {
-        return { path: '/api/v1/lists/' + encodeURIComponent(id) + '/profile', body: undefined, label: 'list ' + id };
+        return { path: '/api/v1/lists/' + encodeURIComponent(id) + '/profile', body: undefined, label: t('label.list', { id: id }) };
       }));
     }
     if (mode === 'list') {
       return lists.map(function (id) {
-        return { path: '/api/v1/lists/' + encodeURIComponent(id) + '/download', body: flags, label: 'list ' + id };
+        return { path: '/api/v1/lists/' + encodeURIComponent(id) + '/download', body: flags, label: t('label.list', { id: id }) };
       });
     }
     if (mode === 'following') {
@@ -1622,7 +1757,7 @@
   function taskTarget(task) {
     var data = (task && task.data) || {};
     if (data.screen_name) return data.screen_name;
-    if (data.list_id) return 'list ' + data.list_id;
+    if (data.list_id) return t('label.list', { id: data.list_id });
     if (Array.isArray(data.paths) && data.paths.length) {
       return data.paths.length > 1 ? data.paths[0] + ' +' + (data.paths.length - 1) : data.paths[0];
     }
@@ -1876,23 +2011,23 @@
     if (!pager) return;
     var pages = Math.max(1, Number(state.ledger.pages) || 1);
     var page = Math.min(Math.max(1, Number(state.ledger.page) || 1), pages);
-    pager.hidden = pages <= 1 && page <= 1;
-    var info = $('#ledger-pageinfo');
-    if (info) {
-      info.textContent = t('ledger.pageInfo', {
-        page: page,
-        pages: pages,
-        total: Number(state.ledger.total) || 0
-      });
-    }
-    var prev = $('#ledger-prev');
-    var next = $('#ledger-next');
-    if (prev) prev.disabled = state.ledger.loading || page <= 1;
-    if (next) next.disabled = state.ledger.loading || page >= pages;
-    var jump = $('#ledger-page-jump');
-    if (jump) {
-      jump.max = String(pages);
-      if (document.activeElement !== jump) jump.value = String(page);
+    // 有数据就显示：每页条数选择器在单页时也要可达。
+    pager.hidden = (Number(state.ledger.total) || 0) === 0;
+    if (pager.hidden) return;
+    var jump = pager.querySelector('[data-role="page-jump"]');
+    var jumpFocused = jump && document.activeElement === jump;
+    pager.innerHTML = pagerHtml({
+      page: page,
+      pages: pages,
+      total: Number(state.ledger.total) || 0,
+      loading: !!state.ledger.loading,
+      pageSize: state.ledger.pageSize || LEDGER_PAGE,
+      sizes: true,
+      jumpId: 'ledger-page-jump'
+    });
+    if (jumpFocused) {
+      var next = pager.querySelector('[data-role="page-jump"]');
+      if (next) { try { next.focus(); next.select(); } catch (e) { /* ignore */ } }
     }
   }
 
@@ -2039,7 +2174,7 @@
   // 这样重绘出来的新节点也不会在请求期间可点。
   function taskActionButton(task, action, label, cls) {
     var disabled = taskPending(task.task_id) || (state.detail.id === task.task_id && state.detail.busy);
-    return '<button type="button" class="btn ' + (cls || '') + '" data-action="' + action + '" data-id="' + esc(task.task_id) + '"' +
+    return '<button type="button" class="btn btn--xs ' + (cls || '') + '" data-action="' + action + '" data-id="' + esc(task.task_id) + '"' +
       (disabled ? ' disabled' : '') + '>' + esc(label) + '</button>';
   }
 
@@ -2479,16 +2614,71 @@
       .catch(function (err) { if (err.status !== 401) toast('error', err.message); });
   }
 
+  /* ---------------- confirm dialog ---------------- */
+
+  // 破坏性操作统一走页面内 <dialog>：能写清后果，且不被移动端系统框拦截。
+  // 仅"离开页面 / 丢弃未保存修改"这类必须同步返回的守卫继续用 window.confirm。
+  var confirmPending = null;
+
+  function confirmDialog(opts) {
+    var dialog = $('#confirm-dialog');
+    var o = opts || {};
+    if (!dialog || typeof dialog.showModal !== 'function') {
+      return Promise.resolve(window.confirm(o.message || ''));
+    }
+    if (confirmPending) settleConfirm(false);
+    var title = $('#confirm-title');
+    var desc = $('#confirm-desc');
+    var ok = $('#confirm-ok');
+    var cancel = $('#confirm-cancel');
+    if (title) title.textContent = o.title || t('confirm.title');
+    if (desc) desc.textContent = o.message || '';
+    if (ok) {
+      ok.textContent = o.confirmLabel || t('common.confirm');
+      ok.className = 'btn ' + (o.danger ? 'btn--danger' : 'btn--primary');
+    }
+    if (cancel) cancel.textContent = o.cancelLabel || t('common.cancel');
+    return new Promise(function (resolve) {
+      confirmPending = resolve;
+      if (!dialog.open) dialog.showModal();
+      if (ok) setTimeout(function () { try { ok.focus(); } catch (e) { /* ignore */ } }, 20);
+    });
+  }
+
+  function settleConfirm(value) {
+    var dialog = $('#confirm-dialog');
+    if (dialog && dialog.open) { try { dialog.close(); } catch (e) { /* ignore */ } }
+    var resolve = confirmPending;
+    confirmPending = null;
+    if (resolve) resolve(!!value);
+  }
+
+  function bindConfirmDialog() {
+    var dialog = $('#confirm-dialog');
+    if (!dialog) return;
+    dialog.addEventListener('click', function (event) {
+      var btn = event.target.closest ? event.target.closest('[data-confirm]') : null;
+      if (btn) { settleConfirm(btn.getAttribute('data-confirm') === 'true'); return; }
+      if (event.target === dialog) settleConfirm(false);
+    });
+    dialog.addEventListener('cancel', function (event) {
+      event.preventDefault();
+      settleConfirm(false);
+    });
+  }
+
   function cancelTask(id) {
     if (taskPending(id) || state.detail.busy) return;
     var task = (state.tasks || []).filter(function (item) { return item.task_id === id; })[0];
     var label = task ? taskTarget(task) : shortId(id);
-    if (!window.confirm(t('confirm.cancelTask', { target: label }))) return;
-    setTaskBusy(id, true);
-    request('/api/v1/tasks/' + encodeURIComponent(id) + '/cancel', { method: 'POST' })
-      .then(function () { toast('success', t('toast.cancelled')); loadTasks(); loadLedger('keep'); return refreshDetail(id); })
-      .catch(function (err) { if (err.status !== 401) toast('error', err.message); })
-      .then(function () { setTaskBusy(id, false); });
+    confirmDialog({ message: t('confirm.cancelTask', { target: label }), danger: true }).then(function (ok) {
+      if (!ok) return;
+      setTaskBusy(id, true);
+      request('/api/v1/tasks/' + encodeURIComponent(id) + '/cancel', { method: 'POST' })
+        .then(function () { toast('success', t('toast.cancelled')); loadTasks(); loadLedger('keep'); return refreshDetail(id); })
+        .catch(function (err) { if (err.status !== 401) toast('error', err.message); })
+        .then(function () { setTaskBusy(id, false); });
+    });
   }
 
   function retryTask(id) {
@@ -2821,8 +3011,6 @@
     if (ids.length > sent.length) {
       toast('info', t('ledger.batchTruncated', { n: BATCH_LIMIT, rest: ids.length - sent.length }));
     }
-    if (action === 'cancel' && !window.confirm(t('confirm.cancelSelected', { n: sent.length }))) return;
-    if (action === 'retry' && !window.confirm(t('confirm.retrySelected', { n: sent.length }))) return;
     var run = function () {
       batchTasks(action, sent).then(function () {
         sent.forEach(function (id) { delete state.select[id]; });
@@ -2831,16 +3019,21 @@
         if (err.status !== 401) toast('error', err.message);
       });
     };
-    if (action === 'delete') armedConfirm(btn, run);
-    else run();
+    if (action === 'delete') { armedConfirm(btn, run); return; }
+    var messageKey = action === 'cancel' ? 'confirm.cancelSelected' : 'confirm.retrySelected';
+    confirmDialog({ message: t(messageKey, { n: sent.length }), danger: action === 'cancel' }).then(function (ok) {
+      if (ok) run();
+    });
   }
 
   function batchRetryVisible() {
     var ids = visibleIDs(['failed', 'cancelled']);
     if (!ids.length) { toast('info', t('toast.batchEmpty')); return; }
-    if (!window.confirm(t('confirm.retryVisible', { n: ids.length }))) return;
-    batchTasks('retry', ids).catch(function (err) {
-      if (err.status !== 401) toast('error', err.message);
+    confirmDialog({ message: t('confirm.retryVisible', { n: ids.length }) }).then(function (ok) {
+      if (!ok) return;
+      batchTasks('retry', ids).catch(function (err) {
+        if (err.status !== 401) toast('error', err.message);
+      });
     });
   }
 
@@ -3054,24 +3247,47 @@
       }, 300);
     });
 
-    $('#ledger-prev').addEventListener('click', function () {
-      if (state.ledger.loading || state.ledger.page <= 1) return;
-      state.ledger.page -= 1;
-      loadLedger('page');
-    });
-    $('#ledger-next').addEventListener('click', function () {
-      if (state.ledger.loading || state.ledger.page >= state.ledger.pages) return;
-      state.ledger.page += 1;
-      loadLedger('page');
-    });
-    $('#ledger-page-jump').addEventListener('keydown', function (event) {
-      if (event.key !== 'Enter') return;
-      event.preventDefault();
-      goLedgerPage(event.target.value);
-    });
-    $('#ledger-page-jump').addEventListener('change', function (event) {
-      goLedgerPage(event.target.value);
-    });
+    // 分页器整块由 renderLedgerPager 重建，事件统一委托到容器上。
+    var ledgerPager = $('#ledger-pager');
+    if (ledgerPager) {
+      ledgerPager.addEventListener('click', function (event) {
+        var btn = event.target.closest ? event.target.closest('[data-act]') : null;
+        if (!btn || !ledgerPager.contains(btn)) return;
+        var act = btn.getAttribute('data-act');
+        if (act === 'prev') {
+          if (state.ledger.loading || state.ledger.page <= 1) return;
+          state.ledger.page -= 1;
+          loadLedger('page');
+          return;
+        }
+        if (act === 'next') {
+          if (state.ledger.loading || state.ledger.page >= state.ledger.pages) return;
+          state.ledger.page += 1;
+          loadLedger('page');
+          return;
+        }
+        if (act === 'page') goLedgerPage(btn.getAttribute('data-page'));
+      });
+      ledgerPager.addEventListener('keydown', function (event) {
+        if (event.key !== 'Enter') return;
+        if (!event.target.closest || !event.target.closest('[data-role="page-jump"]')) return;
+        event.preventDefault();
+        goLedgerPage(event.target.value);
+      });
+      ledgerPager.addEventListener('change', function (event) {
+        if (event.target.closest && event.target.closest('[data-role="page-jump"]')) {
+          goLedgerPage(event.target.value);
+          return;
+        }
+        var size = event.target.closest ? event.target.closest('[data-act="pagesize"]') : null;
+        if (size) {
+          state.ledger.pageSize = Number(size.value) || LEDGER_PAGE;
+          state.ledger.page = 1;
+          saveLedgerView();
+          loadLedger('reset');
+        }
+      });
+    }
 
     $('#btn-batch-retry').addEventListener('click', function () { batchRetryVisible(); });
     $('#btn-batch-delete').addEventListener('click', function (event) { batchDeleteVisible(event.currentTarget); });
@@ -3110,6 +3326,7 @@
     $('#auth-form').addEventListener('submit', submitAuth);
     $('#auth-cancel').addEventListener('click', closeAuth);
     $('#auth-dialog').addEventListener('cancel', function () { state.authOpen = false; });
+    bindConfirmDialog();
 
     // 页面重新可见时补一次全量状态，避免后台标签页漏掉 SSE 快照
     document.addEventListener('visibilitychange', function () {
@@ -3190,7 +3407,7 @@
         previous: '上一页', next: '下一页', saved: '已保存', deleted: '已删除',
         failed: '操作失败', fetchFailed: '加载失败', total: '共 {n} 条', all: '全部',
         actions: '操作', yes: '是', no: '否', never: '从未',
-        page: '第 {page} / {pages} 页', pageSize: '每页',
+        page: '第 {page} / {pages} 页', pageSize: '每页', jumpTo: '跳至', latest: '跳到最新', confirm: '确认',
         timeout: '请求超时，请稍后重试'
       }
     },
@@ -3205,6 +3422,7 @@
         previous: 'Previous', next: 'Next', saved: 'Saved', deleted: 'Deleted', failed: 'Action failed',
         fetchFailed: 'Could not load data', total: '{n} items', all: 'All', actions: 'Actions',
         yes: 'Yes', no: 'No', never: 'Never', page: 'Page {page} / {pages}', pageSize: 'Per page',
+        jumpTo: 'Go to', latest: 'Jump to latest', confirm: 'Confirm',
         timeout: 'Request timed out, please try again'
       }
     }
@@ -3683,8 +3901,18 @@
     },
     api: API,
     toast: toast,
+    // 仅同步守卫（丢弃未保存修改、离开页面）继续用系统框；破坏性操作走 ask。
     confirm: function (message) { return window.confirm(message); },
+    ask: confirmDialog,
     fmtTime: fmtTime,
+    fmtDateTime: fmtDateTime,
+    fmtDate: fmtDate,
+    fmtClock: fmtClock,
+    relTime: fmtRelative,
+    toLocalInput: toLocalInput,
+    pagerHtml: pagerHtml,
+    PAGE_SIZES: PAGE_SIZES,
+    icons: SHARED_ICONS,
     typeLabel: typeLabel,
     statusLabel: function (status) { return t('taskStatus.' + (status || 'queued')); },
     openTaskDetail: openTaskDetail,

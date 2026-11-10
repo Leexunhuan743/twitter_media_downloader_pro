@@ -135,13 +135,6 @@
         unitSec: '秒',
         unitMin: '分钟',
         unitHour: '小时',
-        relNow: '即将运行',
-        relFutureMin: '{n} 分钟后',
-        relFutureHour: '{n} 小时后',
-        relFutureDay: '{n} 天后',
-        relPastMin: '{n} 分钟前',
-        relPastHour: '{n} 小时前',
-        relPastDay: '{n} 天前'
       }
     },
     'en': {
@@ -273,13 +266,6 @@
         unitSec: 's',
         unitMin: 'min',
         unitHour: 'h',
-        relNow: 'Due now',
-        relFutureMin: 'in {n} min',
-        relFutureHour: 'in {n} h',
-        relFutureDay: 'in {n} d',
-        relPastMin: '{n} min ago',
-        relPastHour: '{n} h ago',
-        relPastDay: '{n} d ago'
       }
     }
   });
@@ -320,15 +306,7 @@
       '#view-schedules .sch-field-error{margin:5px 0 0;color:var(--danger);font-size:12px}',
       '#view-schedules .sch-presets{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}',
       '#view-schedules .sch-preset.is-active{border-color:color-mix(in srgb,var(--accent) 42%,var(--border));background:var(--accent-soft);color:var(--accent);font-weight:650}',
-      '#view-schedules .sch-raw{padding:0;overflow:hidden}',
-      '#view-schedules .sch-raw>summary{display:flex;align-items:center;gap:10px;padding:14px 18px;cursor:pointer;list-style:none}',
-      '#view-schedules .sch-raw>summary::-webkit-details-marker{display:none}',
-      '#view-schedules .sch-raw__title{font-size:14px;font-weight:650}',
-      '#view-schedules .sch-raw__path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11.5px}',
-      '#view-schedules .sch-raw__chev{margin-left:auto;display:inline-flex;color:var(--muted);transition:transform .16s ease}',
-      '#view-schedules .sch-raw[open] .sch-raw__chev{transform:rotate(180deg)}',
-      '#view-schedules .sch-raw__body{padding:0 18px 18px;border-top:1px solid var(--border)}',
-      '#view-schedules .sch-skeleton{height:46px;margin:10px 0;border-radius:var(--radius-xs)}',
+      
       '#view-schedules .notice .sch-inline-btn{margin-left:10px;vertical-align:middle}',
       '#view-schedules .empty__actions .btn{min-height:36px}',
       /* 8 列在 960px 以下压不出可读的目标列，改用卡片布局而不是继续挤压。 */
@@ -347,18 +325,15 @@
       '#view-schedules .sch-target .badge{margin-top:2px}',
       '#view-schedules .sch-target__text{white-space:normal;overflow-wrap:anywhere}',
       '}',
-      '@media (max-width:820px){',
+      '@media (max-width:720px){',
       '#view-schedules .sch-icon{width:40px;height:40px}',
       '#view-schedules .sch-name{white-space:normal}',
       '#view-schedules .sch-switch{min-height:40px;padding:8px 0}',
-      '#view-schedules .sch-raw>summary{padding:12px 14px}',
-      '#view-schedules .sch-raw__body{padding:0 14px 14px}',
-      '#view-schedules .btn{min-height:40px}',
+      
       '#view-schedules .view-head{flex-wrap:wrap;row-gap:10px}',
       '#view-schedules .view-head__actions{flex-wrap:wrap;justify-content:flex-start;min-width:0}',
       '#view-schedules .view-head__actions .btn{min-height:40px;min-width:40px}',
       '#view-schedules .sch-preset{min-height:40px}',
-      '#view-schedules .sch-raw>summary{min-height:44px}',
       '#view-schedules .sch-runbanner{display:flex;align-items:center;gap:10px;flex-wrap:wrap}',
       '#view-schedules .sch-runbanner[hidden]{display:none}',
       '#view-schedules .sch-undo{display:flex;align-items:center;gap:10px;justify-content:flex-end;border-top:1px solid var(--border);padding:10px 18px}',
@@ -400,8 +375,8 @@
   var ICONS = {
     edit: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.6 3.4 12.6 6.4M3.2 12.8l3.5-.7 6.9-6.9a1.4 1.4 0 0 0-2-2l-6.9 6.9-.7 3.5Z"/></svg>',
     trigger: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.2 3.4v9.2l7-4.6-7-4.6Z"/></svg>',
-    trash: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 5h10M6.4 5V3.4h3.2V5M5 5l.6 8h4.8L11 5"/></svg>',
-    refresh: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 3.4V6.6H9.8"/></svg>',
+    trash: T.icons.trash,
+    refresh: T.icons.refresh,
     reload: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8a5 5 0 1 0 1.6-3.7M3 3.4V6.6h3.2"/></svg>',
     zap: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8.7 2.2 4 9h3.4l-.6 4.8L12 7H8.4l.3-4.8Z"/></svg>',
     plus: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.4v9.2M3.4 8h9.2"/></svg>'
@@ -410,31 +385,6 @@
   function iconBtn(action, id, icon, label, extraClass) {
     return '<button type="button" class="sch-icon' + (extraClass || '') + '" data-action="' + action + '" data-id="' + esc(id) + '"' +
       ' title="' + esc(label) + '" aria-label="' + esc(label) + '">' + ICONS[icon] + '</button>';
-  }
-
-  /* ---------------- time helpers ---------------- */
-
-  function fullTime(iso) {
-    var date = new Date(iso);
-    if (isNaN(date.getTime())) return '';
-    try {
-      return new Intl.DateTimeFormat(T.state && T.state.lang ? T.state.lang : 'zh-CN', {
-        year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit'
-      }).format(date);
-    } catch (e) {
-      return date.toLocaleString();
-    }
-  }
-
-  function relNow(iso) {
-    var date = new Date(iso);
-    if (isNaN(date.getTime())) return '';
-    var diff = date.getTime() - Date.now();
-    var abs = Math.abs(diff);
-    if (abs < 45000) return t('relNow');
-    if (abs < 3600000) return t(diff < 0 ? 'relPastMin' : 'relFutureMin', { n: Math.floor(abs / 60000) });
-    if (abs < 86400000) return t(diff < 0 ? 'relPastHour' : 'relFutureHour', { n: Math.floor(abs / 3600000) });
-    return t(diff < 0 ? 'relPastDay' : 'relFutureDay', { n: Math.floor(abs / 86400000) });
   }
 
   /* ---------------- schedule helpers ---------------- */
@@ -614,13 +564,13 @@
           '<button type="button" class="btn btn--ghost btn--sm" data-action="undo-delete">' + esc(t('undoDelete')) + '</button>' +
         '</div>' +
       '</section>' +
-      '<details class="card sch-raw mt-16" data-role="raw-details">' +
+      '<details class="disclosure mt-16" data-role="raw-details">' +
         '<summary>' +
-          '<span class="sch-raw__title">' + esc(t('rawTitle')) + '</span>' +
-          '<span class="sch-raw__path mono" data-role="raw-path"></span>' +
-          '<span class="sch-raw__chev" aria-hidden="true"><svg viewBox="0 0 16 16" width="14" height="14"><path d="M4 6.5 8 10.5 12 6.5"/></svg></span>' +
+          '<span class="disclosure__title">' + esc(t('rawTitle')) + '</span>' +
+          '<span class="disclosure__path mono" data-role="raw-path"></span>' +
+          '<span class="disclosure__chev" aria-hidden="true"><svg viewBox="0 0 16 16" width="14" height="14"><path d="M4 6.5 8 10.5 12 6.5"/></svg></span>' +
         '</summary>' +
-        '<div class="sch-raw__body">' +
+        '<div class="disclosure__body">' +
           '<p class="field-box__help">' + esc(t('rawHint')) + '</p>' +
           '<textarea class="textarea textarea--code mt-8" data-role="raw-editor" rows="16" spellcheck="false" aria-label="' + esc(t('rawTitle')) + '"></textarea>' +
           '<div class="form-actions">' +
@@ -688,8 +638,8 @@
     if (!enabled) {
       nextCell = '<span class="muted small">' + esc(t('nextDisabled')) + '</span>';
     } else if (nextIso) {
-      nextCell = '<span class="sch-num">' + esc(relNow(nextIso)) + '</span>' +
-        '<span class="sch-sub" title="' + esc(fullTime(nextIso)) + '">' + esc(T.fmtTime(nextIso)) + '</span>';
+      nextCell = '<span class="sch-num">' + esc(T.relTime(nextIso)) + '</span>' +
+        '<span class="sch-sub" title="' + esc(T.fmtDateTime(nextIso)) + '">' + esc(T.fmtTime(nextIso)) + '</span>';
     } else {
       nextCell = '<span class="muted small">' + esc(t('nextNever')) + '</span>';
     }
@@ -697,10 +647,10 @@
     var lastCell;
     if (lastError) {
       lastCell = '<span class="badge badge--danger" title="' + esc(lastError) + '">' + esc(t('lastFailed')) + '</span>' +
-        (lastIso ? '<span class="sch-sub">' + esc(relNow(lastIso)) + '</span>' : '');
+        (lastIso ? '<span class="sch-sub">' + esc(T.relTime(lastIso)) + '</span>' : '');
     } else if (lastIso) {
       lastCell = '<span class="badge badge--ok">' + esc(t('lastOk')) + '</span>' +
-        '<span class="sch-sub">' + esc(relNow(lastIso)) + '</span>';
+        '<span class="sch-sub">' + esc(T.relTime(lastIso)) + '</span>';
     } else {
       lastCell = '<span class="muted small">' + esc(t('lastNever')) + '</span>';
     }
@@ -749,7 +699,7 @@
 
   function skeletonMarkup() {
     var rows = '';
-    for (var i = 0; i < 3; i++) rows += '<div class="skeleton sch-skeleton"></div>';
+    for (var i = 0; i < 3; i++) rows += '<div class="skeleton skeleton--row"></div>';
     return rows;
   }
 
@@ -935,7 +885,12 @@
       return item && item.entry && item.entry.enabled;
     }).length;
     if (!enabled) { showNote(t('triggerAllNone'), 'info'); return; }
-    if (!T.confirm(t('triggerAllConfirm', { n: enabled }))) return;
+    T.ask({ message: t('triggerAllConfirm', { n: enabled }) }).then(function (ok) {
+      if (ok) runTriggerAll(btn);
+    });
+  }
+
+  function runTriggerAll(btn) {
     setBusy(btn, true);
     state.lastTriggerTaskId = '';
     return T.api.post('/api/v1/schedules/trigger-all').then(function (data) {
@@ -994,7 +949,12 @@
   function deleteSchedule(id, name) {
     var found = findStatus(id);
     var entry = found && found.entry ? found.entry : null;
-    if (!T.confirm(t('deleteConfirm', { name: name || id }))) return;
+    T.ask({ message: t('deleteConfirm', { name: name || id }), danger: true }).then(function (ok) {
+      if (ok) runDeleteSchedule(id, name, entry);
+    });
+  }
+
+  function runDeleteSchedule(id, name, entry) {
     T.api.del('/api/v1/schedules/' + encodeURIComponent(id)).then(function () {
       T.toast('success', T.t('common.deleted'));
       if (entry) {

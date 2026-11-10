@@ -160,22 +160,19 @@
     '.ov-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 16px; align-items: stretch; }',
     '.ov-grid > .card { display: flex; flex-direction: column; min-width: 0; }',
     '.ov-grid > .card > [data-role="recent"] { flex: 1 1 auto; display: flex; flex-direction: column; }',
-    '.ov-grid > .card > [data-role="recent"] > .ov-empty { margin: auto 0; }',
+    '.ov-grid > .card > [data-role="recent"] > .empty { margin: auto 0; }',
     '.ov-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }',
     '.ov-side > .card:last-child { flex: 1 1 auto; display: flex; flex-direction: column; }',
     '.ov-sched { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }',
-    '.ov-sched > .ov-empty { margin: auto 0; }',
+    '.ov-sched > .empty { margin: auto 0; }',
     '.ov-updated { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }',
     '.ov-stale { margin: 0 0 12px; }',
     '.ov-row.lrow { grid-template-columns: 78px minmax(0, 1fr) 128px 78px 88px; }',
     '.ov-row__acts { display: flex; justify-content: flex-end; gap: 2px; }',
-    '.ov-row__acts .btn { padding: 3px 7px; border-color: transparent; background: transparent; color: var(--muted); font-size: 12px; }',
     '.ov-row__acts .btn:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }',
     '.ov-row { cursor: pointer; }',
     '.ov-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }',
-    '.ov-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 24px 16px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); text-align: center; }',
-    '.ov-empty p { margin: 0; }',
-    '.ov-empty__title { color: var(--text-soft); font-size: 13.5px; font-weight: 600; }',
+    '.empty--fill { margin: auto 0; }',
     '.ov-fail { display: flex; flex-direction: column; }',
     '.ov-fail__row { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-top: 1px solid var(--border); font-size: 12.5px; }',
     '.ov-fail__row:first-child { border-top: 0; }',
@@ -216,21 +213,6 @@
   var esc = T.esc;
   function t(key, vars) { return T.t('ov.' + key, vars); }
   var fmtNum = T.fmtNum;
-
-  function relTime(iso) {
-    if (!iso) return '—';
-    var ms = Date.parse(iso);
-    if (!isFinite(ms)) return '—';
-    var diff = ms - Date.now();
-    var abs = Math.abs(diff);
-    var future = diff > 0;
-    var text;
-    if (abs < 60000) text = future ? 'in <1m' : '<1m';
-    else if (abs < 3600000) text = Math.round(abs / 60000) + 'm';
-    else if (abs < 86400000) text = Math.round(abs / 3600000) + 'h';
-    else text = Math.round(abs / 86400000) + 'd';
-    return future ? '+ ' + text : text;
-  }
 
   function statusPill(status) {
     return '<span class="pill" data-status="' + esc(status) + '">' + esc(T.statusLabel(status)) + '</span>';
@@ -434,9 +416,9 @@
     if (!box) return;
     var tasks = (T.state.tasks || []).slice(0, 4);
     if (!tasks.length) {
-      box.innerHTML = '<div class="ov-empty">' +
-        '<p class="ov-empty__title">' + esc(t('recentEmpty')) + '</p>' +
-        '<p class="muted small">' + esc(t('recentEmptyHint')) + '</p>' +
+      box.innerHTML = '<div class="empty">' +
+        '<p class="empty__title">' + esc(t('recentEmpty')) + '</p>' +
+        '<p class="empty__hint">' + esc(t('recentEmptyHint')) + '</p>' +
         '</div>';
       return;
     }
@@ -454,9 +436,9 @@
       var bar = running || progress.total > 0
         ? '<span class="metabar' + (progress.percent === null && running ? ' metabar--indeterminate' : '') + '" data-status="' + esc(status) + '"><i style="width:' + (progress.percent === null ? 0 : progress.percent) + '%"></i></span>'
         : '';
-      var acts = '<button type="button" class="btn" data-task-act="detail" data-id="' + esc(task.task_id) + '">' + esc(t('openTask')) + '</button>';
-      if (running || queued) acts += '<button type="button" class="btn" data-task-act="cancel" data-id="' + esc(task.task_id) + '">' + esc(t('cancelTask')) + '</button>';
-      if (failed) acts += '<button type="button" class="btn" data-task-act="retry" data-id="' + esc(task.task_id) + '">' + esc(t('retryTask')) + '</button>';
+      var acts = '<button type="button" class="btn btn--xs" data-task-act="detail" data-id="' + esc(task.task_id) + '">' + esc(t('openTask')) + '</button>';
+      if (running || queued) acts += '<button type="button" class="btn btn--xs" data-task-act="cancel" data-id="' + esc(task.task_id) + '">' + esc(t('cancelTask')) + '</button>';
+      if (failed) acts += '<button type="button" class="btn btn--xs" data-task-act="retry" data-id="' + esc(task.task_id) + '">' + esc(t('retryTask')) + '</button>';
       return '<div class="lrow ov-row" tabindex="0" role="link" data-status="' + esc(status) + '" data-id="' + esc(task.task_id) + '" title="' + esc(t('recentHint')) + '">' +
         '<span class="lrow__status">' + statusPill(status) + '</span>' +
         '<span class="lrow__target">' +
@@ -466,7 +448,7 @@
             '<span class="mono">' + esc(shortId(task.task_id)) + '</span></span>' +
         '</span>' +
         '<span class="lrow__prog">' + bar + '<span class="lrow__progtxt">' + esc(progText) + '</span></span>' +
-        '<time class="lrow__time" title="' + esc(T.fmtTime(created)) + '">' + esc(relTime(created)) + '</time>' +
+        '<time class="lrow__time" title="' + esc(T.fmtTime(created)) + '">' + esc(T.relTime(created)) + '</time>' +
         '<span class="ov-row__acts">' + acts + '</span>' +
         '</div>';
     }).join('');
@@ -510,14 +492,14 @@
         return am - bm;
       }).slice(0, 4);
     if (!upcoming.length) {
-      box.innerHTML = '<div class="ov-empty">' +
-        '<p class="ov-empty__title">' + esc(t('schedulesEmpty')) + '</p>' +
-        '<p class="muted small">' + esc(t('schedulesEmptyHint')) + '</p></div>';
+      box.innerHTML = '<div class="empty">' +
+        '<p class="empty__title">' + esc(t('schedulesEmpty')) + '</p>' +
+        '<p class="empty__hint">' + esc(t('schedulesEmptyHint')) + '</p></div>';
       return;
     }
     box.innerHTML = upcoming.map(function (item) {
       var entry = item.entry || {};
-      var when = item.next_run_at ? relTime(item.next_run_at) : t('noNext');
+      var when = item.next_run_at ? T.relTime(item.next_run_at) : t('noNext');
       return '<div class="ov-sched__row">' +
         '<span class="ov-sched__name" title="' + esc(entry.name || entry.id || '') + '">' + esc(entry.name || entry.id || '—') + '</span>' +
         '<span class="muted small">' + esc(item.schedule_display || entry.schedule || '') + '</span>' +
@@ -685,11 +667,13 @@
   }
 
   function clearErrors() {
-    if (!window.confirm(t('removeFailed'))) return;
-    T.api.del('/api/v1/errors').then(function () {
-      T.toast('success', t('purged'));
-      return refresh();
-    }, function (err) { if (err.status !== 401) T.toast('error', err.message); });
+    T.ask({ message: t('removeFailed'), danger: true }).then(function (ok) {
+      if (!ok) return;
+      T.api.del('/api/v1/errors').then(function () {
+        T.toast('success', t('purged'));
+        return refresh();
+      }, function (err) { if (err.status !== 401) T.toast('error', err.message); });
+    });
   }
 
   function refresh() {

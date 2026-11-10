@@ -11,7 +11,7 @@
         title: '日志',
         sub: '按级别、来源与时间检索日志，或开启实时流跟随最新输出。',
         chipAll: '全部', debug: '调试', info: '信息', warn: '警告', error: '错误',
-        levelLabel: '级别', levelAll: '全部级别',
+        levelLabel: '级别', levelAll: '全部级别', levelGroup: '日志级别筛选',
         qLabel: '关键词', qPlaceholder: '搜索日志内容…',
         domainLabel: '来源', domainPlaceholder: '例如 api',
         rangeLabel: '时间范围', rangeAll: '全部时间', range15m: '最近 15 分钟',
@@ -44,7 +44,7 @@
         exportFailed: '导出失败',
         copyLine: '复制此行', copied: '已复制日志行', copyFailed: '复制失败',
         copyManual: '浏览器拒绝了自动复制，已选中此行，请按 Ctrl+C',
-        openTweet: '在 X 打开推文',
+        openTweet: '在 X 打开推文', openTweetShort: '推文',
         newArrived: '{n} 条新日志',
         latest: '跳到最新', prev: '上一页', next: '下一页',
         levelTitle: '级别 {level}'
@@ -55,7 +55,7 @@
         title: 'Logs',
         sub: 'Search logs by level, source and time range, or go live and follow the newest output.',
         chipAll: 'All', debug: 'Debug', info: 'Info', warn: 'Warn', error: 'Error',
-        levelLabel: 'Level', levelAll: 'All levels',
+        levelLabel: 'Level', levelAll: 'All levels', levelGroup: 'Filter by log level',
         qLabel: 'Keyword', qPlaceholder: 'Search log content…',
         domainLabel: 'Source', domainPlaceholder: 'e.g. api',
         rangeLabel: 'Time range', rangeAll: 'All time', range15m: 'Last 15 min',
@@ -88,7 +88,7 @@
         exportFailed: 'Export failed',
         copyLine: 'Copy line', copied: 'Log line copied', copyFailed: 'Copy failed',
         copyManual: 'Automatic copy was blocked; this line is selected — press Ctrl+C',
-        openTweet: 'Open tweet on X',
+        openTweet: 'Open tweet on X', openTweetShort: 'Post',
         newArrived: '{n} new lines',
         latest: 'Jump to latest', prev: 'Previous', next: 'Next',
         levelTitle: 'Level {level}'
@@ -124,9 +124,9 @@
   var esc = T.esc;
 
   var ICONS = {
-    copy: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.6" y="5.6" width="7.8" height="7.8" rx="1.4"/><path d="M10.4 5.6V3.6a1 1 0 0 0-1-1H3.6a1 1 0 0 0-1 1v5.8a1 1 0 0 0 1 1h2"/></svg>',
+    copy: T.icons.copy,
     export: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.6v8.2M4.8 7.6 8 10.8l3.2-3.2M3 13h10"/></svg>',
-    refresh: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 3.4V6.6H9.8"/></svg>',
+    refresh: T.icons.refresh,
     play: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.2 3.4v9.2l7-4.6-7-4.6Z"/></svg>',
     stop: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4.6" y="4.6" width="6.8" height="6.8" rx="1.2"/></svg>'
   };
@@ -144,7 +144,7 @@
       '#view-logs .logbar__spacer{flex:1 1 auto}',
       '#view-logs .logbar .switch{min-height:32px}',
       '#view-logs .logbox{padding:6px 8px;max-height:64vh;overscroll-behavior:contain}',
-      '#view-logs .logbox[data-busy="true"]{opacity:.55}',
+      ,
       '#view-logs .logline{display:grid;grid-template-columns:74px 48px minmax(0,1fr) auto;grid-template-areas:"t l b c";gap:8px;align-items:start;padding:2px 6px;border-radius:6px}',
       '#view-logs .logline:hover{background:var(--surface-3)}',
       '#view-logs .logline__time{grid-area:t;color:var(--muted);font-size:11.5px;line-height:1.75;font-variant-numeric:tabular-nums;white-space:nowrap}',
@@ -168,12 +168,12 @@
       '#view-logs .notice .log-inline-btn{margin-left:10px;vertical-align:middle}',
       '@media (hover:none){#view-logs .logline__copy{opacity:1}}',
       '@media (max-width:720px){',
-      '#view-logs .btn{min-height:40px}',
-      '#view-logs .input,#view-logs .select{min-height:40px}',
+      
+      
       '#view-logs .view-head{flex-wrap:wrap;row-gap:10px}',
       '#view-logs .view-head__actions{flex-wrap:wrap;justify-content:flex-end;min-width:0}',
-      '#view-logs .view-head__actions .btn{min-height:40px;min-width:40px}',
-      '#view-logs .band__item{min-height:40px}',
+      '#view-logs .view-head__actions .btn{min-width:40px}',
+      
       '#view-logs .logbar .switch{min-height:40px}',
       '#view-logs .logfilters__q,#view-logs .logfilters__domain{flex:1 1 100%;min-width:0}',
       '#view-logs .logfilters .select{flex:1 1 auto;min-width:0}',
@@ -268,47 +268,6 @@
     }
     if (!row.level) row.level = 'info';
     return row;
-  }
-
-  /* ---------------- formatting ---------------- */
-
-  function lang() {
-    return T.state && T.state.lang ? T.state.lang : 'zh-CN';
-  }
-
-  function clock(date) {
-    if (!date) return '';
-    try {
-      return new Intl.DateTimeFormat(lang(), { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(date);
-    } catch (e) {
-      return date.toLocaleTimeString();
-    }
-  }
-
-  function stamp(date) {
-    if (!date) return '';
-    var now = new Date();
-    var today = date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
-    if (today) return clock(date);
-    function pad(n) { return (n < 10 ? '0' : '') + n; }
-    return pad(date.getMonth() + 1) + '/' + pad(date.getDate()) + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes());
-  }
-
-  function fullTime(date) {
-    if (!date) return '';
-    try {
-      return new Intl.DateTimeFormat(lang(), {
-        year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit'
-      }).format(date);
-    } catch (e) {
-      return date.toLocaleString();
-    }
-  }
-
-  function toLocalInput(date) {
-    function pad(n) { return (n < 10 ? '0' : '') + n; }
-    return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) +
-      'T' + pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds());
   }
 
   /* ---------------- filters ---------------- */
@@ -414,7 +373,7 @@
 
   function chip(level) {
     var pressed = filters.level === level ? 'true' : 'false';
-    return '<button type="button" class="band__item" data-level="' + level + '" aria-pressed="' + pressed + '">' +
+    return '<button type="button" class="chip" data-level="' + level + '" aria-pressed="' + pressed + '">' +
       esc(t(LEVEL_LABEL[level])) +
       '<span class="chip__count" data-stat="' + level + '">—</span>' +
       '</button>';
@@ -451,13 +410,7 @@
   }
 
   function pager() {
-    return '<div class="pager">' +
-      '<button type="button" class="btn btn--sm btn--ghost" data-role="prev">' + esc(t('prev')) + '</button>' +
-      '<span data-role="pageinfo"></span>' +
-      '<button type="button" class="btn btn--sm btn--ghost" data-role="next">' + esc(t('next')) + '</button>' +
-      '<span class="pager__grow"></span>' +
-      '<button type="button" class="btn btn--sm btn--ghost" data-role="latest">' + esc(t('latest')) + '</button>' +
-      '</div>';
+    return '<div class="pager" data-role="pager"></div>';
   }
 
   function markup() {
@@ -475,7 +428,8 @@
           '<button type="button" class="btn btn--ghost btn--sm" data-role="refresh" title="' + esc(T.t('common.refresh')) + '" aria-label="' + esc(T.t('common.refresh')) + '">' + ICONS.refresh + '</button>' +
         '</div>' +
       '</div>' +
-      '<div class="band" data-role="stats">' + LEVELS.map(chip).join('') + '</div>' +
+      '<div class="filters filters--chips" data-role="stats" role="group" aria-label="' + esc(t('levelGroup')) + '">' +
+        LEVELS.map(chip).join('') + '</div>' +
       '<section class="card">' +
         '<header class="card__head">' +
           '<h3 class="card__title">' + esc(t('results')) + '</h3>' +
@@ -499,7 +453,7 @@
         '</div>' +
         '<div class="empty" data-role="empty" hidden></div>' +
         '<div class="logbox" data-role="logbox" hidden></div>' +
-        '<div class="skeleton" data-role="loading" style="height:220px" hidden></div>' +
+        '<div class="skeleton skeleton--block" data-role="loading" hidden></div>' +
         pager() +
       '</section>';
   }
@@ -518,7 +472,7 @@
 
   function renderFilterState() {
     if (!host) return;
-    Array.prototype.forEach.call(host.querySelectorAll('.band__item[data-level]'), function (el) {
+    Array.prototype.forEach.call(host.querySelectorAll('.chip[data-level]'), function (el) {
       el.setAttribute('aria-pressed', el.getAttribute('data-level') === filters.level ? 'true' : 'false');
     });
     var rangeSelect = host.querySelector('[data-role="range"]');
@@ -540,16 +494,18 @@
 
   function renderPager() {
     if (!host) return;
+    var box = host.querySelector('[data-role="pager"]');
+    if (!box) return;
     var pages = Math.max(1, num(view.totalPages, 1));
     var current = Math.max(1, num(view.page, 1));
-    var info = host.querySelector('[data-role="pageinfo"]');
-    if (info) info.textContent = t('page', { page: current, pages: pages });
-    var prev = host.querySelector('[data-role="prev"]');
-    if (prev) prev.disabled = current <= 1;
-    var next = host.querySelector('[data-role="next"]');
-    if (next) next.disabled = current >= pages;
-    var latest = host.querySelector('[data-role="latest"]');
-    if (latest) latest.disabled = current <= 1 && !live;
+    box.innerHTML = T.pagerHtml({
+      page: current,
+      pages: pages,
+      total: num(view.total, 0),
+      jump: false,
+      latest: true,
+      latestDisabled: current <= 1 && !live
+    });
   }
 
   function renderLive() {
@@ -633,12 +589,12 @@
 
     var time = document.createElement('span');
     time.className = 'logline__time';
-    time.textContent = row.time ? stamp(row.time) : '—';
-    if (row.time) time.title = fullTime(row.time);
+    time.textContent = row.time ? T.fmtClock(row.time) : '—';
+    if (row.time) time.title = T.fmtDateTime(row.time);
 
     var badge = document.createElement('span');
     badge.className = 'logline__lv';
-    badge.textContent = row.level.toUpperCase();
+    badge.textContent = t(LEVEL_LABEL[row.level] || 'info');
     badge.title = t('levelTitle', { level: row.level });
     badge.setAttribute('aria-label', t('levelTitle', { level: row.level }));
 
@@ -671,7 +627,7 @@
       idLink.target = '_blank';
       idLink.rel = 'noopener noreferrer';
       idLink.setAttribute('data-tweet-id', row.tweetId);
-      idLink.textContent = 'ID';
+      idLink.textContent = t('openTweetShort');
       idLink.title = t('openTweet') + ' · ' + row.tweetId;
       idLink.setAttribute('aria-label', t('openTweet') + ' · ' + row.tweetId);
       actions.appendChild(idLink);
@@ -751,6 +707,7 @@
     }
     bar.hidden = false;
     btn.textContent = t('newArrived', { n: String(pendingCount) });
+    btn.setAttribute('aria-label', t('newArrived', { n: String(pendingCount) }));
   }
 
   function flushPending() {
@@ -1135,7 +1092,7 @@
     var target = event.target;
     if (!target || typeof target.closest !== 'function') return;
 
-    var chipEl = target.closest('.band__item[data-level]');
+    var chipEl = target.closest('.chip[data-level]');
     if (chipEl && host.contains(chipEl)) {
       setLevel(chipEl.getAttribute('data-level'));
       return;
@@ -1148,6 +1105,33 @@
     var copyEl = target.closest('[data-copy]');
     if (copyEl && host.contains(copyEl)) {
       copyLine(num(copyEl.getAttribute('data-copy'), -1), copyEl);
+      return;
+    }
+    // 分页器来自 T.pagerHtml，动作统一走 data-act。
+    var pageBtn = target.closest('[data-act="prev"], [data-act="next"], [data-act="page"], [data-act="latest"]');
+    if (pageBtn && host.contains(pageBtn)) {
+      var pagerAction = pageBtn.getAttribute('data-act');
+      var totalPages = Math.max(1, num(view.totalPages, 1));
+      if (pagerAction === 'prev') {
+        if (num(view.page, 1) <= 1) return;
+        filters.page = num(view.page, 1) - 1;
+        fetchLogs();
+      } else if (pagerAction === 'next') {
+        if (num(view.page, 1) >= totalPages) return;
+        filters.page = num(view.page, 1) + 1;
+        fetchLogs();
+      } else if (pagerAction === 'page') {
+        var targetPage = num(pageBtn.getAttribute('data-page'), 1);
+        if (targetPage === num(view.page, 1)) return;
+        filters.page = targetPage;
+        fetchLogs();
+      } else {
+        filters.page = 1;
+        fetchLogs().then(function () {
+          var box = host && host.querySelector('[data-role="logbox"]');
+          if (box) box.scrollTop = 0;
+        });
+      }
       return;
     }
     var btn = target.closest('[data-role]');
@@ -1166,21 +1150,6 @@
     } else if (role === 'stream-retry') {
       reconnectAttempt = 0;
       startLive();
-    } else if (role === 'prev') {
-      if (num(view.page, 1) <= 1) return;
-      filters.page = num(view.page, 1) - 1;
-      fetchLogs();
-    } else if (role === 'next') {
-      var pages = Math.max(1, num(view.totalPages, 1));
-      if (num(view.page, 1) >= pages) return;
-      filters.page = num(view.page, 1) + 1;
-      fetchLogs();
-    } else if (role === 'latest') {
-      filters.page = 1;
-      fetchLogs().then(function () {
-        var box = host && host.querySelector('[data-role="logbox"]');
-        if (box) box.scrollTop = 0;
-      });
     } else if (role === 'reset-filters') {
       resetFilters();
     }

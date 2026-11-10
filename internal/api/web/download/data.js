@@ -234,7 +234,6 @@
 .data-filter .select{width:auto;min-width:84px}
 .data-num{width:110px}
 .data-refresh{margin-left:auto}
-.data-tablewrap.is-busy{opacity:.55;pointer-events:none;transition:opacity .15s ease}
 .data-table{table-layout:fixed}
 .data-table th,.data-table td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .data-table th{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.35}
@@ -315,12 +314,6 @@
 .data-ctx__text{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
 .data-ctx__count{color:var(--muted);font-variant-numeric:tabular-nums}
 .data-ctx .btn{flex:0 0 auto}
-.pager__jump{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:12.5px}
-.pager__jump input{width:72px;text-align:center}
-.pager__pages{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap}
-.pager__page{min-width:32px;padding:5px 8px;justify-content:center;font-variant-numeric:tabular-nums}
-.pager__page.is-active{border-color:var(--accent);color:var(--accent);font-weight:600}
-.pager__gap{color:var(--muted);padding:0 2px;user-select:none}
 .data-readonly{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 14px;margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2)}
 .data-readonly__item{display:flex;flex-direction:column;gap:2px;min-width:0}
 .data-readonly__key{font-size:11.5px;color:var(--muted)}
@@ -332,10 +325,10 @@
 
   var ICONS = {
     search: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7.1" cy="7.1" r="4.3"/><path d="M10.4 10.4L14 14" stroke-linecap="round"/></svg>',
-    copy: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.6" y="5.6" width="7.8" height="7.8" rx="1.6"/><path d="M10.4 3.4v-.5a1.6 1.6 0 0 0-1.6-1.6H3.3a1.6 1.6 0 0 0-1.6 1.6v5.5a1.6 1.6 0 0 0 1.6 1.6h.5"/></svg>',
+    copy: T.icons.copy,
     eye: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.6 8S3.9 3.9 8 3.9 14.4 8 14.4 8 12.1 12.1 8 12.1 1.6 8 1.6 8z"/><circle cx="8" cy="8" r="2.4"/></svg>',
     pencil: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11 2.4l2.6 2.6L5.2 13.4l-3.2.6.6-3.2 8.4-8.4z"/></svg>',
-    trash: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.9 4.4h10.2M6.4 4.4V2.9h3.2v1.5M4.3 4.4l.6 8.7h6.2l.6-8.7"/></svg>'
+    trash: T.icons.trash,
   };
 
   var TABS = {
@@ -492,28 +485,8 @@
   }
   var esc = T.esc;
   var fmtNum = T.fmtNum;
-
-  function pad2(n) { return n < 10 ? '0' + n : String(n); }
-
-  // 带入秒：只保留到分钟会让「未改动的秒」在保存时被归零。
-  function toLocalInput(iso) {
-    if (!iso) return '';
-    var date = new Date(iso);
-    if (isNaN(date.getTime())) return '';
-    return date.getFullYear() + '-' + pad2(date.getMonth() + 1) + '-' + pad2(date.getDate()) +
-      'T' + pad2(date.getHours()) + ':' + pad2(date.getMinutes()) + ':' + pad2(date.getSeconds());
-  }
-
-  function fmtDate(value) {
-    if (!value) return '—';
-    var date = new Date(value);
-    if (isNaN(date.getTime())) return '—';
-    try {
-      return new Intl.DateTimeFormat(T.state.lang, { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
-    } catch (e) {
-      return String(value).slice(0, 10);
-    }
-  }
+  var fmtDate = T.fmtDate;
+  var toLocalInput = T.toLocalInput;
 
   function sameDateTime(a, b) {
     var ea = !a, eb = !b;
@@ -533,7 +506,7 @@
       String(next === undefined || next === null ? '' : next);
   }
 
-  function numText(value) {
+  function fmtNum(value) {
     var n = Number(value);
     return isNaN(n) ? '—' : String(n);
   }
@@ -568,7 +541,7 @@
   }
 
   function numCell(value) {
-    return '<span class="mono">' + esc(numText(value)) + '</span>';
+    return '<span class="mono">' + esc(fmtNum(value)) + '</span>';
   }
 
   function numCellOf(key) {
@@ -920,18 +893,22 @@
   function tableHtml(def, s, cols) {
     var head = '<thead><tr>' + cols.map(function (col) { return thHtml(col, s); }).join('') + '</tr></thead>';
     var body = '<tbody>' + s.rows.map(function (row) { return dataRow(def, row, cols); }).join('') + '</tbody>';
-    return '<div class="data-tablewrap tablewrap' + (s.loading ? ' is-busy' : '') + '">' +
+    return '<div class="data-tablewrap tablewrap" data-busy="' + (s.loading ? 'true' : 'false') + '">' +
       '<table class="table data-table">' + colgroupHtml(cols) + head + body + '</table></div>';
   }
 
   function skeletonTable(s, cols) {
     var rows = '';
     for (var i = 0; i < 6; i++) {
-      rows += '<tr class="data-skel"><td colspan="' + cols.length + '">' +
-        '<span class="skeleton" style="display:block;height:12px;width:' + (48 + i * 7) + '%"></span></td></tr>';
+      var cells = cols.map(function (col, index) {
+        var width = index === 0 ? 48 : (index === 1 ? 72 : 40 + ((i * 7 + index * 11) % 40));
+        return '<td' + (col.actions ? ' class="table__actions"' : '') + '>' +
+          '<span class="skeleton skeleton--line" style="width:' + width + '%"></span></td>';
+      }).join('');
+      rows += '<tr class="data-skel">' + cells + '</tr>';
     }
     var head = '<thead><tr>' + cols.map(function (col) { return thHtml(col, s); }).join('') + '</tr></thead>';
-    return '<div class="data-tablewrap tablewrap is-busy" aria-busy="true">' +
+    return '<div class="data-tablewrap tablewrap" data-busy="true" aria-busy="true">' +
       '<table class="table data-table">' + colgroupHtml(cols) + head + '<tbody>' + rows + '</tbody></table></div>';
   }
 
@@ -1034,23 +1011,6 @@
 
   /* ---------------- 分页 ---------------- */
 
-  // 页码序列：总页数少时全列，多时首尾固定、当前页左右各一页，其余折叠成省略号。
-  function pageNumbers(current, total) {
-    if (total <= 7) {
-      var all = [];
-      for (var i = 1; i <= total; i++) all.push(i);
-      return all;
-    }
-    var pages = [1];
-    var start = Math.max(2, current - 1);
-    var end = Math.min(total - 1, current + 1);
-    if (start > 2) pages.push('…');
-    for (var p = start; p <= end; p++) pages.push(p);
-    if (end < total - 1) pages.push('…');
-    pages.push(total);
-    return pages;
-  }
-
   function renderPager() {
     if (!host) return;
     var box = host.querySelector('[data-role="pager"]');
@@ -1058,31 +1018,15 @@
     var s = tabState(st.tab);
     box.style.display = s.error ? 'none' : '';
     box.setAttribute('aria-busy', s.loading ? 'true' : 'false');
-    var info = T.t('common.total', { n: fmtNum(s.total) }) + ' · ' +
-      T.t('common.page', { page: s.page, pages: s.totalPages });
-    var pages = pageNumbers(s.page, s.totalPages).map(function (n) {
-      if (n === '…') return '<span class="pager__gap" aria-hidden="true">…</span>';
-      var current = n === s.page;
-      return '<button type="button" class="btn btn--ghost btn--sm pager__page"' +
-        (current ? ' is-active" aria-current="page"' : '"') +
-        ' data-act="page" data-page="' + n + '"' + (s.loading ? ' disabled' : '') + '>' + n + '</button>';
-    }).join('');
-    var jump = '<span class="pager__jump">' +
-      '<label for="data-page-jump">' + esc(t('jump')) + '</label>' +
-      '<input class="input" id="data-page-jump" type="number" min="1" max="' + Math.max(1, s.totalPages) + '"' +
-        ' step="1" inputmode="numeric" value="' + s.page + '" data-role="page-jump">' +
-      '<span aria-hidden="true">/ ' + fmtNum(s.totalPages) + '</span></span>';
-    var jumpFocused = false;
     var active = document.activeElement;
-    if (active && active.getAttribute && active.getAttribute('data-role') === 'page-jump') jumpFocused = true;
-    box.innerHTML =
-      '<button type="button" class="btn btn--ghost btn--sm" data-act="prev"' + ((s.loading || s.page <= 1) ? ' disabled' : '') + '>' +
-        esc(T.t('common.previous')) + '</button>' +
-      '<span class="pager__pages">' + pages + '</span>' +
-      '<button type="button" class="btn btn--ghost btn--sm" data-act="next"' + ((s.loading || s.page >= s.totalPages) ? ' disabled' : '') + '>' +
-        esc(T.t('common.next')) + '</button>' +
-      '<span class="pager__grow" aria-live="polite">' + esc(info) + '</span>' +
-      jump;
+    var jumpFocused = !!(active && active.getAttribute && active.getAttribute('data-role') === 'page-jump');
+    box.innerHTML = T.pagerHtml({
+      page: s.page,
+      pages: s.totalPages,
+      total: s.total,
+      loading: !!s.loading,
+      jumpId: 'data-page-jump'
+    });
     // 每次重绘都会换掉跳页输入框：之前聚焦在它上面就把焦点还回去，避免键入时丢焦点。
     if (jumpFocused) {
       var next = box.querySelector('[data-role="page-jump"]');
@@ -1246,7 +1190,7 @@
         badge(t('colAccessible'), row.is_accessible, row.is_accessible ? 'ok' : 'danger', row.is_accessible ? t('stateAccessible') : t('stateInaccessible'))
       ]);
       group(t('groupData'), [
-        kv(t('colFriends'), numText(row.friends_count))
+        kv(t('colFriends'), fmtNum(row.friends_count))
       ]);
     } else if (tab === 'lists') {
       group(t('groupIdentity'), [
@@ -1263,7 +1207,7 @@
         kv(t('colName'), row.name, { copy: true })
       ]);
       group(t('groupData'), [
-        kv(t('colMediaCount'), numText(row.media_count)),
+        kv(t('colMediaCount'), fmtNum(row.media_count)),
         kv(t('colLatestRelease'), row.latest_release_time ? T.fmtTime(row.latest_release_time) : '')
       ]);
       group(t('groupPath'), [
@@ -1420,7 +1364,7 @@
       ]).then(function (res) {
         var entities = unwrap(res[0]), links = unwrap(res[1]), names = unwrap(res[2]);
         var html = relatedSection(t('relatedEntities'), entities, totalOf(res[0]), function (row) {
-          var meta = t('metaMedia', { n: numText(row.media_count) });
+          var meta = t('metaMedia', { n: fmtNum(row.media_count) });
           if (row.latest_release_time) meta += ' · ' + T.fmtTime(row.latest_release_time);
           return relatedRow(row.name || row.screen_name || ('#' + row.id), meta);
         }, 'userEntities', 'userId');
@@ -1483,7 +1427,7 @@
         var entities = unwrap(res[0]);
         var parent = res[1] && res[1].data;
         var html = relatedSection(t('relatedEntities'), entities, totalOf(res[0]), function (row) {
-          return relatedRow(row.name || ('#' + row.id), t('metaMedia', { n: numText(row.media_count) }));
+          return relatedRow(row.name || ('#' + row.id), t('metaMedia', { n: fmtNum(row.media_count) }));
         }, 'userEntities', 'userId', d.row.user_id);
         if (parent) {
           html += relatedSection(t('relatedParentList'), [parent], 1, function (row) {
@@ -1502,7 +1446,7 @@
       ]).then(function (res) {
         var links = unwrap(res[0]), entities = unwrap(res[1]);
         var html = relatedSection(t('relatedEntities'), entities, totalOf(res[1]), function (row) {
-          return relatedRow(row.name || ('#' + row.id), t('metaMedia', { n: numText(row.media_count) }));
+          return relatedRow(row.name || ('#' + row.id), t('metaMedia', { n: fmtNum(row.media_count) }));
         }, 'userEntities', 'userId', d.row.user_id);
         html += relatedSection(t('relatedLinks'), links, totalOf(res[0]), function (row) {
           return relatedRow(row.name || ('#' + row.id), row.parent_lst_entity_name || '');

@@ -519,20 +519,7 @@
       '.sys-cookie-idx { width: 42px; color: var(--muted); font-variant-numeric: tabular-nums; }',
       '.sys-cookie-state { white-space: nowrap; }',
       /* 运行信息 */
-      '.sys-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--border); overflow: hidden; }',
-      '.sys-stat { min-width: 0; padding: 10px 12px; background: var(--surface); }',
-      '.sys-stat__label { color: var(--muted); font-size: 11.5px; font-weight: 600; letter-spacing: .02em; }',
-      '.sys-stat__value { margin-top: 3px; font-size: 16px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }',
-      '.sys-stat__sub { margin-top: 2px; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }',
-      '.sys-skel { height: 12px; width: 42%; }',
-      '.sys-skel--tall { height: 34px; width: 100%; margin-top: 8px; }',
       /* 折叠原始文件 */
-      '.sys-details { margin-top: 16px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }',
-      '.sys-details > summary { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 8px 12px; color: var(--text-soft); font-size: 12.5px; font-weight: 600; cursor: pointer; list-style: none; }',
-      '.sys-details > summary::-webkit-details-marker { display: none; }',
-      '.sys-details > summary::before { content: "▸"; color: var(--muted); font-size: 11px; }',
-      '.sys-details[open] > summary::before { content: "▾"; }',
-      '.sys-details__body { padding: 0 12px 12px; }',
       /* 危险操作 */
       '.sys-danger__row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid var(--border); }',
       '.sys-danger__row:first-of-type { border-top: 0; padding-top: 0; }',
@@ -540,20 +527,13 @@
       '.sys-danger__title { font-size: 13px; font-weight: 600; }',
       '.sys-danger__desc { margin-top: 2px; color: var(--muted); font-size: 12px; }',
       /* 未保存操作条 */
-      '.sys-savebar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 26; padding: 10px 20px calc(10px + env(safe-area-inset-bottom)); border-top: 1px solid var(--border); background: var(--surface); box-shadow: 0 -6px 20px -18px var(--text); }',
-      '.sys-savebar__inner { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; max-width: 1180px; margin: 0 auto; }',
-      '.sys-savebar__count { font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }',
-      '.sys-savebar__hint { color: var(--muted); font-size: 12px; }',
-      '.sys-savebar__actions { display: flex; gap: 8px; margin-left: auto; }',
-      '.view--dirty { padding-bottom: 84px; }',
       /* 移动端 */
-      '@media (max-width: 700px) {',
+      '@media (max-width: 720px) {',
       '  .sys-nav { margin-left: -8px; margin-right: -8px; border-radius: 0; border-left: 0; border-right: 0; }',
-      '  .sys-nav .band__item { min-height: 40px; padding: 0 10px; }',
+      '  .sys-nav .band__item { padding: 0 10px; }',
       '  .sys-fields { grid-template-columns: minmax(0, 1fr); }',
       '  .sys-field__head { min-height: 40px; }',
       '  .sys-field__clear { min-height: 40px; padding: 0 12px; }',
-      '  .sys-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }',
       '  .sys-cookie-table thead { display: none; }',
       '  .sys-cookie-table tbody tr { display: block; padding: 10px 0; border-bottom: 1px solid var(--border); }',
       '  .sys-cookie-table tbody tr:last-child { border-bottom: 0; }',
@@ -563,12 +543,7 @@
       '  .sys-cookie-table .btn { min-height: 40px; width: 100%; }',
       '  .sys-danger__row { flex-direction: column; align-items: stretch; gap: 8px; }',
       '  .sys-danger__row .btn { width: 100%; min-height: 40px; }',
-      '  .sys-savebar__inner { flex-wrap: wrap; gap: 8px; }',
-      '  .sys-savebar__hint { flex: 1 1 100%; }',
-      '  .sys-savebar__actions { flex: 1 1 100%; margin-left: 0; }',
-      '  .sys-savebar__actions .btn { flex: 1 1 0; min-height: 40px; }',
-      '  #view-system .btn { min-height: 40px; }',
-      '  #view-system .sys-details > summary { min-height: 40px; }',
+      
       '}'
     ].join('\n'));
   }
@@ -612,7 +587,7 @@
           '<h2 class="card__title" id="sys-runtime-title">' + esc(t('runtime.title')) + '</h2>' +
           '<span class="card__meta" data-role="runtime-meta"></span>' +
         '</header>' +
-        '<div class="sys-stats" data-role="runtime-stats"></div>' +
+        '<div class="statstrip" data-role="runtime-stats"></div>' +
         '<div class="grid-2 mt-16" data-role="runtime-detail"></div>' +
         '<div class="mt-12" data-role="runtime-msg"></div>' +
       '</section>';
@@ -646,14 +621,12 @@
   }
 
   function savebarMarkup() {
-    return '<div class="sys-savebar" data-role="savebar" hidden>' +
-      '<div class="sys-savebar__inner">' +
-        '<span class="sys-savebar__count" data-role="dirty-count"></span>' +
-        '<span class="sys-savebar__hint">' + esc(t('fields.dirtyHint')) + '</span>' +
-        '<div class="sys-savebar__actions">' +
-          '<button type="button" class="btn btn--ghost" data-action="fields-reset">' + esc(t('fields.discard')) + '</button>' +
-          '<button type="button" class="btn btn--primary" data-action="fields-save">' + esc(t('fields.save')) + '</button>' +
-        '</div>' +
+    return '<div class="stickybar" data-role="savebar" hidden>' +
+      '<span class="stickybar__text" data-role="dirty-count"></span>' +
+      '<span class="stickybar__text">' + esc(t('fields.dirtyHint')) + '</span>' +
+      '<div class="stickybar__actions">' +
+        '<button type="button" class="btn btn--ghost" data-action="fields-reset">' + esc(t('fields.discard')) + '</button>' +
+        '<button type="button" class="btn btn--primary" data-action="fields-save">' + esc(t('fields.save')) + '</button>' +
       '</div>' +
     '</div>';
   }
@@ -690,9 +663,9 @@
   function skeletonStats() {
     var html = '';
     for (var i = 0; i < 4; i++) {
-      html += '<div class="sys-stat">' +
-        '<div class="skeleton sys-skel"></div>' +
-        '<div class="skeleton sys-skel--tall"></div>' +
+      html += '<div class="stat">' +
+        '<div class="skeleton skeleton--line skeleton--text"></div>' +
+        '<div class="skeleton skeleton--field"></div>' +
         '</div>';
     }
     return html;
@@ -702,8 +675,8 @@
     var html = '';
     for (var i = 0; i < 4; i++) {
       html += '<div class="sys-field sys-field--wide">' +
-        '<div class="skeleton sys-skel"></div>' +
-        '<div class="skeleton sys-skel--tall"></div>' +
+        '<div class="skeleton skeleton--line skeleton--text"></div>' +
+        '<div class="skeleton skeleton--field"></div>' +
         '</div>';
     }
     return '<div class="sys-fields">' + html + '</div>';
@@ -1144,9 +1117,13 @@
   /* ---------------- raw config editor ---------------- */
 
   function rawDetailsMarkup() {
-    return '<details class="sys-details" data-role="raw-details">' +
-      '<summary>' + esc(t('raw.summary')) + '</summary>' +
-      '<div class="sys-details__body">' +
+    return '<details class="disclosure" data-role="raw-details">' +
+      '<summary>' +
+        '<span class="disclosure__title">' + esc(t('raw.summary')) + '</span>' +
+        '<span class="disclosure__path mono" data-role="raw-path"></span>' +
+        '<span class="disclosure__chev" aria-hidden="true"><svg viewBox="0 0 16 16" width="14" height="14"><path d="M4 6.5 8 10.5 12 6.5"/></svg></span>' +
+      '</summary>' +
+      '<div class="disclosure__body">' +
         '<p class="small muted mono" data-role="raw-meta"></p>' +
         '<p class="small muted mt-8">' + esc(t('raw.secret')) + '</p>' +
         '<p class="small muted">' + esc(t('raw.overwriteHint')) + '</p>' +
@@ -1164,7 +1141,9 @@
     if (!host) return;
     var editor = host.querySelector('[data-role="raw-editor"]');
     var meta = host.querySelector('[data-role="raw-meta"]');
+    var pathEl = host.querySelector('[data-role="raw-path"]');
     if (!editor) return;
+    if (pathEl) pathEl.textContent = S.raw.path || '';
     if (S.rawError) {
       editor.value = '';
       editor.disabled = true;
@@ -1251,7 +1230,7 @@
         '<span class="' + stateClass + '" data-role="cookie-state">' + esc(stateText) + '</span>' +
       '</td>' +
       '<td class="table__actions" data-label="' + esc(t('cookies.headerActions')) + '">' +
-        '<button type="button" class="btn btn--ghost btn--sm btn--danger" data-action="cookie-remove" data-index="' + index + '">' +
+        '<button type="button" class="btn btn--ghost btn--xs btn--danger" data-action="cookie-remove" data-index="' + index + '">' +
           esc(t('cookies.remove')) + '</button>' +
       '</td>' +
       '</tr>';
@@ -1390,9 +1369,11 @@
   function removeCookie(index) {
     syncCookieDraft();
     if (isNaN(index) || index < 0 || index >= S.cookieDraft.length) return;
-    if (!T.confirm(t('cookies.removeConfirm', { n: index + 1 }))) return;
-    S.cookieDraft.splice(index, 1);
-    renderCookies();
+    T.ask({ message: t('cookies.removeConfirm', { n: index + 1 }), danger: true }).then(function (ok) {
+      if (!ok) return;
+      S.cookieDraft.splice(index, 1);
+      renderCookies();
+    });
   }
 
   function collectCookies() {
@@ -1450,9 +1431,9 @@
   /* ---------------- raw cookies editor ---------------- */
 
   function cookiesDetailsMarkup() {
-    return '<details class="sys-details" data-role="cookies-raw-details">' +
-      '<summary>' + esc(t('cookiesRaw.summary')) + '</summary>' +
-      '<div class="sys-details__body">' +
+    return '<details class="disclosure" data-role="cookies-raw-details">' +
+      '<summary><span class="disclosure__title">' + esc(t('cookiesRaw.summary')) + '</span><span class="disclosure__chev" aria-hidden="true"><svg viewBox="0 0 16 16" width="14" height="14"><path d="M4 6.5 8 10.5 12 6.5"/></svg></span></summary>' +
+      '<div class="disclosure__body">' +
         '<p class="small muted mono" data-role="cookies-raw-meta"></p>' +
         '<textarea class="textarea textarea--code mt-8" rows="12" spellcheck="false" autocomplete="off" data-role="cookies-raw-editor" aria-label="' + esc(t('cookiesRaw.title')) + '" disabled></textarea>' +
         '<div class="mt-12" data-role="cookies-raw-msg"></div>' +
@@ -1615,20 +1596,21 @@
 
   function sessionClear(button) {
     if (!host || button.disabled) return;
-    if (!T.confirm(t('session.clearWarn'))) return;
-    T.logout();
-    setMsg('session-msg', t('session.cleared'), 'warn');
-    T.toast('info', t('session.cleared'));
-    renderSession();
+    T.ask({ message: t('session.clearWarn'), danger: true }).then(function (ok) {
+      if (!ok) return;
+      T.logout();
+      setMsg('session-msg', t('session.cleared'), 'warn');
+      renderSession();
+    });
   }
 
   /* ---------------- runtime info ---------------- */
 
   function statItem(key, label, value, sub) {
-    return '<div class="sys-stat" data-stat="' + esc(key) + '">' +
-      '<div class="sys-stat__label">' + esc(label) + '</div>' +
-      '<div class="sys-stat__value">' + esc(value) + '</div>' +
-      (sub ? '<div class="sys-stat__sub">' + esc(sub) + '</div>' : '') +
+    return '<div class="stat" data-stat="' + esc(key) + '">' +
+      '<span class="stat__label">' + esc(label) + '</span>' +
+      '<span class="stat__value">' + esc(value) + '</span>' +
+      (sub ? '<span class="stat__sub">' + esc(sub) + '</span>' : '') +
       '</div>';
   }
 
@@ -1726,7 +1708,12 @@
   /* ---------------- danger zone ---------------- */
 
   function clearErrors(button) {
-    if (!T.confirm(t('danger.clearErrorsConfirm'))) return;
+    T.ask({ message: t('danger.clearErrorsConfirm'), danger: true }).then(function (ok) {
+      if (ok) runClearErrors(button);
+    });
+  }
+
+  function runClearErrors(button) {
     if (button) button.disabled = true;
     T.api.del('/api/v1/errors').then(function () {
       if (button) button.disabled = false;
@@ -1741,8 +1728,16 @@
   }
 
   function shutdownServer(button) {
-    if (!T.confirm(t('danger.shutdownConfirm1'))) return;
-    if (!T.confirm(t('danger.shutdownConfirm2'))) return;
+    T.ask({
+      message: t('danger.shutdownConfirm1'),
+      danger: true,
+      confirmLabel: t('danger.shutdown')
+    }).then(function (ok) {
+      if (ok) runShutdown(button);
+    });
+  }
+
+  function runShutdown(button) {
     setMsg('danger-msg', t('danger.shutdownRequested'), 'warn');
     if (button) button.disabled = true;
     if (timer) { clearInterval(timer); timer = null; }

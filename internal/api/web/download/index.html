@@ -43,13 +43,13 @@
     <button type="button" class="btn btn--ghost btn--sm btn--icon-text" id="btn-auth" hidden data-i18n="status.changeKey">切换密钥</button>
 
     <div class="seg" id="theme-seg" role="group" data-i18n-aria="theme.group" aria-label="外观">
-      <button type="button" class="seg__btn" data-theme-set="light" data-i18n-aria="theme.light" aria-label="浅色" title="浅色">
+      <button type="button" class="seg__btn" data-theme-set="light" data-i18n-aria="theme.light" data-i18n-title="theme.light" aria-label="浅色" title="浅色">
         <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3.1"/><g stroke-linecap="round"><path d="M8 1.6v1.8M8 12.6v1.8M1.6 8h1.8M12.6 8h1.8M3.5 3.5l1.3 1.3M11.2 11.2l1.3 1.3M12.5 3.5l-1.3 1.3M4.8 11.2l-1.3 1.3"/></g></svg>
       </button>
-      <button type="button" class="seg__btn" data-theme-set="auto" data-i18n-aria="theme.auto" aria-label="跟随系统" title="跟随系统">
+      <button type="button" class="seg__btn" data-theme-set="auto" data-i18n-aria="theme.auto" data-i18n-title="theme.auto" aria-label="跟随系统" title="跟随系统">
         <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.4" y="3.4" width="11.2" height="7.6" rx="1.6"/><path d="M5.8 13.2h4.4" stroke-linecap="round"/></svg>
       </button>
-      <button type="button" class="seg__btn" data-theme-set="dark" data-i18n-aria="theme.dark" aria-label="深色" title="深色">
+      <button type="button" class="seg__btn" data-theme-set="dark" data-i18n-aria="theme.dark" data-i18n-title="theme.dark" aria-label="深色" title="深色">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 9.4A5.4 5.4 0 0 1 6.6 3a5.4 5.4 0 1 0 6.4 6.4z"/></svg>
       </button>
     </div>
@@ -227,13 +227,7 @@
         <p class="empty__title" id="ledger-empty-text"></p>
         <div class="empty__actions" id="ledger-empty-actions"></div>
       </div>
-      <nav class="ledger__pager" id="ledger-pager" hidden aria-label="台账分页">
-        <button type="button" class="btn btn--ghost btn--sm" id="ledger-prev" data-i18n="ledger.prevPage">上一页</button>
-        <span class="ledger__pageinfo" id="ledger-pageinfo" aria-live="polite"></span>
-        <label class="visually-hidden" for="ledger-page-jump" data-i18n="ledger.jump">跳至页码</label>
-        <input class="input ledger__jump" id="ledger-page-jump" type="number" min="1" step="1" inputmode="numeric" data-i18n-placeholder="ledger.jump" placeholder="跳至">
-        <button type="button" class="btn btn--ghost btn--sm" id="ledger-next" data-i18n="ledger.nextPage">下一页</button>
-      </nav>
+      <nav class="pager ledger__pager" id="ledger-pager" hidden data-i18n-aria="ledger.pagerLabel" aria-label="台账分页"></nav>
     </section>
   </section>
 
@@ -244,9 +238,28 @@
 
   <footer class="footer">
     <span id="footer-note" data-i18n="footer.note">TMD 下载台 · 单页零构建</span>
+    <a class="footer__link" id="footer-repo" href="https://github.com/Leexunhuan743/twitter_media_downloader_pro" target="_blank" rel="noopener noreferrer">
+      <svg class="footer__icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+      <span data-i18n="footer.repo">GitHub 仓库</span>
+    </a>
     <span id="footer-version" data-i18n="footer.version">版本 —</span>
   </footer>
 </main>
+
+<dialog class="modal" id="confirm-dialog" aria-labelledby="confirm-title">
+  <div class="modal__form">
+    <div class="modal__head">
+      <div>
+        <h3 class="modal__title" id="confirm-title"></h3>
+        <p class="modal__desc" id="confirm-desc"></p>
+      </div>
+    </div>
+    <div class="modal__actions">
+      <button type="button" class="btn btn--ghost" id="confirm-cancel" data-confirm="false"></button>
+      <button type="button" class="btn btn--primary" id="confirm-ok" data-confirm="true"></button>
+    </div>
+  </div>
+</dialog>
 
 <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
 
@@ -254,7 +267,7 @@
   <div class="modal__form">
     <div class="modal__head">
       <h2 class="modal__title" id="task-title" data-i18n="detail.title">任务详情</h2>
-      <button type="button" class="modal__close" id="task-close" aria-label="关闭">×</button>
+      <button type="button" class="modal__close" id="task-close" data-i18n-aria="common.close" aria-label="关闭">×</button>
     </div>
     <div id="task-body"></div>
     <div class="modal__actions">

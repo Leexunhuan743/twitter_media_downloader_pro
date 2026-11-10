@@ -324,7 +324,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .btn--danger:hover:not(:disabled) { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 32%, var(--border)); }
 
 .btn--sm { padding: 6px 10px; font-size: 12.5px; border-radius: 7px; }
-.btn--lg { padding: 11px 20px; font-size: 14px; border-radius: var(--radius-sm); }
+.btn--xs { padding: 4px 8px; font-size: 12px; border-radius: var(--radius-xs); }
 .btn--wide { width: 100%; margin-top: 12px; }
 
 .btn--busy { cursor: progress; opacity: .82; }
@@ -772,18 +772,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   justify-content: flex-end;
 }
 
-.row__actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.row__actions .btn {
-  padding: 4px 8px;
-  font-size: 12px;
-  border-radius: 6px;
-  background: var(--surface);
-}
-
 /* ---------------- status pill ---------------- */
 
 .pill {
@@ -902,7 +890,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 }
 
 .ticket__actions { display: flex; gap: 6px; margin-top: 2px; }
-.ticket__actions .btn { padding: 4px 9px; font-size: 12px; border-radius: 6px; }
 
 .ticket__stamp {
   align-self: flex-start;
@@ -972,7 +959,19 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.footer span:last-child { margin-left: auto; }
+.footer > span:last-child { margin-left: auto; }
+.footer__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  text-decoration: none;
+  transition: color .14s ease;
+}
+.footer__link:hover { color: var(--text); text-decoration: underline; }
+.footer__link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-xs); }
+.footer__icon { width: 14px; height: 14px; flex: none; }
 
 /* ---------------- toasts ---------------- */
 
@@ -1135,7 +1134,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   .kbd-hint { display: none; }
 }
 
-@media (max-width: 420px) {
+@media (max-width: 520px) {
   .seg--lang .seg__btn { min-width: 30px; }
   .appbar__controls { gap: 6px; }
 }
@@ -1308,19 +1307,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 }
 .check input { width: 15px; height: 15px; accent-color: var(--accent); }
 
-/* ---------------- primitives: toolbar + table ---------------- */
-
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
-}
-.toolbar__grow { flex: 1 1 220px; min-width: 160px; }
-.toolbar .input, .toolbar .select { width: auto; }
-.toolbar .toolbar__grow .input { width: 100%; }
-
 .tablewrap {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1357,7 +1343,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .table td.table__actions { text-align: right; }
 .table .table__cell-wrap { white-space: normal; min-width: 180px; }
 .table .table__num { font-variant-numeric: tabular-nums; }
-.table .btn { padding: 4px 8px; font-size: 12px; border-radius: 6px; }
 .table td .row-flex { gap: 4px; justify-content: flex-end; }
 
 .pager {
@@ -1370,7 +1355,15 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
 }
-.pager .btn { padding: 5px 10px; font-size: 12.5px; }
+.pager__grow { flex: 1 1 auto; }
+.pager__pages { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.pager__page { min-width: 32px; padding: 5px 8px; justify-content: center; font-variant-numeric: tabular-nums; }
+.pager__page.is-active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.pager__gap { color: var(--muted); padding: 0 2px; user-select: none; }
+.pager__jump { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; }
+.pager__jump-input { width: 72px; text-align: center; }
+.pager__size { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; }
+.pager__size .select { width: auto; min-width: 72px; }
 .pager__grow { flex: 1 1 auto; }
 
 /* ---------------- primitives: badges + code ---------------- */
@@ -1452,11 +1445,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   font-size: 12px;
   line-height: 1.65;
 }
-.logline { display: flex; gap: 8px; white-space: pre-wrap; word-break: break-word; }
-.logline__time { flex: none; color: var(--muted); }
-.logline[data-level="error"] { color: var(--danger); }
-.logline[data-level="warn"] { color: var(--warn); }
-.logline[data-level="debug"] { color: var(--muted); }
 
 /* ---------------- primitives: misc ---------------- */
 
@@ -1480,6 +1468,13 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   animation: shimmer 1.2s linear infinite;
   min-height: 14px;
 }
+.skeleton--line { display: block; height: 12px; }
+.skeleton--text { width: 42%; }
+.skeleton--field { height: 34px; margin-top: 8px; }
+.skeleton--row { height: 46px; margin: 10px 0; }
+.skeleton--block { display: block; height: 220px; }
+/* 刷新中：数据表、日志流等容器统一用 data-busy，避免每处再写一份透明度。 */
+[data-busy="true"] { opacity: .55; pointer-events: none; transition: opacity .15s ease; }
 @keyframes shimmer {
   from { background-position: 130% 0; }
   to { background-position: -30% 0; }
@@ -1681,7 +1676,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   align-items: center;
   gap: 6px;
   min-height: 30px;
-  padding: 0 12px;
+  padding: 0 11px;
   border: 0;
   border-radius: 999px;
   background: transparent;
@@ -1698,6 +1693,15 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .band__item[aria-current="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 650; }
 
 /* 底部未保存操作条（系统页等） */
+/* 折叠原始内容（系统页 conf.yaml / 计划页 schedules.yaml 共用） */
+.disclosure { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); overflow: hidden; }
+.disclosure > summary { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 10px 14px; cursor: pointer; list-style: none; color: var(--text-soft); font-size: 13.5px; font-weight: 650; }
+.disclosure > summary::-webkit-details-marker { display: none; }
+.disclosure__title { flex: none; }
+.disclosure__path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11.5px; }
+.disclosure__chev { margin-left: auto; display: inline-flex; color: var(--muted); transition: transform .16s ease; }
+.disclosure[open] .disclosure__chev { transform: rotate(180deg); }
+.disclosure__body { padding: 0 14px 14px; border-top: 1px solid var(--border); }
 .stickybar {
   position: sticky;
   bottom: 0;
@@ -2064,24 +2068,11 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .ledger__selection-text { font-weight: 600; font-variant-numeric: tabular-nums; }
 
 .ledger__pager {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
+  margin-top: 0;
   padding: 12px 14px;
   border-top: 1px solid var(--border);
 }
 .ledger__pager[hidden] { display: none; }
-.ledger__pageinfo {
-  color: var(--muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-.ledger__jump {
-  width: 64px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
 .ledger__selection-actions { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
 
 .lrow__status { display: flex; align-items: center; gap: 6px; }
@@ -2164,12 +2155,9 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 
 .lrow__actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
 .lrow__actions .btn {
-  padding: 4px 8px;
-  border-radius: 6px;
   border-color: transparent;
   background: transparent;
   color: var(--muted);
-  font-size: 12px;
 }
 .lrow__actions .btn:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
 .lrow__actions .btn--danger { color: var(--danger); }
@@ -2270,22 +2258,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   background: var(--danger-soft);
 }
 
-/* ---------- 下载页：新任务提示条 ---------- */
-
-.newbar { display: flex; justify-content: center; padding: 8px 14px 0; }
-.newbar__btn {
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
-  border-radius: 999px;
-  padding: 6px 14px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 12.5px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.newbar__btn:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
-.newbar__btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
 /* ---------- 走查控件：紧凑下拉 ---------- */
 
 .select--sm { width: auto; min-height: 32px; padding: 5px 28px 5px 10px; font-size: 12.5px; border-radius: 8px; }
@@ -2297,7 +2269,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   .ledger__head, .lrow { grid-template-columns: 24px 84px minmax(0, 1fr) 140px 86px 132px; }
 }
 
-@media (max-width: 860px) {
+@media (max-width: 900px) {
   .ledger__head { display: none; }
   .lrow {
     grid-template-columns: 20px minmax(0, 1fr) auto;
@@ -2433,3 +2405,10 @@ html[data-stopped] .subnav {
 html[data-stopped] .btn--danger:disabled {
   opacity: .34;
 }
+
+@media (max-width: 720px) {
+  /* 窄屏触控目标统一抬到 40px，视图不再各写一条。 */
+  .btn, .seg__btn, .chip, .band__item, .data-iconbtn, .sch-icon { min-height: 40px; }
+  .input, .select, .textarea { min-height: 40px; }
+}
+
