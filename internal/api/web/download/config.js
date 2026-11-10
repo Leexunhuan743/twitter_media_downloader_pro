@@ -488,7 +488,7 @@
       /* 分区锚点：只负责粘附定位，容器与胶囊样式来自全局 .band */
       '.sys-nav { position: sticky; top: 102px; z-index: 18; }',
       /* 卡片内分区 */
-      '.sys-group { scroll-margin-top: 168px; }',
+      '#view-system [data-section] { scroll-margin-top: 162px; }',
       '.sys-group + .sys-group { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border); }',
       '.sys-group__head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }',
       '.sys-group__title { font-size: 13.5px; font-weight: 650; letter-spacing: -.01em; }',
@@ -1777,6 +1777,16 @@
 
   /* ---------------- scroll spy ---------------- */
 
+  // 分区落点偏移：取粘附导航的 top + 高度（导航 sticky 在 top:102，高 44），
+  // 再加 12px 呼吸间距。写死过常量，布局一改就跳歪。
+  function navStickyBottom() {
+    var nav = host && host.querySelector('.sys-nav');
+    if (!nav) return NAV_OFFSET + 12;
+    var stickyTop = parseFloat(window.getComputedStyle(nav).top);
+    if (isNaN(stickyTop)) stickyTop = NAV_OFFSET - 56;
+    return stickyTop + nav.offsetHeight;
+  }
+
   function onScroll() {
     if (!host || rafId) return;
     rafId = window.requestAnimationFrame(function () {
@@ -1784,10 +1794,10 @@
       if (!host) return;
       var sections = host.querySelectorAll('[data-section]');
       if (!sections.length) return;
-      var line = NAV_OFFSET + 16;
+      var line = navStickyBottom() + 16;
       var current = sections[0].getAttribute('data-section');
       for (var i = 0; i < sections.length; i++) {
-        if (sections[i].getBoundingClientRect().top - line <= 0) {
+        if (sections[i].getBoundingClientRect().top - line <= 1) {
           current = sections[i].getAttribute('data-section');
         }
       }
@@ -1806,9 +1816,14 @@
     var id = link.getAttribute('data-nav-target');
     var section = host.querySelector('[data-section="' + id + '"]');
     if (!section) return;
-    var top = section.getBoundingClientRect().top + (window.pageYOffset || document.documentElement.scrollTop || 0) - NAV_OFFSET;
+    var offset = navStickyBottom() + 16;
+    var top = section.getBoundingClientRect().top + (window.pageYOffset || document.documentElement.scrollTop || 0) - offset;
     try { window.scrollTo({ top: top < 0 ? 0 : top, behavior: 'smooth' }); } catch (e) { window.scrollTo(0, top < 0 ? 0 : top); }
     syncActiveNav(id);
+    // 自己滚动就不要留原生 hash 跳转，但仍把分区写进地址栏方便分享/刷新。
+    if (window.history && window.history.replaceState) {
+      try { window.history.replaceState(null, '', '#sys-' + id); } catch (e) { /* ignore */ }
+    }
   }
 
   /* ---------------- events ---------------- */
@@ -1915,6 +1930,7 @@
       renderLoading();
       renderNav();
       host.addEventListener('click', onClick);
+      host.addEventListener('click', onNavClick);
       host.addEventListener('input', onInput);
       host.addEventListener('keydown', onKeydown);
       window.addEventListener('scroll', onScroll, { passive: true });
@@ -1935,6 +1951,7 @@
           if (rafId) { window.cancelAnimationFrame(rafId); rafId = 0; }
           if (host) {
             host.removeEventListener('click', onClick);
+            host.removeEventListener('click', onNavClick);
             host.removeEventListener('input', onInput);
             host.removeEventListener('keydown', onKeydown);
           }
