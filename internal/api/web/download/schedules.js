@@ -109,7 +109,6 @@
         disabledToast: '计划已停用',
         deleteConfirm: '确定删除计划「{name}」？该操作会立即改写 schedules.yaml。',
         deleteFailed: '删除失败',
-        notRunningHint: '调度器未运行，定时任务不会自动执行。检查配置后重载配置（或重启 TMD）。',
         triggerAllConfirm: '确定立即触发全部 {n} 个已启用的计划？',
         triggerAllNone: '没有已启用的计划可触发。',
         deleteUndo: '已删除「{name}」',
@@ -143,7 +142,6 @@
         schedulerRunning: 'Scheduler running',
         schedulerStopped: 'Scheduler stopped',
         schedulerUnknown: 'Scheduler state unknown',
-        notRunningHint: 'The scheduler is not running, so schedules will not fire. Reload the config (or restart TMD) after fixing it.',
         triggerAllConfirm: 'Trigger all {n} enabled schedules now?',
         triggerAllNone: 'No enabled schedules to trigger.',
         deleteUndo: 'Deleted "{name}"',
@@ -305,7 +303,6 @@
       '#view-schedules .sch-presets{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}',
       '#view-schedules .sch-preset.is-active{border-color:color-mix(in srgb,var(--accent) 42%,var(--border));background:var(--accent-soft);color:var(--accent);font-weight:650}',
       
-      '#view-schedules .notice .sch-inline-btn{margin-left:10px;vertical-align:middle}',
       '#view-schedules .empty__actions .btn{min-height:36px}',
       /* 8 列在 960px 以下压不出可读的目标列，改用卡片布局而不是继续挤压。 */
       '@media (max-width:960px){',
@@ -332,8 +329,6 @@
       '#view-schedules .view-head__actions{flex-wrap:wrap;justify-content:flex-start;min-width:0}',
       '#view-schedules .view-head__actions .btn{min-height:40px;min-width:40px}',
       '#view-schedules .sch-preset{min-height:40px}',
-      '#view-schedules .sch-runbanner{display:flex;align-items:center;gap:10px;flex-wrap:wrap}',
-      '#view-schedules .sch-runbanner[hidden]{display:none}',
       '#view-schedules .sch-undo{display:flex;align-items:center;gap:10px;justify-content:flex-end;border-top:1px solid var(--border);padding:10px 18px}',
       '#view-schedules .sch-undo[hidden]{display:none}',
       '#view-schedules .sch-undo [data-role="undo-text"]{margin-right:auto;font-size:11.5px;color:var(--muted)}',
@@ -465,8 +460,7 @@
           '<button type="button" class="modal__close" data-action="close-editor" aria-label="' + esc(T.t('common.close')) + '">×</button>' +
         '</div>' +
         '<p class="modal__desc" data-role="editor-desc"></p>' +
-        '<div class="notice notice--danger" data-role="editor-error" hidden></div>' +
-        '<div class="form-grid mt-12">' +
+          '<div class="form-grid mt-12">' +
           '<div class="field-box">' +
             '<label class="field-box__label" for="sch-name">' + esc(t('nameField')) + '</label>' +
             '<input class="input" id="sch-name" data-field="name" spellcheck="false" autocomplete="off">' +
@@ -537,11 +531,6 @@
           '<button type="button" class="btn btn--primary btn--sm" data-action="create">' + esc(t('create')) + '</button>' +
         '</div>' +
       '</div>' +
-      '<div class="notice notice--danger" data-role="error" hidden></div>' +
-      '<div class="notice notice--warn sch-runbanner" data-role="run-banner" hidden>' +
-        '<span data-role="run-banner-text"></span> ' +
-        '<button type="button" class="btn btn--ghost btn--sm" data-action="reload">' + esc(t('reload')) + '</button>' +
-      '</div>' +
       '<div class="statstrip">' +
         stat(t('statTotal'), 'total') +
         stat(t('statEnabled'), 'enabled') +
@@ -582,8 +571,6 @@
   function renderRunState() {
     if (!host) return;
     var badge = host.querySelector('[data-role="run-badge"]');
-    var banner = host.querySelector('[data-role="run-banner"]');
-    var bannerText = host.querySelector('[data-role="run-banner-text"]');
     var running = state.running;
     if (badge) {
       var text = running === true ? t('schedulerRunning') : (running === false ? t('schedulerStopped') : t('schedulerUnknown'));
@@ -591,8 +578,6 @@
       badge.textContent = text;
     }
     // 未运行不等于「一切正常」：明确告诉用户计划不会自动触发，并给重载入口。
-    if (banner) banner.hidden = running !== false;
-    if (bannerText) bannerText.textContent = t('notRunningHint');
   }
 
   function renderStats() {
@@ -752,13 +737,7 @@
   }
 
   function showError(message) {
-    if (!host) return;
-    var el = host.querySelector('[data-role="error"]');
-    if (!el) return;
-    if (!message) { el.hidden = true; el.textContent = ''; return; }
-    el.hidden = false;
-    el.innerHTML = esc(message) +
-      '<button type="button" class="btn btn--ghost btn--sm sch-inline-btn" data-action="refresh">' + esc(t('retry')) + '</button>';
+    if (message) T.toast('error', message);
   }
 
   /* ---------------- data ---------------- */
@@ -1075,18 +1054,7 @@
     updatePresetState();
   }
 
-  function showEditorError(message) {
-    if (!host) return;
-    var el = host.querySelector('[data-role="editor-error"]');
-    if (!el) return;
-    if (!message) {
-      el.hidden = true;
-      el.innerHTML = '';
-      return;
-    }
-    el.hidden = false;
-    el.innerHTML = String(message).split('\n').map(esc).join('<br>');
-  }
+
 
   function openEditor(status) {
     if (!host) return;
@@ -1101,7 +1069,6 @@
     if (titleEl) titleEl.textContent = state.editing ? t('editTitle') : t('createTitle');
     var descEl = host.querySelector('[data-role="editor-desc"]');
     if (descEl) descEl.textContent = state.editing ? t('editDesc', { id: state.editing }) : t('createDesc');
-    showEditorError('');
     state.editorSnapshot = JSON.stringify(collectEntry());
     if (typeof dialog.showModal === 'function') dialog.showModal();
     else dialog.setAttribute('open', '');
@@ -1214,18 +1181,15 @@
     var entry = collectEntry();
     var localErrors = validateEntry(entry);
     if (localErrors.length) {
-      showEditorError(localErrors.join('\n'));
       return;
     }
     state.submitting = true;
     setBusy(saveBtn, true);
-    showEditorError('');
 
     T.api.post('/api/v1/schedules/validate', { entry: entry }).then(function (result) {
       if (!result || result.valid !== true) {
         var errors = result && Array.isArray(result.errors) && result.errors.length ? result.errors : [t('validationFailed')];
         applyServerErrors(errors);
-        showEditorError(errors.join('\n'));
         throw { handled: true };
       }
       if (state.editing) {
@@ -1240,7 +1204,7 @@
     }).catch(function (err) {
       if (err && err.handled) return;
       var message = (err && err.message) || t('saveFailed');
-      showEditorError(message);
+      T.toast('error', message);
     }).then(function () {
       state.submitting = false;
       setBusy(saveBtn, false);

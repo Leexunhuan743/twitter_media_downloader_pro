@@ -223,7 +223,6 @@
   /* ---------------- 视图私有样式（id: view-data-style，选择器前缀 data-） ---------------- */
 
   T.injectStyle('view-data-style', `
-.data-stats-error{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}
 .data-card{padding:16px 16px 12px}
 .data-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px}
 .data-search{position:relative;display:flex;align-items:center;flex:1 1 220px;min-width:180px}
@@ -653,7 +652,6 @@
       '<div class="statstrip" data-role="stats" role="group" aria-label="' + esc(t('statsLabel')) + '">' +
         STATS.map(statButton).join('') +
       '</div>' +
-      '<p class="notice notice--danger data-stats-error" data-role="stats-error" role="alert" hidden></p>' +
       '<section class="card mt-16 data-card">' +
         '<div class="data-toolbar" data-role="toolbar"></div>' +
         '<div class="data-ctx" data-role="ctx" hidden></div>' +
@@ -722,7 +720,6 @@
         '</div>' +
         '<p class="notice notice--danger" data-role="delete-warn"></p>' +
         '<p class="small muted mt-8" data-role="delete-hint"></p>' +
-        '<p class="notice notice--danger mt-12" data-role="delete-error" role="alert" hidden></p>' +
         '<div class="modal__actions">' +
           '<button type="button" class="btn btn--ghost" data-act="delete-close">' + esc(T.t('common.cancel')) + '</button>' +
           '<button type="button" class="btn btn--danger" data-act="delete-confirm">' + esc(T.t('common.delete')) + '</button>' +
@@ -744,16 +741,7 @@
     for (var i = 0; i < statBtns.length; i++) {
       statBtns[i].setAttribute('aria-pressed', statBtns[i].getAttribute('data-stat-tab') === st.tab ? 'true' : 'false');
     }
-    var errBox = host.querySelector('[data-role="stats-error"]');
-    if (!errBox) return;
-    if (st.statsError) {
-      errBox.hidden = false;
-      errBox.innerHTML = '<span>' + esc(t('statsError')) + ' · ' + esc(st.statsError) + '</span> ' +
-        '<button type="button" class="btn btn--ghost btn--sm" data-act="retry-stats">' + esc(T.t('common.retry')) + '</button>';
-    } else {
-      errBox.hidden = true;
-      errBox.innerHTML = '';
-    }
+    if (st.statsError) T.toast('error', t('statsError') + ' · ' + st.statsError);
   }
 
   function loadStats() {
@@ -1775,7 +1763,7 @@
       if (err && err.status === 401) return;
       var message = (err && err.message) || T.t('common.failed');
       markServerField(form, def, message);
-      showEditError(message);
+      T.toast('error', message);
     }).then(function () {
       if (saveBtn) { saveBtn.disabled = false; saveBtn.classList.remove('btn--busy'); }
     });
@@ -1808,9 +1796,6 @@
     warnEl.className = 'notice notice--' + warn.kind;
     warnEl.textContent = warn.text;
     dialog.querySelector('[data-role="delete-hint"]').textContent = t('deleteHint');
-    var errEl = dialog.querySelector('[data-role="delete-error"]');
-    errEl.hidden = true;
-    errEl.textContent = '';
     var btn = dialog.querySelector('[data-act="delete-confirm"]');
     if (btn) btn.disabled = false;
     if (!dialog.open) {
@@ -1835,9 +1820,7 @@
     var dialog = host.querySelector('[data-role="delete-modal"]');
     if (!dialog) return;
     var btn = dialog.querySelector('[data-act="delete-confirm"]');
-    var errEl = dialog.querySelector('[data-role="delete-error"]');
     if (btn) { btn.disabled = true; btn.classList.add('btn--busy'); }
-    if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
 
     T.api.del(def.api + '/' + encodeURIComponent(deleting.id)).then(function () {
       T.toast('success', T.t('common.deleted'));
@@ -1846,10 +1829,7 @@
       loadStats();
     }).catch(function (err) {
       if (err && err.status === 401) return;
-      if (errEl) {
-        errEl.textContent = (err && err.message) || T.t('common.failed');
-        errEl.hidden = false;
-      }
+      T.toast('error', (err && err.message) || T.t('common.failed'));
     }).then(function () {
       if (btn) { btn.disabled = false; btn.classList.remove('btn--busy'); }
     });
@@ -1901,7 +1881,6 @@
     var id = act.getAttribute('data-id');
     switch (name) {
       case 'refresh': loadStats(); loadTab(st.tab); break;
-      case 'retry-stats': loadStats(); break;
       case 'retry-tab': loadTab(st.tab); break;
       case 'prev': changePage(-1); break;
       case 'next': changePage(1); break;

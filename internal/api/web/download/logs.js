@@ -165,7 +165,6 @@
       '#view-logs .logline:hover .logline__actions,#view-logs .logline:focus-within .logline__actions{opacity:1}',
       '#view-logs .logline__copy svg{width:12px;height:12px}',
       '#view-logs .empty__actions .btn{min-height:36px}',
-      '#view-logs .notice .log-inline-btn{margin-left:10px;vertical-align:middle}',
       '@media (hover:none){#view-logs .logline__copy{opacity:1}}',
       '@media (max-width:720px){',
       
@@ -446,7 +445,6 @@
           '<span class="logbar__spacer"></span>' +
           '<span data-role="live-count"></span>' +
         '</div>' +
-        '<div class="notice notice--danger" data-role="error" hidden></div>' +
         '<div class="notice notice--warn" data-role="stream" hidden></div>' +
         '<div class="lognew" data-role="newbar" hidden>' +
           '<button type="button" class="btn btn--primary btn--sm" data-role="show-new" data-i18n-aria="logs.newArrived" aria-label=""></button>' +
@@ -556,9 +554,7 @@
     if (!host) return;
     var empty = host.querySelector('[data-role="empty"]');
     var box = host.querySelector('[data-role="logbox"]');
-    var error = host.querySelector('[data-role="error"]');
     var loading = host.querySelector('[data-role="loading"]');
-    if (error) { error.hidden = true; error.textContent = ''; }
     if (loading) loading.hidden = true;
     if (kind === 'loading') {
       if (empty) empty.hidden = true;
@@ -570,14 +566,6 @@
     } else if (kind === 'ok') {
       if (empty) empty.hidden = true;
       if (box) box.hidden = false;
-    } else if (kind === 'error') {
-      if (empty) empty.hidden = true;
-      if (box) { box.hidden = true; box.innerHTML = ''; }
-      if (error) {
-        error.hidden = false;
-        error.innerHTML = esc(message || t('loadFailed', { msg: '' })) +
-          '<button type="button" class="btn btn--ghost btn--sm log-inline-btn" data-role="refresh">' + esc(t('retry')) + '</button>';
-      }
     }
   }
 
@@ -774,7 +762,8 @@
       if (seq !== reqSeq || !host) return;
       if (err && err.status === 401) return;
       var message = t('loadFailed', { msg: (err && err.message) ? err.message : T.t('common.fetchFailed') });
-      setStatus('error', message);
+      T.toast('error', message);
+      setStatus('empty');
     });
   }
 

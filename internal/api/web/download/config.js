@@ -580,7 +580,6 @@
           '<button type="button" class="btn btn--ghost btn--sm" data-action="session-refresh">' + esc(t('session.refresh')) + '</button>' +
           '<button type="button" class="btn btn--ghost btn--sm btn--danger" data-action="session-clear">' + esc(t('session.clear')) + '</button>' +
         '</div>' +
-        '<div class="mt-12" data-role="session-msg"></div>' +
       '</section>';
   }
 
@@ -592,7 +591,6 @@
         '</header>' +
         '<div class="statstrip" data-role="runtime-stats"></div>' +
         '<div class="grid-2 mt-16" data-role="runtime-detail"></div>' +
-        '<div class="mt-12" data-role="runtime-msg"></div>' +
       '</section>';
   }
 
@@ -619,7 +617,6 @@
             '<button type="button" class="btn btn--ghost btn--danger" data-action="shutdown">' + esc(t('danger.shutdown')) + '</button>' +
           '</div>' +
         '</div>' +
-        '<div class="mt-12" data-role="danger-msg"></div>' +
       '</section>';
   }
 
@@ -654,7 +651,6 @@
             '<span class="card__meta" data-role="fields-meta"></span>' +
           '</header>' +
           '<div data-role="groups"></div>' +
-          '<div class="mt-12" data-role="fields-msg"></div>' +
         '</section>' +
         sessionCardMarkup() +
         runtimeCardMarkup() +
@@ -697,12 +693,6 @@
     if (meta) meta.textContent = '';
   }
 
-  function setMsg(role, text, kind) {
-    if (!host) return;
-    var el = host.querySelector('[data-role="' + role + '"]');
-    if (!el) return;
-    el.innerHTML = text ? notice(kind || '', text) : '';
-  }
 
   /* ---------------- structured config fields ---------------- */
 
@@ -1069,14 +1059,13 @@
     if (!res.count) { dismiss(t('fields.none')); return; }
     busy.fields = true;
     updateDirtyState();
-    setMsg('fields-msg', '', '');
-    T.api.put('/api/v1/config/fields', { fields: res.payload }).then(function (data) {
+        T.api.put('/api/v1/config/fields', { fields: res.payload }).then(function (data) {
       busy.fields = false;
       if (data && isArray(data.fields)) S.fields = data.fields;
       S.fieldsError = null;
       renderFields();
       var apiKeyChanged = Object.prototype.hasOwnProperty.call(res.payload, 'api_key');
-      setMsg('fields-msg', t(apiKeyChanged ? 'fields.savedApiKey' : 'fields.savedRestart'), apiKeyChanged ? 'ok' : 'warn');
+      T.toast(apiKeyChanged ? 'success' : 'warn', t(apiKeyChanged ? 'fields.savedApiKey' : 'fields.savedRestart'));
       // api_key 已轮换，浏览器里存的旧 JWT 不再可信：清掉本地会话，登录框接管下一步。
       if (apiKeyChanged && typeof T.logout === 'function') T.logout();
       loadRuntime();
@@ -1085,7 +1074,7 @@
       busy.fields = false;
       updateDirtyState();
       var message = errText(err);
-      setMsg('fields-msg', t('fields.saveFailed', { msg: message }), 'danger');
+      T.toast('error', t('fields.saveFailed', { msg: message }));
       // 服务端错误若点名了字段，就地标红并滚动过去；没有匹配时不猜字段，只保留消息条。
       var lower = message.toLowerCase();
       var hit = null;
@@ -1102,7 +1091,7 @@
   function discardFields() {
     if (busy.fields) return;
     renderFields();
-    setMsg('fields-msg', t('fields.resetDone'), 'info');
+    T.toast('info', t('fields.resetDone'));
   }
 
   function loadFields() {
@@ -1129,7 +1118,6 @@
         '<p class="small muted mt-8">' + esc(t('raw.secret')) + '</p>' +
         '<p class="small muted">' + esc(t('raw.overwriteHint')) + '</p>' +
         '<textarea class="textarea textarea--code mt-8" rows="14" spellcheck="false" autocomplete="off" data-role="raw-editor" aria-label="' + esc(t('raw.title')) + '" disabled></textarea>' +
-        '<div class="mt-12" data-role="raw-msg"></div>' +
         '<div class="form-actions">' +
           '<button type="button" class="btn btn--ghost" data-action="raw-reload">' + esc(t('raw.reload')) + '</button>' +
           '<button type="button" class="btn btn--primary" data-action="raw-save">' + esc(t('raw.save')) + '</button>' +
@@ -1149,13 +1137,12 @@
       editor.value = '';
       editor.disabled = true;
       if (meta) meta.textContent = '';
-      setMsg('raw-msg', t('raw.loadFailed', { msg: S.rawError }), 'danger');
+      T.toast('error', t('raw.loadFailed', { msg: S.rawError }));
       return;
     }
     editor.value = S.raw.content;
     editor.disabled = false;
-    setMsg('raw-msg', '', '');
-    if (meta) {
+        if (meta) {
       meta.textContent = S.raw.path
         ? (S.raw.exists ? t('raw.loaded', { path: S.raw.path }) : t('raw.missing', { path: S.raw.path }))
         : '';
@@ -1192,14 +1179,14 @@
     T.api.put('/api/v1/config/raw', { content: content }).then(function () {
       S.raw.content = content;
       busy.raw = false;
-      setMsg('raw-msg', t('raw.restart'), 'warn');
+      T.toast('warn', t('raw.restart'));
       T.reload();
       if (collectFields().count === 0) loadFields();
-      else setMsg('fields-msg', t('raw.stale'), 'warn');
+      else T.toast('warn', t('raw.stale'));
       loadRuntime();
     }, function (err) {
       busy.raw = false;
-      setMsg('raw-msg', t('raw.saveFailed', { msg: errText(err) }), 'danger');
+      T.toast('error', t('raw.saveFailed', { msg: errText(err) }));
     });
   }
 
@@ -1247,7 +1234,6 @@
       '</div>' +
       '<p class="small muted">' + esc(t('cookies.sub')) + '</p>' +
       '<div class="mt-8" data-role="cookies-body"></div>' +
-      '<div class="mt-12" data-role="cookies-msg"></div>' +
       '</div>';
   }
 
@@ -1416,12 +1402,12 @@
     T.api.put('/api/v1/cookies', { cookies: result.payload }).then(function () {
       busy.cookies = false;
       return loadCookies().then(function () {
-        setMsg('cookies-msg', t('cookies.restart'), 'warn');
+        T.toast('warn', t('cookies.restart'));
       });
     }, function (err) {
       busy.cookies = false;
       updateCookieState();
-      setMsg('cookies-msg', t('cookies.saveFailed', { msg: errText(err) }), 'danger');
+      T.toast('error', t('cookies.saveFailed', { msg: errText(err) }));
     });
   }
 
@@ -1433,7 +1419,6 @@
       '<div class="disclosure__body">' +
         '<p class="small muted mono" data-role="cookies-raw-meta"></p>' +
         '<textarea class="textarea textarea--code mt-8" rows="12" spellcheck="false" autocomplete="off" data-role="cookies-raw-editor" aria-label="' + esc(t('cookiesRaw.title')) + '" disabled></textarea>' +
-        '<div class="mt-12" data-role="cookies-raw-msg"></div>' +
         '<div class="form-actions">' +
           '<button type="button" class="btn btn--ghost" data-action="cookies-raw-reload">' + esc(t('cookiesRaw.reload')) + '</button>' +
           '<button type="button" class="btn btn--primary" data-action="cookies-raw-save">' + esc(t('cookiesRaw.save')) + '</button>' +
@@ -1451,13 +1436,12 @@
       editor.value = '';
       editor.disabled = true;
       if (meta) meta.textContent = '';
-      setMsg('cookies-raw-msg', t('cookiesRaw.loadFailed', { msg: S.cookiesRawError }), 'danger');
+      T.toast('error', t('cookiesRaw.loadFailed', { msg: S.cookiesRawError }));
       return;
     }
     editor.value = S.cookiesRaw.content;
     editor.disabled = false;
-    setMsg('cookies-raw-msg', '', '');
-    if (meta) {
+        if (meta) {
       meta.textContent = S.cookiesRaw.path
         ? (S.cookiesRaw.exists ? t('raw.loaded', { path: S.cookiesRaw.path }) : t('raw.missing', { path: S.cookiesRaw.path }))
         : '';
@@ -1494,11 +1478,11 @@
     T.api.put('/api/v1/cookies/raw', { content: content }).then(function () {
       S.cookiesRaw.content = content;
       busy.cookiesRaw = false;
-      setMsg('cookies-raw-msg', t('cookies.restart'), 'warn');
+      T.toast('warn', t('cookies.restart'));
       if (!cookiesDirty()) loadCookies();
     }, function (err) {
       busy.cookiesRaw = false;
-      setMsg('cookies-raw-msg', t('cookiesRaw.saveFailed', { msg: errText(err) }), 'danger');
+      T.toast('error', t('cookiesRaw.saveFailed', { msg: errText(err) }));
     });
   }
 
@@ -1545,14 +1529,14 @@
     if (!host || button.disabled) return;
     var input = host.querySelector('[data-role="session-key"]');
     var key = input ? String(input.value).trim() : '';
-    if (!key) { setMsg('session-msg', t('session.loginRequired'), 'warn'); if (input) input.focus(); return; }
+    if (!key) { T.toast('warn', t('session.loginRequired')); if (input) input.focus(); return; }
     button.disabled = true;
     T.login(key).then(function () {
       if (input) input.value = '';
-      setMsg('session-msg', t('session.loginOk'), 'ok');
+      T.toast('success', t('session.loginOk'));
       renderSession();
     }, function (err) {
-      setMsg('session-msg', t('session.loginFailed', { msg: errText(err) }), 'danger');
+      T.toast('error', t('session.loginFailed', { msg: errText(err) }));
     }).then(function () { button.disabled = false; });
   }
 
@@ -1562,10 +1546,10 @@
     button.disabled = true;
     button.textContent = t('session.testing');
     T.api.get('/api/v1/tasks', { page_size: 1 }).then(function () {
-      setMsg('session-msg', t('session.testOk'), 'ok');
+      T.toast('success', t('session.testOk'));
       renderSession();
     }, function (err) {
-      setMsg('session-msg', t('session.loginFailed', { msg: errText(err) }), 'danger');
+      T.toast('error', t('session.loginFailed', { msg: errText(err) }));
     }).then(function () {
       button.disabled = false;
       button.textContent = label;
@@ -1577,13 +1561,13 @@
     button.disabled = true;
     T.refreshToken().then(function (ok) {
       if (ok) {
-        setMsg('session-msg', t('session.refreshOk'), 'ok');
+        T.toast('success', t('session.refreshOk'));
       } else {
-        setMsg('session-msg', t('session.refreshFailed', { msg: t('session.expired') }), 'danger');
+        T.toast('error', t('session.refreshFailed', { msg: t('session.expired') }));
       }
       renderSession();
     }, function (err) {
-      setMsg('session-msg', t('session.refreshFailed', { msg: errText(err) }), 'danger');
+      T.toast('error', t('session.refreshFailed', { msg: errText(err) }));
     }).then(function () { button.disabled = false; });
   }
 
@@ -1592,7 +1576,7 @@
     T.ask({ message: t('session.clearWarn'), danger: true }).then(function (ok) {
       if (!ok) return;
       T.logout();
-      setMsg('session-msg', t('session.cleared'), 'warn');
+      T.toast('warn', t('session.cleared'));
       renderSession();
     });
   }
@@ -1633,7 +1617,7 @@
       stats.innerHTML = '';
       detail.innerHTML = '';
       if (meta) meta.textContent = '';
-      setMsg('runtime-msg', t('runtime.unavailable'), 'danger');
+      T.toast('error', t('runtime.unavailable'));
       return;
     }
 
@@ -1678,8 +1662,7 @@
       [t('runtime.prevNames'), db ? String(db.user_previous_names || 0) : '—']
     ]);
 
-    setMsg('runtime-msg', '', '');
-    if (meta) meta.textContent = t('runtime.checkedAt', { time: T.fmtTime(new Date().toISOString()) });
+        if (meta) meta.textContent = t('runtime.checkedAt', { time: T.fmtTime(new Date().toISOString()) });
   }
 
   function loadRuntime() {
@@ -1710,11 +1693,11 @@
     if (button) button.disabled = true;
     T.api.del('/api/v1/errors').then(function () {
       if (button) button.disabled = false;
-      setMsg('danger-msg', t('danger.clearErrorsDone'), 'ok');
+      T.toast('success', t('danger.clearErrorsDone'));
       T.reload();
     }, function (err) {
       if (button) button.disabled = false;
-      setMsg('danger-msg', t('danger.clearErrorsFailed', { msg: errText(err) }), 'danger');
+      T.toast('error', t('danger.clearErrorsFailed', { msg: errText(err) }));
     });
   }
 
@@ -1729,11 +1712,11 @@
   }
 
   function runShutdown(button) {
-    setMsg('danger-msg', t('danger.shutdownRequested'), 'warn');
+    T.toast('warn', t('danger.shutdownRequested'));
     if (button) button.disabled = true;
     if (timer) { clearInterval(timer); timer = null; }
     T.api.post('/api/v1/server/shutdown').then(function () {
-      setMsg('danger-msg', t('danger.shutdownDone'), 'danger');
+      T.toast('error', t('danger.shutdownDone'));
       if (host) {
         var buttons = host.querySelectorAll('[data-action="clear-errors"], [data-action="shutdown"]');
         Array.prototype.forEach.call(buttons, function (item) { item.disabled = true; });
@@ -1743,7 +1726,7 @@
     }, function (err) {
       if (button) button.disabled = false;
       if (!timer) timer = setInterval(loadRuntime, 30000);
-      setMsg('danger-msg', t('danger.shutdownFailed', { msg: errText(err) }), 'danger');
+      T.toast('error', t('danger.shutdownFailed', { msg: errText(err) }));
     });
   }
 
