@@ -1347,7 +1347,6 @@
             failed += 1;
             failedLabels.push(req.label);
             if (!firstError) firstError = err.status === 401 ? '' : err.message;
-            if (err.status !== 401) toast('error', req.label + ': ' + err.message);
           });
       });
     });
@@ -1377,7 +1376,8 @@
         else toast('success', t('toast.queuedN', { n: ok }));
         loadTasks();
       } else if (failed) {
-        showFormError(t('form.failed', { msg: firstError || t('auth.badKey') }));
+        var detail = failedLabels.length === 1 ? failedLabels[0] + ': ' : '';
+        showFormError(t('form.failed', { msg: detail + (firstError || t('auth.badKey')) }));
       }
     });
   }

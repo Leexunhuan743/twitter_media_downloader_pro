@@ -1062,7 +1062,7 @@
     var res = collectFields();
     applyErrors(res.errors);
     if (res.errors.length) {
-      T.toast('error', res.errors[0].message);
+      // 字段已就地标红并滚动过去，不再重复弹 toast。
       scrollToField(res.errors[0].name);
       return;
     }
