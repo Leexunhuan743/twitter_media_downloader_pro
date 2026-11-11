@@ -594,9 +594,8 @@
       if (ok > 0) {
         input.value = '';
         autoGrowQuickInput();
-        quickHint(failed ? t('quickPartial', { ok: ok, fail: failed }) : t('quickOk', {
-          names: items.slice(0, 3).map(function (item) { return item.value; }).join(', ') + (items.length > 3 ? ' …' : '')
-        }), failed ? 'bad' : 'good');
+        // 结果只发 toast；内联提示恢复成输入说明，避免同一句话出现两次。
+        quickHint(t('quickHint'));
         T.toast(failed ? 'info' : 'success', failed ? t('quickPartial', { ok: ok, fail: failed }) : T.t('toast.queuedN', { n: ok }));
         T.reload().catch(function () { });
       } else {

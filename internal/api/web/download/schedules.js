@@ -867,13 +867,11 @@
       var taskId = data && data.task_id ? String(data.task_id) : '';
       state.lastTriggerTaskId = taskId;
       var message = t('triggerQueued', { id: taskId || '—' });
-      showNote(message, 'ok');
       T.toast('success', message);
       // 立即回读 last_run / 触发状态，不等 30s 轮询或 SSE。
       refresh();
     }).catch(function (err) {
       var message = (err && err.message) || t('triggerFailed');
-      showNote(message, 'danger');
       T.toast('error', message);
     }).then(function () {
       setBusy(btn, false);
@@ -905,12 +903,10 @@
       var message = firstError
         ? t('triggerAllResultWithError', { ok: ok, failed: failed, error: firstError })
         : t('triggerAllResult', { ok: ok, failed: failed });
-      showNote(message, failed > 0 ? 'warn' : 'ok');
       T.toast(failed > 0 ? 'error' : 'success', message);
       return refresh();
     }).catch(function (err) {
       var message = (err && err.message) || t('triggerFailed');
-      showNote(message, 'danger');
       T.toast('error', message);
     }).then(function () {
       setBusy(btn, false);
@@ -1262,7 +1258,6 @@
       if (err && err.handled) return;
       var message = (err && err.message) || t('saveFailed');
       showEditorError(message);
-      T.toast('error', message);
     }).then(function () {
       state.submitting = false;
       setBusy(saveBtn, false);

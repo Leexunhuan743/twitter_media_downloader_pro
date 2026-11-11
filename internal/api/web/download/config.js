@@ -1077,7 +1077,6 @@
       renderFields();
       var apiKeyChanged = Object.prototype.hasOwnProperty.call(res.payload, 'api_key');
       setMsg('fields-msg', t(apiKeyChanged ? 'fields.savedApiKey' : 'fields.savedRestart'), apiKeyChanged ? 'ok' : 'warn');
-      T.toast('success', t('fields.saved'));
       // api_key 已轮换，浏览器里存的旧 JWT 不再可信：清掉本地会话，登录框接管下一步。
       if (apiKeyChanged && typeof T.logout === 'function') T.logout();
       loadRuntime();
@@ -1097,7 +1096,6 @@
         setFieldError(hit, message);
         scrollToField(hit);
       }
-      if (!err || err.status !== 401) T.toast('error', message);
     });
   }
 
@@ -1195,7 +1193,6 @@
       S.raw.content = content;
       busy.raw = false;
       setMsg('raw-msg', t('raw.restart'), 'warn');
-      T.toast('success', t('raw.saved'));
       T.reload();
       if (collectFields().count === 0) loadFields();
       else setMsg('fields-msg', t('raw.stale'), 'warn');
@@ -1203,7 +1200,6 @@
     }, function (err) {
       busy.raw = false;
       setMsg('raw-msg', t('raw.saveFailed', { msg: errText(err) }), 'danger');
-      if (!err || err.status !== 401) T.toast('error', errText(err));
     });
   }
 
@@ -1419,7 +1415,6 @@
     updateCookieState();
     T.api.put('/api/v1/cookies', { cookies: result.payload }).then(function () {
       busy.cookies = false;
-      T.toast('success', t('cookies.saved'));
       return loadCookies().then(function () {
         setMsg('cookies-msg', t('cookies.restart'), 'warn');
       });
@@ -1427,7 +1422,6 @@
       busy.cookies = false;
       updateCookieState();
       setMsg('cookies-msg', t('cookies.saveFailed', { msg: errText(err) }), 'danger');
-      if (!err || err.status !== 401) T.toast('error', errText(err));
     });
   }
 
@@ -1501,12 +1495,10 @@
       S.cookiesRaw.content = content;
       busy.cookiesRaw = false;
       setMsg('cookies-raw-msg', t('cookies.restart'), 'warn');
-      T.toast('success', t('cookiesRaw.saved'));
       if (!cookiesDirty()) loadCookies();
     }, function (err) {
       busy.cookiesRaw = false;
       setMsg('cookies-raw-msg', t('cookiesRaw.saveFailed', { msg: errText(err) }), 'danger');
-      if (!err || err.status !== 401) T.toast('error', errText(err));
     });
   }
 
@@ -1558,7 +1550,6 @@
     T.login(key).then(function () {
       if (input) input.value = '';
       setMsg('session-msg', t('session.loginOk'), 'ok');
-      T.toast('success', t('session.loginOk'));
       renderSession();
     }, function (err) {
       setMsg('session-msg', t('session.loginFailed', { msg: errText(err) }), 'danger');
@@ -1587,7 +1578,6 @@
     T.refreshToken().then(function (ok) {
       if (ok) {
         setMsg('session-msg', t('session.refreshOk'), 'ok');
-        T.toast('success', t('session.refreshOk'));
       } else {
         setMsg('session-msg', t('session.refreshFailed', { msg: t('session.expired') }), 'danger');
       }
@@ -1721,12 +1711,10 @@
     T.api.del('/api/v1/errors').then(function () {
       if (button) button.disabled = false;
       setMsg('danger-msg', t('danger.clearErrorsDone'), 'ok');
-      T.toast('success', t('danger.clearErrorsDone'));
       T.reload();
     }, function (err) {
       if (button) button.disabled = false;
       setMsg('danger-msg', t('danger.clearErrorsFailed', { msg: errText(err) }), 'danger');
-      if (!err || err.status !== 401) T.toast('error', errText(err));
     });
   }
 
@@ -1756,7 +1744,6 @@
       if (button) button.disabled = false;
       if (!timer) timer = setInterval(loadRuntime, 30000);
       setMsg('danger-msg', t('danger.shutdownFailed', { msg: errText(err) }), 'danger');
-      if (!err || err.status !== 401) T.toast('error', errText(err));
     });
   }
 
