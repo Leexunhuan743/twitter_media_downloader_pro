@@ -60,7 +60,6 @@
         triggerAll: '触发全部',
         triggerAllResult: '触发全部完成：成功 {ok} · 失败 {failed}',
         triggerAllResultWithError: '触发全部完成：成功 {ok} · 失败 {failed}（{error}）',
-        triggerTaskState: '触发任务 {id} 当前状态：{status}',
         reload: '重载配置',
         reloaded: '计划配置已重载',
         reloadFailed: '重载失败',
@@ -200,7 +199,6 @@
         triggerAll: 'Trigger all',
         triggerAllResult: 'Trigger all finished: {ok} succeeded · {failed} failed',
         triggerAllResultWithError: 'Trigger all finished: {ok} succeeded · {failed} failed ({error})',
-        triggerTaskState: 'Triggered task {id} is now {status}',
         reload: 'Reload config',
         reloaded: 'Schedules reloaded',
         reloadFailed: 'Reload failed',
@@ -348,7 +346,6 @@
   var host = null;
   var timer = null;
   var offSchedules = null;
-  var offTasks = null;
 
   var state = {
     entries: [],
@@ -361,7 +358,6 @@
     submitting: false,
     rawLoaded: false,
     raw: null,
-    lastTriggerTaskId: '',
     undo: null,
     editorSnapshot: ''
   };
@@ -542,7 +538,6 @@
         '</div>' +
       '</div>' +
       '<div class="notice notice--danger" data-role="error" hidden></div>' +
-      '<div class="notice" data-role="note" hidden></div>' +
       '<div class="notice notice--warn sch-runbanner" data-role="run-banner" hidden>' +
         '<span data-role="run-banner-text"></span> ' +
         '<button type="button" class="btn btn--ghost btn--sm" data-action="reload">' + esc(t('reload')) + '</button>' +
@@ -766,16 +761,6 @@
       '<button type="button" class="btn btn--ghost btn--sm sch-inline-btn" data-action="refresh">' + esc(t('retry')) + '</button>';
   }
 
-  function showNote(message, kind) {
-    if (!host) return;
-    var el = host.querySelector('[data-role="note"]');
-    if (!el) return;
-    if (!message) { el.hidden = true; el.textContent = ''; el.className = 'notice'; return; }
-    el.hidden = false;
-    el.textContent = message;
-    el.className = 'notice' + (kind === 'ok' ? ' notice--ok' : (kind === 'danger' ? ' notice--danger' : (kind === 'warn' ? ' notice--warn' : '')));
-  }
-
   /* ---------------- data ---------------- */
 
   function computeStats(entries) {
@@ -865,7 +850,6 @@
     setBusy(btn, true);
     return T.api.post('/api/v1/schedules/' + encodeURIComponent(id) + '/trigger').then(function (data) {
       var taskId = data && data.task_id ? String(data.task_id) : '';
-      state.lastTriggerTaskId = taskId;
       var message = t('triggerQueued', { id: taskId || '—' });
       T.toast('success', message);
       // 立即回读 last_run / 触发状态，不等 30s 轮询或 SSE。
@@ -882,7 +866,7 @@
     var enabled = state.entries.filter(function (item) {
       return item && item.entry && item.entry.enabled;
     }).length;
-    if (!enabled) { showNote(t('triggerAllNone'), 'info'); return; }
+    if (!enabled) { T.toast('info', t('triggerAllNone')); return; }
     T.ask({ message: t('triggerAllConfirm', { n: enabled }) }).then(function (ok) {
       if (ok) runTriggerAll(btn);
     });
@@ -890,7 +874,6 @@
 
   function runTriggerAll(btn) {
     setBusy(btn, true);
-    state.lastTriggerTaskId = '';
     return T.api.post('/api/v1/schedules/trigger-all').then(function (data) {
       var ok = Number(data && data.succeeded) || 0;
       var failed = Number(data && data.failed) || 0;
@@ -1428,20 +1411,6 @@
     renderAll();
   }
 
-  function onTasks(tasks) {
-    if (!host || !state.lastTriggerTaskId || !Array.isArray(tasks)) return;
-    for (var i = 0; i < tasks.length; i++) {
-      var task = tasks[i];
-      if (task && task.task_id === state.lastTriggerTaskId) {
-        showNote(t('triggerTaskState', {
-          id: task.task_id,
-          status: task.status || 'unknown'
-        }), task.status === 'failed' ? 'danger' : 'ok');
-        return;
-      }
-    }
-  }
-
   function bind() {
     if (!host) return;
     host.addEventListener('click', onClick);
@@ -1483,14 +1452,12 @@
         submitting: false,
         rawLoaded: false,
         raw: null,
-        lastTriggerTaskId: ''
       };
       host.innerHTML = markup();
       bind();
       renderAll();
       refresh();
       offSchedules = T.on('schedules', onSchedules);
-      offTasks = T.on('tasks', onTasks);
       timer = setInterval(function () {
         if (!host || document.hidden) return;
         refresh();
@@ -1508,8 +1475,6 @@
           if (fieldValidateTimer) { clearTimeout(fieldValidateTimer); fieldValidateTimer = null; }
           if (offSchedules) offSchedules();
           offSchedules = null;
-          if (offTasks) offTasks();
-          offTasks = null;
           var dialog = host ? host.querySelector('[data-role="editor"]') : null;
           if (dialog && dialog.open && typeof dialog.close === 'function') dialog.close();
           unbind();
