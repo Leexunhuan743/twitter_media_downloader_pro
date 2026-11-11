@@ -439,6 +439,9 @@
   var timer = null;
   var rafId = 0;
   var activeNav = 'basic';
+  // 点击分区后短暂"钉住"该分区：页面滚不到目标位置时（视口较高或已到底），
+  // 滚动监听不要把高亮抢给别的分区；用户自己滚动即解除。
+  var navPinned = null;
   var busy = { fields: false, cookies: false, raw: false, cookiesRaw: false };
 
   var S = {
@@ -1792,6 +1795,7 @@
     rafId = window.requestAnimationFrame(function () {
       rafId = 0;
       if (!host) return;
+      if (navPinned) { syncActiveNav(navPinned); return; }
       var sections = host.querySelectorAll('[data-section]');
       if (!sections.length) return;
       var line = navStickyBottom() + 16;
@@ -1809,6 +1813,14 @@
     });
   }
 
+  // 用户自己滚动或按键翻页时取消钉住，交还滚动高亮。
+  function releaseNavPin() { navPinned = null; }
+
+  function onNavKeyScroll(event) {
+    if (!event || !event.key) return;
+    if (/^(ArrowUp|ArrowDown|PageUp|PageDown|Home|End| )$/.test(event.key)) releaseNavPin();
+  }
+
   function onNavClick(event) {
     var link = event.target && event.target.closest ? event.target.closest('[data-nav-target]') : null;
     if (!link || !host) return;
@@ -1818,6 +1830,7 @@
     if (!section) return;
     var offset = navStickyBottom() + 16;
     var top = section.getBoundingClientRect().top + (window.pageYOffset || document.documentElement.scrollTop || 0) - offset;
+    navPinned = id;
     try { window.scrollTo({ top: top < 0 ? 0 : top, behavior: 'smooth' }); } catch (e) { window.scrollTo(0, top < 0 ? 0 : top); }
     syncActiveNav(id);
     // 自己滚动就不要留原生 hash 跳转，但仍把分区写进地址栏方便分享/刷新。
@@ -1934,6 +1947,9 @@
       host.addEventListener('input', onInput);
       host.addEventListener('keydown', onKeydown);
       window.addEventListener('scroll', onScroll, { passive: true });
+      window.addEventListener('wheel', releaseNavPin, { passive: true });
+      window.addEventListener('touchmove', releaseNavPin, { passive: true });
+      window.addEventListener('keydown', onNavKeyScroll);
       document.addEventListener('click', onLeaveGuard, true);
       window.addEventListener('beforeunload', onBeforeUnload);
 
@@ -1946,6 +1962,9 @@
         destroy: function () {
           if (timer) { clearInterval(timer); timer = null; }
           window.removeEventListener('scroll', onScroll);
+          window.removeEventListener('wheel', releaseNavPin);
+          window.removeEventListener('touchmove', releaseNavPin);
+          window.removeEventListener('keydown', onNavKeyScroll);
           document.removeEventListener('click', onLeaveGuard, true);
           window.removeEventListener('beforeunload', onBeforeUnload);
           if (rafId) { window.cancelAnimationFrame(rafId); rafId = 0; }
