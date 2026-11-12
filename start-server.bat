@@ -55,7 +55,6 @@ if not defined TMD_EXE (
             )
         ) else (
             set "TMD_EXE=%~dp0tmdp-test.exe"
-            set "TMD_DEV=1"
         )
     )
 )
@@ -68,9 +67,10 @@ if not defined TMD_EXE (
 
 :run
 "%TMD_EXE%" -server %*
-if %errorlevel% neq 0 (
+set "TMD_RC=%errorlevel%"
+if not "%TMD_RC%"=="0" (
     echo.
-    echo Server exited with code %errorlevel%.
+    echo Server exited with code %TMD_RC%.
     pause
 )
-exit /b %errorlevel%
+exit /b %TMD_RC%
