@@ -1,7 +1,9 @@
 @echo off
 setlocal EnableExtensions
 
-rem 从任意目录调用都要在脚本所在目录执行：go build/go run 依赖这里的 go.mod。
+rem cmd.exe needs CRLF; keep this file ASCII-only so the console code page
+rem cannot mangle it. Always run relative to the script directory: go build
+rem and go run resolve go.mod from the current directory.
 cd /d "%~dp0" 2>nul
 if errorlevel 1 (
     echo Cannot switch to script directory "%~dp0".
@@ -16,24 +18,23 @@ if not exist "%~dp0go.mod" (
 )
 
 if "%TMD_DEV%"=="1" (
-    echo [DEV MODE] Running from source with live frontend reload...
-    echo [DEV MODE] Edit files in internal/api/web/download/ and refresh browser.
+    echo [DEV MODE] Running from source; edit internal/api/web/download/ and refresh.
     go run . -server %*
     exit /b %errorlevel%
 )
 
-rem 预编译发布版优先（无需 Go 的机器）。
+rem Pre-built release binaries take priority on machines without Go.
 set "TMD_EXE="
 for %%f in (tmdp-Windows-amd64.exe tmdp.exe tmdp tmd-Windows-amd64.exe tmd.exe tmd) do (
     if not defined TMD_EXE if exist "%~dp0%%f" set "TMD_EXE=%~dp0%%f"
 )
 
-rem 没有发布版但有 Go：每次都重建 tmdp-test.exe。只判断"文件是否存在"会让
-rem 源码更新后仍运行旧二进制（前端、后端都可能是旧的）。
+rem Without a release, rebuild on every start when Go is available: checking
+rem only whether tmdp-test.exe exists would keep running stale code.
 if not defined TMD_EXE (
     where go >nul 2>nul
     if errorlevel 1 (
-        echo Go not found. Download a pre-built release or install Go from https://go.dev/dl/.
+        echo Go not found. Install Go from https://go.dev/dl/ or use a pre-built release.
         if exist "%~dp0tmdp-test.exe" (
             set "TMD_EXE=%~dp0tmdp-test.exe"
         ) else (

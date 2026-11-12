@@ -1,0 +1,4 @@
+# Windows batch files must be checked out with CRLF; cmd.exe treats a bare LF
+# as part of the line and mangles the script.
+*.bat text eol=crlf
+*.cmd text eol=crlf
