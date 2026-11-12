@@ -2,7 +2,6 @@ package downloading
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 
@@ -128,7 +127,11 @@ func (td *TweetDumper) GetTotal(db *sqlx.DB) ([]*TweetInEntity, error) {
 			return nil, err
 		}
 		if e == nil {
-			return nil, fmt.Errorf("entity %d does not exist", k)
+			// 实体已被删除：它的失败记录再也无法重试，留在 errors.json 里会让
+			// “全部重试”每次都整批失败。这里丢弃该实体的记录并继续。
+			log.Warnf("[download] Dumper entity missing, dropping failed tweets entity_id=%d tweets=%d", k, len(v))
+			td.RemoveEntity(k)
+			continue
 		}
 
 		ue := entity.NewUserEntityFromRecord(db, e)
@@ -137,6 +140,21 @@ func (td *TweetDumper) GetTotal(db *sqlx.DB) ([]*TweetInEntity, error) {
 		}
 	}
 	return results, nil
+}
+
+// RemoveEntity 丢弃某个实体的全部失败记录（实体已被删除时使用）。
+func (td *TweetDumper) RemoveEntity(eid int) int {
+	tweets, ok := td.data[eid]
+	if !ok {
+		return 0
+	}
+	delete(td.data, eid)
+	delete(td.set, eid)
+	td.count -= len(tweets)
+	if td.count < 0 {
+		td.count = 0
+	}
+	return len(tweets)
 }
 
 func (td *TweetDumper) Count() int {

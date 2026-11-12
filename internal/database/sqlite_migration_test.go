@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -131,4 +133,55 @@ func TestConnectInitializesEmptyDatabaseFile(t *testing.T) {
 		var count int
 		require.NoError(t, db.Get(&count, "SELECT COUNT(*) FROM "+table), "table %s", table)
 	}
+}
+
+// 迁移前的备份必须是可直接打开的一致性快照（VACUUM INTO 或回退复制）。
+func TestBackupSQLiteFilesProducesOpenableCopy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source.db")
+	db, err := Connect(path)
+	require.NoError(t, err)
+	require.NoError(t, CreateUser(db, &User{Id: 7, ScreenName: "backup", Name: "Backup"}))
+	require.NoError(t, db.Close())
+
+	backupPath, err := backupSQLiteFiles(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { removeSQLiteFiles(backupPath) })
+
+	backup, err := Connect(backupPath)
+	require.NoError(t, err)
+	defer backup.Close()
+	user, err := GetUserById(backup, 7)
+	require.NoError(t, err)
+	require.NotNil(t, user)
+	assert.Equal(t, "backup", user.ScreenName)
+}
+
+// 同一时刻只允许一个实例做迁移；锁释放后可再次获取。
+func TestAcquireMigrationLockSerializesInstances(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "locked.db")
+
+	release, err := acquireMigrationLockFor(path, 50*time.Millisecond)
+	require.NoError(t, err)
+
+	_, err = acquireMigrationLockFor(path, 50*time.Millisecond)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "another instance is migrating")
+
+	release()
+	release2, err := acquireMigrationLockFor(path, 50*time.Millisecond)
+	require.NoError(t, err)
+	release2()
+}
+
+// 崩溃遗留的过期锁不应永久阻塞启动。
+func TestAcquireMigrationLockReclaimsStaleLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "stale.db")
+	lockPath := path + migrationLockSuffix
+	require.NoError(t, os.WriteFile(lockPath, []byte("999999\n"), 0600))
+	old := time.Now().Add(-11 * time.Minute)
+	require.NoError(t, os.Chtimes(lockPath, old, old))
+
+	release, err := acquireMigrationLockFor(path, 50*time.Millisecond)
+	require.NoError(t, err)
+	release()
 }

@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/unkmonster/tmd/internal/database"
 	"github.com/unkmonster/tmd/internal/twitter"
 )
 
@@ -636,4 +639,27 @@ func TestJsonDumper_DumpLoadRoundTrip_WithDirs(t *testing.T) {
 			t.Errorf("tweet %d has empty Dir after Load", pt.GetTweet().Id)
 		}
 	}
+}
+
+// 实体被删除后，它的失败记录不能让“全部重试”整批失败：应丢弃并继续。
+func TestDumperGetTotalDropsMissingEntities(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	require.NoError(t, database.CreateUser(db, &database.User{Id: 1, ScreenName: "u1", Name: "U1", IsAccessible: true}))
+	entity := &database.UserEntity{UserId: 1, Name: "media", ParentDir: t.TempDir()}
+	require.NoError(t, database.CreateUserEntity(db, entity))
+	existingID := int(entity.Id.Int32)
+
+	dumper := NewDumper()
+	dumper.Push(existingID, &twitter.Tweet{Id: 100})
+	dumper.Push(999999, &twitter.Tweet{Id: 200}) // 实体不存在
+	require.Equal(t, 2, dumper.Count())
+
+	items, err := dumper.GetTotal(db)
+
+	require.NoError(t, err)
+	assert.Len(t, items, 1)
+	assert.Equal(t, uint64(100), items[0].Tweet.Id)
+	assert.Equal(t, 1, dumper.Count(), "缺失实体的失败记录应被丢弃")
 }

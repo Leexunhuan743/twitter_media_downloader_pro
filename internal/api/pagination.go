@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 )
@@ -61,12 +62,18 @@ func NewPaginationWithDefaults(r *http.Request, fallbackPageSize, maxPageSize in
 		sortOrder = fallbackSortOrder
 	}
 
+	// page 是外部输入：先按 int64 算 offset 再夹到 int32 范围，
+	// 避免 (page-1)*pageSize 溢出成负数（SQLite 会把负 OFFSET 当 0）。
+	offset64 := int64(page-1) * int64(pageSize)
+	if offset64 < 0 || offset64 > math.MaxInt32 {
+		offset64 = math.MaxInt32
+	}
 	return &Pagination{
 		Page:      page,
 		PageSize:  pageSize,
 		SortBy:    sortBy,
 		SortOrder: sortOrder,
-		Offset:    (page - 1) * pageSize,
+		Offset:    int(offset64),
 	}
 }
 

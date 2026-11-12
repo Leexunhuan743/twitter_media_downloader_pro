@@ -3,6 +3,8 @@ package database
 import (
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -99,6 +101,45 @@ func UpdateUser(db *sqlx.DB, usr *User) error {
 	_, err = res.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	return nil
+}
+
+// UpdateUserFields 只更新显式提供的列。PATCH 用它替代整行写回，避免与并发
+// 同步（SyncUser）互相覆盖未涉及的字段。
+func UpdateUserFields(db *sqlx.DB, id uint64, fields map[string]interface{}) error {
+	if len(fields) == 0 {
+		return nil
+	}
+	allowed := map[string]bool{
+		"screen_name": true, "name": true, "protected": true,
+		"friends_count": true, "is_accessible": true,
+	}
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		if !allowed[key] {
+			return fmt.Errorf("unsupported user field %q", key)
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	sets := make([]string, 0, len(keys))
+	args := make([]interface{}, 0, len(keys)+1)
+	for _, key := range keys {
+		sets = append(sets, key+" = ?")
+		args = append(args, fields[key])
+	}
+	args = append(args, id)
+	res, err := db.Exec("UPDATE users SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...)
+	if err != nil {
+		return fmt.Errorf("failed to update user %d: %w", id, err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user %d not found, cannot update: %w", id, ErrUserNotFound)
 	}
 	return nil
 }

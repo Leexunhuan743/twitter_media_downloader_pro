@@ -61,3 +61,38 @@ func TestUpdateLstReportsMissingRow(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, database.ErrLstNotFound), "期望 ErrLstNotFound, got %v", err)
 }
+
+// PATCH 只更新显式提供的列：未提供的字段必须保持不变（避免与并发同步互相覆盖）。
+func TestUpdateUserFieldsOnlyWritesProvidedColumns(t *testing.T) {
+	db := openRegressionDB(t)
+	require.NoError(t, database.CreateUser(db, &database.User{
+		Id: 5, ScreenName: "keep", Name: "Keep", FriendsCount: 42, IsAccessible: true,
+	}))
+
+	require.NoError(t, database.UpdateUserFields(db, 5, map[string]interface{}{"friends_count": 7}))
+
+	user, err := database.GetUserById(db, 5)
+	require.NoError(t, err)
+	require.NotNil(t, user)
+	assert.Equal(t, 7, user.FriendsCount)
+	assert.Equal(t, "keep", user.ScreenName, "未提供的列不得被覆盖")
+	assert.Equal(t, "Keep", user.Name)
+	assert.True(t, user.IsAccessible)
+}
+
+func TestUpdateUserFieldsRejectsUnknownColumn(t *testing.T) {
+	db := openRegressionDB(t)
+	require.NoError(t, database.CreateUser(db, &database.User{Id: 6, ScreenName: "u6", Name: "U6"}))
+
+	err := database.UpdateUserFields(db, 6, map[string]interface{}{"password": "x"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported user field")
+}
+
+func TestUpdateUserFieldsReportsMissingRow(t *testing.T) {
+	db := openRegressionDB(t)
+
+	err := database.UpdateUserFields(db, 999, map[string]interface{}{"name": "ghost"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, database.ErrUserNotFound)
+}

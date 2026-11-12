@@ -200,7 +200,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 						symlinkWarnMu.Lock()
 						symlinkWarnCount++
 						if symlinkWarnCount == 1 {
-							log.Debugf("[batch] Symlink update failed user=%q reason=permission_denied suppressing=true", user.Title())
+							log.Warnf("[batch] Symlink update failed user=%q error=%q", user.Title(), err.Error())
 						}
 						symlinkWarnMu.Unlock()
 					}
@@ -249,7 +249,9 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 			if err == nil {
 				linkDir := filepath.Dir(linkpath)
 				if mkdirErr := os.MkdirAll(linkDir, 0755); mkdirErr == nil {
-					if err = os.Symlink(upath, linkpath); err == nil || os.IsExist(err) {
+					// ensureUserSymlink 在目标已存在时会校验并替换陈旧链接，
+					// 避免“链接指向旧目录但数据库记录假装成功”。
+					if err = ensureUserSymlink(upath, linkpath); err == nil {
 						err = database.CreateUserLink(db, curlink)
 					}
 				} else {
@@ -260,7 +262,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 				symlinkWarnMu.Lock()
 				symlinkWarnCount++
 				if symlinkWarnCount == 1 {
-					log.Debugf("[batch] Symlink create failed user=%q reason=permission_denied suppressing=true", user.Title())
+					log.Warnf("[batch] Symlink create failed user=%q error=%q", user.Title(), err.Error())
 				}
 				symlinkWarnMu.Unlock()
 			}
@@ -275,7 +277,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 	log.Debugf("[batch] Real members count=%d", userEntityHeap.Size())
 	log.Debugf("[batch] Missing tweets count=%d", missingTweets)
 	if symlinkWarnCount > 0 {
-		log.Warnf("[batch] Symlink permission denied suppressed=%d hint=run_as_admin", symlinkWarnCount)
+		log.Warnf("[batch] Symlink failures=%d hint=check_symlink_privilege_or_locked_target", symlinkWarnCount)
 	}
 
 	totalUsers := userEntityHeap.Size()

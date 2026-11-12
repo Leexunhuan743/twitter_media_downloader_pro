@@ -13,6 +13,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/database"
 	entitypkg "github.com/unkmonster/tmd/internal/entity"
+	"github.com/unkmonster/tmd/internal/logging"
 	"github.com/unkmonster/tmd/internal/utils"
 )
 
@@ -174,6 +175,7 @@ func (s *Server) handleDBUserUpdate(w http.ResponseWriter, r *http.Request) {
 	if !requireResource(user, err, "User", func(c int, m string) { s.writeError(w, c, m) }) {
 		return
 	}
+	changes := make(map[string]interface{}, 5)
 	if req.ScreenName != nil {
 		if err := validateScreenName(*req.ScreenName); err != nil {
 			logDBInvalidInput("screen_name", *req.ScreenName, err)
@@ -181,6 +183,7 @@ func (s *Server) handleDBUserUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		user.ScreenName = *req.ScreenName
+		changes["screen_name"] = *req.ScreenName
 	}
 	if req.Name != nil {
 		if err := validateFieldName(*req.Name); err != nil {
@@ -189,17 +192,22 @@ func (s *Server) handleDBUserUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		user.Name = *req.Name
+		changes["name"] = *req.Name
 	}
 	if req.FriendsCount != nil {
 		user.FriendsCount = *req.FriendsCount
+		changes["friends_count"] = *req.FriendsCount
 	}
 	if req.IsProtected != nil {
 		user.IsProtected = *req.IsProtected
+		changes["protected"] = *req.IsProtected
 	}
 	if req.IsAccessible != nil {
 		user.IsAccessible = *req.IsAccessible
+		changes["is_accessible"] = *req.IsAccessible
 	}
-	if err := database.UpdateUser(s.db, user); err != nil {
+	// 只写显式提供的列：整行写回会与下载中的 SyncUser 并发互相覆盖。
+	if err := database.UpdateUserFields(s.db, id, changes); err != nil {
 		s.dbWriteError(w, err, "UpdateUser")
 		return
 	}
@@ -247,6 +255,13 @@ func (s *Server) handleDBUserDelete(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+
+	// 链接文件在列表目录里，只删 user_links 行会留下无法追踪的孤儿链接。
+	// 先清理磁盘再删行；任一文件删不掉（被占用）就中止，保持行与文件一致。
+	if _, err := s.removeUserLinkFiles(id); err != nil {
+		s.writeEntityMutationError(w, err, "User link", "", "RemoveUserLinkFiles")
+		return
 	}
 
 	if err := database.DelUser(s.db, id); err != nil {
@@ -887,7 +902,27 @@ func (s *Server) handleDBUserLinkUpdate(w http.ResponseWriter, r *http.Request) 
 			s.writeErrorDetail(w, http.StatusBadRequest, "Invalid name", err.Error())
 			return
 		}
-		link.Name = *req.Name
+		if *req.Name != link.Name {
+			oldPath := userLinkPath(s.db, link)
+			candidate := &database.UserLink{Name: *req.Name, ParentLstEntityId: link.ParentLstEntityId}
+			newPath := userLinkPath(s.db, candidate)
+			moved, moveErr := renameUserLinkFile(oldPath, newPath)
+			if moveErr != nil {
+				s.writeEntityMutationError(w, moveErr, "User link", "", "RenameUserLinkFile")
+				return
+			}
+			if err := database.UpdateUserLink(s.db, link.Id, *req.Name); err != nil {
+				// 数据库失败时把文件移回原位，保持 DB 与磁盘一致。
+				if moved {
+					if _, rollbackErr := renameUserLinkFile(newPath, oldPath); rollbackErr != nil {
+						log.Errorf("[api] User link rename rollback failed path=%q error=%q", logging.Path(newPath), rollbackErr.Error())
+					}
+				}
+				s.dbWriteError(w, err, "UpdateUserLink")
+				return
+			}
+			link.Name = *req.Name
+		}
 	}
 
 	if err := database.UpdateUserLink(s.db, link.Id, link.Name); err != nil {
@@ -909,6 +944,14 @@ func (s *Server) handleDBUserLinkDelete(w http.ResponseWriter, r *http.Request) 
 	link, err := database.GetUserLinkById(s.db, int32(id))
 	if !requireResource(link, err, "User link", func(c int, m string) { s.writeError(w, c, m) }) {
 		return
+	}
+
+	// 先删磁盘链接再删行：删文件失败（被占用/无权限）就保留行，避免孤儿文件。
+	if path := userLinkPath(s.db, link); path != "" {
+		if err := removeUserLinkFile(path); err != nil {
+			s.writeEntityMutationError(w, err, "User link", "", "RemoveUserLinkFile")
+			return
+		}
 	}
 
 	if err := database.DelUserLink(s.db, int32(id)); err != nil {

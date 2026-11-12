@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"testing"
@@ -491,4 +492,14 @@ func TestPagination_CompleteFlow(t *testing.T) {
 	assert.Equal(t, 3, resp.Page)
 	assert.Equal(t, 25, resp.PageSize)
 	assert.Equal(t, 4, resp.TotalPages) // 100 / 25 = 4
+}
+
+// 超大 page 不能把 offset 溢出成负数（SQLite 会把负 OFFSET 当 0，导致翻回第一页）。
+func TestNewPaginationClampsOverflowingOffset(t *testing.T) {
+	req := &http.Request{URL: &url.URL{RawQuery: "page=2000000000&pageSize=200"}}
+
+	p := NewPagination(req)
+
+	assert.Equal(t, math.MaxInt32, p.Offset)
+	assert.GreaterOrEqual(t, p.Offset, 0)
 }
