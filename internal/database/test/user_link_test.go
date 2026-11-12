@@ -203,7 +203,7 @@ func TestUpdateUserLink(t *testing.T) {
 
 	t.Run("update_nonexistent_link", func(t *testing.T) {
 		err := database.UpdateUserLink(db, 99999, "ghost")
-		assert.NoError(t, err)
+		assert.ErrorIs(t, err, database.ErrUserLinkNotFound)
 	})
 }
 

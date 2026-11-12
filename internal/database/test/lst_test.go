@@ -112,7 +112,7 @@ func TestUpdateLst(t *testing.T) {
 			OwnerUserId: 999,
 		}
 		err := database.UpdateLst(db, nonexistent)
-		assert.NoError(t, err)
+		assert.ErrorIs(t, err, database.ErrLstNotFound)
 
 		retrieved, _ := database.GetLst(db, 99999)
 		assert.Nil(t, retrieved)

@@ -301,6 +301,16 @@ func copyAllData(sourceDB *sqlx.DB, targetDB *sqlx.DB) error {
 }
 
 func copyUsers(sourceDB *sqlx.Tx, targetTx *sqlx.Tx) error {
+	exists, err := tableExists(sourceDB, "users")
+	if err != nil {
+		return err
+	}
+	// 0 字节 / 空 SQLite 文件会被驱动视为合法库：没有 users 表时按空库处理，
+	// 否则重建路径会在 SELECT 阶段失败，且每次启动都重复失败。
+	if !exists {
+		return nil
+	}
+
 	userColumns, err := getTableColumns(sourceDB, "users")
 	if err != nil {
 		return err

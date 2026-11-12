@@ -1,6 +1,7 @@
 package entity
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -502,4 +503,98 @@ func seedStorageUserEntity(t *testing.T, db *sqlx.DB, parentDir, name string) *d
 	record := &database.UserEntity{UserId: userID, Name: name, ParentDir: parentDir}
 	require.NoError(t, database.CreateUserEntity(db, record))
 	return record
+}
+
+// renameFailingNTimes 返回一个先失败 n 次（Access denied 类型）再成功的假 rename。
+func renameFailingNTimes(n int, counter *int) func(string, string) error {
+	return func(from, to string) error {
+		*counter++
+		if *counter <= n {
+			return &os.LinkError{Op: "rename", Old: from, New: to, Err: os.ErrPermission}
+		}
+		return os.Rename(from, to)
+	}
+}
+
+func TestStageRenameForRemovalRetriesTransientPermission(t *testing.T) {
+	parent := t.TempDir()
+	from := filepath.Join(parent, "entity")
+	to := filepath.Join(parent, "staged")
+	require.NoError(t, os.Mkdir(from, 0755))
+
+	attempts := 0
+	err := stageRenameForRemoval(from, to, renameFailingNTimes(2, &attempts))
+
+	require.NoError(t, err)
+	assert.Equal(t, 3, attempts)
+	assert.NoDirExists(t, from)
+	assert.DirExists(t, to)
+}
+
+// readOnlyTreeBlocks 判断目录树里是否仍有只读条目。
+func readOnlyTreeBlocks(root string) bool {
+	blocked := false
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() && info.Mode()&0o200 == 0 {
+			blocked = true
+		}
+		return nil
+	})
+	return blocked
+}
+
+func TestStageRenameForRemovalClearsReadOnlyThenRetries(t *testing.T) {
+	parent := t.TempDir()
+	from := filepath.Join(parent, "entity")
+	to := filepath.Join(parent, "staged")
+	require.NoError(t, os.Mkdir(from, 0755))
+	filePath := filepath.Join(from, "media.jpg")
+	require.NoError(t, os.WriteFile(filePath, []byte("x"), 0600))
+	require.NoError(t, os.Chmod(filePath, 0o444))
+
+	attempts := 0
+	fake := func(fromPath, toPath string) error {
+		attempts++
+		if readOnlyTreeBlocks(fromPath) {
+			return &os.LinkError{Op: "rename", Old: fromPath, New: toPath, Err: os.ErrPermission}
+		}
+		return os.Rename(fromPath, toPath)
+	}
+
+	err := stageRenameForRemoval(from, to, fake)
+
+	require.NoError(t, err)
+	assert.False(t, readOnlyTreeBlocks(to), "重试前应已清掉只读属性")
+	assert.DirExists(t, to)
+}
+
+func TestStageRenameForRemovalReportsBlockedEntry(t *testing.T) {
+	parent := t.TempDir()
+	from := filepath.Join(parent, "entity")
+	to := filepath.Join(parent, "staged")
+	require.NoError(t, os.Mkdir(from, 0755))
+	filePath := filepath.Join(from, "locked.jpg")
+	require.NoError(t, os.WriteFile(filePath, []byte("x"), 0600))
+	require.NoError(t, os.Chmod(filePath, 0o444))
+
+	alwaysDeny := func(fromPath, toPath string) error {
+		return &os.LinkError{Op: "rename", Old: fromPath, New: toPath, Err: os.ErrPermission}
+	}
+
+	err := stageRenameForRemoval(from, to, alwaysDeny)
+
+	require.Error(t, err)
+	// 只读属性已被清理，此时提示指向"目录被其它程序占用/缺少权限"。
+	assert.Contains(t, err.Error(), "another program")
+	assert.True(t, errors.Is(err, os.ErrPermission))
+	assert.DirExists(t, from, "失败时不得移动原目录")
+
+	// 直接验证占用/只读探测：只读文件必须被报出来。
+	require.NoError(t, os.Chmod(filePath, 0o444))
+	hint := removalBlockerHint(from)
+	assert.Contains(t, hint, "locked.jpg")
+
+	// 可写且可打开的文件不应被误报。
+	require.NoError(t, os.Chmod(filePath, 0o600))
+	assert.Empty(t, removalBlockerHint(from))
 }

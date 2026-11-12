@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/go-resty/resty/v2"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/unkmonster/tmd/internal/database"
 	"github.com/unkmonster/tmd/internal/twitter"
 )
@@ -206,4 +208,30 @@ func TestSyncListAndGetMembers_DirectoryCreation(t *testing.T) {
 			t.Errorf("Directory %s should exist", path)
 		}
 	}
+}
+
+// 列表响应缺少 creator 时，已有归属不能被 0 覆盖（曾把 lsts.owner_user_id 清零）。
+func TestSyncListKeepsOwnerWhenCreatorMissing(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	list := &twitter.List{
+		Id:   321,
+		Name: "Owner List",
+		Creator: &twitter.User{
+			Id: 999,
+		},
+	}
+	require.NoError(t, syncList(db, list))
+
+	// 后续响应省略 creator（user_results 缺失/解析失败）
+	list.Creator = nil
+	list.Name = "Owner List Renamed"
+	require.NoError(t, syncList(db, list))
+
+	stored, err := database.GetLst(db, list.Id)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, uint64(999), stored.OwnerUserId, "creator 缺失时应保留原归属")
+	assert.Equal(t, "Owner List Renamed", stored.Name, "名称仍应更新")
 }

@@ -50,9 +50,16 @@ func GetUserLink(db *sqlx.DB, uid uint64, parentLstEntityId int32) (*UserLink, e
 
 func UpdateUserLink(db *sqlx.DB, id int32, name string) error {
 	stmt := `UPDATE user_links SET name = ? WHERE id = ?`
-	_, err := db.Exec(stmt, name, id)
+	result, err := db.Exec(stmt, name, id)
 	if err != nil {
 		return fmt.Errorf("failed to update user link %d: %w", id, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected for user link %d: %w", id, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user link %d not found, cannot update: %w", id, ErrUserLinkNotFound)
 	}
 	return nil
 }

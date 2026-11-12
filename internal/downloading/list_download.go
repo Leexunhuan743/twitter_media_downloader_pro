@@ -27,6 +27,11 @@ func syncList(db *sqlx.DB, list *twitter.List) error {
 	if listdb == nil {
 		return database.CreateLst(db, &database.Lst{Id: list.Id, Name: list.Name, OwnerUserId: ownerUserId})
 	}
+	// 列表响应缺少 creator（API 省略 user_results 或解析失败）时不能用 0 覆盖
+	// 已知归属，否则 lsts.owner_user_id 被永久清零。
+	if list.Creator == nil && listdb.OwnerUserId != 0 {
+		ownerUserId = listdb.OwnerUserId
+	}
 	return database.UpdateLst(db, &database.Lst{Id: list.Id, Name: list.Name, OwnerUserId: ownerUserId})
 }
 

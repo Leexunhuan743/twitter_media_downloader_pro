@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/unkmonster/tmd/internal/database"
@@ -618,6 +620,97 @@ type stagedDirectoryRemoval struct {
 	stagedPath   string
 }
 
+// removalRenameDelays 是目录重命名的重试节奏：Windows 上文件被杀毒扫描、
+// 索引服务或资源管理器短暂持有句柄时，rename 会返回 ACCESS_DENIED，
+// 稍后重试即可成功。
+var removalRenameDelays = []time.Duration{40 * time.Millisecond, 120 * time.Millisecond, 300 * time.Millisecond}
+
+// stageRenameForRemoval 先把实体目录改名成隐藏的 staged 名称。
+// Windows 的“Access is denied”既是瞬时占用，也可能是只读属性或权限不足：
+// 先按退避重试，再尝试清掉只读属性重试一次，最后把占用/只读的具体条目
+// 附在错误里，避免用户只看到 Access is denied 而不知道关谁。
+func stageRenameForRemoval(path, target string, rename func(string, string) error) error {
+	err := rename(path, target)
+	if err == nil || !retryableRenameError(err) {
+		return err
+	}
+	lastErr := err
+	for _, delay := range removalRenameDelays {
+		time.Sleep(delay)
+		if err = rename(path, target); err == nil {
+			return nil
+		}
+		lastErr = err
+	}
+	if clearErr := clearReadOnlyTree(path); clearErr == nil {
+		if err = rename(path, target); err == nil {
+			return nil
+		}
+		lastErr = err
+	}
+	if hint := removalBlockerHint(path); hint != "" {
+		return fmt.Errorf("%w (blocked by %s; close the program using it or clear the read-only flag)", lastErr, hint)
+	}
+	// 没有条目只剩只读/不可写：多半是目录本身被其它程序打开（资源管理器、杀毒扫描）
+	// 或父目录权限不足，给出可行动的方向而不是只留 Access is denied。
+	return fmt.Errorf("%w (directory may be open in another program such as Explorer or an antivirus scan, or permissions are missing)", lastErr)
+}
+
+// retryableRenameError 只把占用/权限类错误当作可重试；其它错误（目标已存在、
+// 跨设备等）立即失败，避免无意义等待。
+func retryableRenameError(err error) bool {
+	if os.IsPermission(err) {
+		return true
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) && runtime.GOOS == "windows" {
+		// ERROR_ACCESS_DENIED=5, ERROR_SHARING_VIOLATION=32, ERROR_LOCK_VIOLATION=33
+		return errno == 5 || errno == 32 || errno == 33
+	}
+	return false
+}
+
+// clearReadOnlyTree 清掉目录树里文件/目录的只读属性（Windows 上 os.Chmod
+// 映射为 FILE_ATTRIBUTE_READONLY）。失败不致命：后续重命名会再报一次。
+func clearReadOnlyTree(root string) error {
+	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.Mode()&0o200 != 0 {
+			return nil
+		}
+		_ = os.Chmod(path, info.Mode().Perm()|0o200)
+		return nil
+	})
+}
+
+// removalBlockerHint 找出最可能阻止删除的条目：不可写（只读）或无法以
+// 读写方式打开（被其它进程占用）。最多列 3 条，让错误可直接行动。
+func removalBlockerHint(root string) string {
+	var blocked []string
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || len(blocked) >= 3 {
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if info.Mode()&0o200 == 0 {
+			blocked = append(blocked, path)
+			return nil
+		}
+		f, openErr := os.OpenFile(path, os.O_RDWR, 0)
+		if openErr != nil {
+			blocked = append(blocked, path)
+			return nil
+		}
+		_ = f.Close()
+		return nil
+	})
+	return strings.Join(blocked, ", ")
+}
+
 func stageEntityDirectoryRemoval(db *sqlx.DB, path string) (stagedDirectoryRemoval, error) {
 	staged := stagedDirectoryRemoval{originalPath: path}
 	info, err := os.Lstat(path)
@@ -643,7 +736,7 @@ func stageEntityDirectoryRemoval(db *sqlx.DB, path string) (stagedDirectoryRemov
 	if err := os.Remove(tempPath); err != nil {
 		return staged, fmt.Errorf("release temporary entity path %q: %w", tempPath, err)
 	}
-	if err := os.Rename(path, tempPath); err != nil {
+	if err := stageRenameForRemoval(path, tempPath, os.Rename); err != nil {
 		return staged, fmt.Errorf("stage entity directory %q for removal: %w", path, err)
 	}
 	staged.stagedPath = tempPath

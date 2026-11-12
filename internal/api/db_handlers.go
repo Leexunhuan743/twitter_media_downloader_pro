@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"strconv"
 	"strings"
@@ -603,6 +604,14 @@ func (s *Server) writeEntityMutationErrorWithDetail(w http.ResponseWriter, err e
 		s.writeErrorDetail(w, http.StatusConflict, message, err.Error())
 	case errors.Is(err, entitypkg.ErrConcurrentUpdate):
 		message := resource + " changed concurrently"
+		if detail != "" {
+			message += "; " + detail
+		}
+		s.writeErrorDetail(w, http.StatusConflict, message, err.Error())
+	case errors.Is(err, fs.ErrPermission):
+		// 目录或其中的文件被其它程序占用、只读或权限不足：这是可重试的
+		// 客户端状态，不是服务端故障，给出可行动文案。
+		message := resource + " directory is in use, read-only, or not writable"
 		if detail != "" {
 			message += "; " + detail
 		}

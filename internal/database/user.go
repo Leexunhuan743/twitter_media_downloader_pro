@@ -134,8 +134,17 @@ func MarkListMembersAccessibleByIDs(db *sqlx.DB, uids []uint64) error {
 }
 
 func RecordUserPreviousName(db *sqlx.DB, uid uint64, name string, screenName string) error {
-	stmt := `INSERT INTO user_previous_names(user_id, screen_name, name, record_date) VALUES(?, ?, ?, ?)`
-	_, err := db.Exec(stmt, uid, screenName, name, time.Now())
+	// 与最新一条记录完全相同的名称不再重复插入：首次同步写入基线后，
+	// 紧接着的第一次改名会再次写入同一对值；并发首次同步也会各写一条。
+	// 在单条 SQL 内比较最新记录（按 id）既能去重，也避免 check-then-insert 竞态。
+	stmt := `INSERT INTO user_previous_names(user_id, screen_name, name, record_date)
+SELECT ?, ?, ?, ?
+WHERE NOT EXISTS (
+    SELECT 1 FROM user_previous_names
+    WHERE id = (SELECT MAX(id) FROM user_previous_names WHERE user_id = ?)
+      AND name = ? AND screen_name = ?
+)`
+	_, err := db.Exec(stmt, uid, screenName, name, time.Now(), uid, name, screenName)
 	if err != nil {
 		return fmt.Errorf("failed to record previous name for user %d (%s -> %s): %w", uid, screenName, name, err)
 	}

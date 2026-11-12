@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestReplaceSQLiteFiles_RestoresOriginalWhenMigratedFileMissing(t *testing.T) {
@@ -112,5 +114,21 @@ func TestRecoverInterruptedSQLiteReplacement_RefusesStrandedMigrationTarget(t *t
 	}
 	if _, statErr := os.Stat(dbPath); !os.IsNotExist(statErr) {
 		t.Fatalf("database path should remain absent, stat err: %v", statErr)
+	}
+}
+
+// 0 字节文件是合法的空 SQLite 库：必须在 Connect 阶段直接建表，而不是走
+// “validate 失败 → 重建 → copyUsers 找不到 users 表” 的永久失败路径。
+func TestConnectInitializesEmptyDatabaseFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty.db")
+	require.NoError(t, os.WriteFile(path, nil, 0600))
+
+	db, err := Connect(path)
+	require.NoError(t, err)
+	defer db.Close()
+
+	for _, table := range []string{"users", "user_entities"} {
+		var count int
+		require.NoError(t, db.Get(&count, "SELECT COUNT(*) FROM "+table), "table %s", table)
 	}
 }
